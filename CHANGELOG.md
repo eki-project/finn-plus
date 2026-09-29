@@ -6,6 +6,11 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
+## Unreleased
+
+### Fixed
+- A plain `pip install finn-plus` (without the `tests`/`all` extra) could not start the CLI: `finn.interface.manage_tests` imported `junitparser`, a dependency of the optional `finn-plus-tests` package, at module level. Test-only imports are now local to `finn test`, which reports clearly when the test suite is not installed, and a new test guards the package against such imports. The release workflow smoke-tests the plain install.
+
 ## 1.6.0 - 28.09.2026
 
 ### Added

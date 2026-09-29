@@ -605,9 +605,9 @@ def prepare_finn(
 def main_group(version: bool) -> None:
     """Main click group."""  # noqa
     if version:
-        import importlib_metadata
+        from importlib.metadata import version as package_version
 
-        print("FINN+ " + importlib_metadata.version("finn-plus") + "\n")
+        print("FINN+ " + package_version("finn-plus") + "\n")
         sys.exit()
     else:
         ctx = click.get_current_context()

@@ -1,12 +1,12 @@
 """Manage FINNs testsuite."""
 
+import importlib.util
 import os
 import re
 import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
-from junitparser import JUnitXml, TestCase
 from pathlib import Path
 from re import Pattern
 
@@ -14,6 +14,31 @@ from finn.interface import IS_POSIX
 from finn.interface.interface_utils import status
 from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
+
+
+# Everything the test runner needs beyond the finn-plus package itself. These are only
+# pulled in by the finn-plus-tests package (extras "tests"/"all"), so a plain
+# "pip install finn-plus" must not import any of them at module level, or the whole CLI
+# breaks on start-up. Check them here, when "finn test" is actually invoked.
+_TEST_SUITE_MODULES = ("pytest", "xdist", "junitparser")
+
+
+def require_test_suite() -> None:
+    """Raise a FINNUserError if the test suite or its Python dependencies are missing."""
+    tests_dir = os.environ.get("FINN_TESTS", "")
+    missing = [m for m in _TEST_SUITE_MODULES if importlib.util.find_spec(m) is None]
+    if tests_dir == "" or not Path(tests_dir).is_dir() or missing:
+        details = []
+        if tests_dir == "" or not Path(tests_dir).is_dir():
+            details.append("the tests package could not be found")
+        if missing:
+            details.append("missing Python modules: " + ", ".join(missing))
+        raise FINNUserError(
+            "The FINN+ test suite is not installed (" + "; ".join(details) + "). "
+            "It is only needed for 'finn test' and not part of a plain 'pip install "
+            "finn-plus'. Install it with 'pip install finn-plus[tests]' or, in a "
+            "development checkout, with 'poetry install'."
+        )
 
 
 def run_doctests(num_workers: int) -> bool:
@@ -79,6 +104,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
         ci_project_dir = str(get_settings().finn_build_dir)
     status(f"Putting test reports into {ci_project_dir}")
 
+    require_test_suite()
     os.chdir(os.environ["FINN_TESTS"])
     match variant:
         case "custom":
@@ -135,6 +161,9 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                 )
             )
         case "full_ci":
+            # Only this variant parses JUnit reports, keep the test-only dependency local
+            from junitparser import JUnitXml, TestCase
+
             main_xml = f"{ci_project_dir}/reports/main.xml"
             main_html = f"{ci_project_dir}/reports/main.html"
             crash_xml = f"{ci_project_dir}/reports/crash_rerun.xml"

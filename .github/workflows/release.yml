@@ -60,5 +60,12 @@ jobs:
           python-version: '3.14'
       - name: Setup
         run: pip install poetry poetry-dynamic-versioning
-      - name: Install
+      # A plain install must be usable on its own: the test suite and its dependencies are
+      # optional, so nothing on the CLI's import path may depend on them.
+      - name: Install plain package and run the CLI
+        run: |
+          pip install finn-plus==$(poetry version -s)
+          finn --version
+          finn --help
+      - name: Install with all extras
         run: pip install finn-plus[all]==$(poetry version -s)
