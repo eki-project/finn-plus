@@ -1,0 +1,43 @@
+params:
+  dut: mvau
+  idt: UINT4
+  wdt: INT4
+  act:
+  sparsity_type: unstructured
+  sparsity_amount: 0.5
+  nhw:
+  - 1
+  - 8
+  - 8
+  mw: 16
+  mh: 16
+  sf: 1
+  nf: 1
+  m: 1
+  mem_mode: internal_embedded
+  ram_style: distributed
+  ram_style_thr: distributed
+  backend: rtl
+  da_hard_dc: 2
+  dut_duplication: 1
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: false
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - out_of_context_synth
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  simd: 16
+  pe: 16
+  zero_weights: 0.53
+  easy_weights: 0.74
+  da_cost: 600.0
+  da_adders: 79
+  da_depth: 6.091796875
+  da_ops: 96
+  da_hard_dc: 2
