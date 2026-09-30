@@ -269,3 +269,33 @@ def test_isolated_mvau_mem_mode_for_fifo_sizing():
         isolated_mvau_mem_mode("MVAU_rtl", {**small, "mem_mode": "internal_decoupled"})
         == "internal_decoupled"
     )
+
+
+@pytest.mark.fpgadataflow
+def test_mvau_hls_single_iteration_top_pipelining():
+    """The HLS MVAU pipelines its top function only when a call processes a single
+    weight tile of a single input vector (WMEM=1, one vector), where the inner loop
+    is flattened away and the unpipelined top would set the interval."""
+    W = gen_finn_dt_tensor(DataType["INT4"], (16, 16))
+    model = make_single_fclayer_modelwrapper(
+        W, 16, 16, DataType["INT4"], DataType["UINT4"], DataType["INT32"]
+    )
+    inst = getCustomOp(model.graph.node[0])
+    inst.set_nodeattr("preferred_impl_style", "hls")
+    inst.set_nodeattr("mem_mode", "internal_embedded")
+    model = model.transform(SpecializeLayers(DSP48E2_PART))
+    inst = getCustomOp(model.graph.node[0])
+    assert model.graph.node[0].op_type == "MVAU_hls"
+    assert inst.single_iteration_per_call()
+    inst.code_gen_dict = {}
+    inst.pragmas()
+    assert "#pragma HLS pipeline II=1 style=flp" in inst.code_gen_dict["$PRAGMAS$"]
+    # partially folded or several vectors per call: no function-level pipelining
+    inst.set_nodeattr("SIMD", 8)
+    assert not inst.single_iteration_per_call()
+    inst.set_nodeattr("SIMD", 16)
+    inst.set_nodeattr("numInputVectors", [3, 3])
+    assert not inst.single_iteration_per_call()
+    inst.code_gen_dict = {}
+    inst.pragmas()
+    assert "#pragma HLS pipeline II=1 style=flp" not in inst.code_gen_dict["$PRAGMAS$"]
