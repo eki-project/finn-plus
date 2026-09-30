@@ -6,8 +6,10 @@
 # frame per cycle, 100 M fps target with a raised mvau_wwidth_max) with the HLS
 # MVAU and embedded weights, and the same design point with enable_da_mvau, which
 # switches the unrolled MVAUs to the distributed-arithmetic RTL MVAU after the
-# folding. Embedded HLS weights need the shared specialize config since there is
-# no build option for them; the RTL thresholds come from auto specialization.
+# folding. Embedded HLS weights come from the folding configs (mem_mode/resType
+# defaults by op type; the unrolled one also fixes SIMD/PE per layer, the 100 M
+# fps target only lets SetFolding unroll whatever the config does not name); the
+# RTL thresholds come from auto specialization.
 [
     {
         # 1. reference: fused thresholds, HLS MVAUs with streamed weights
@@ -17,7 +19,7 @@
     {
         # 2. fused thresholds, HLS MVAUs with embedded weights
         "dut": ["cybsec"],
-        "specialize_layers_config_file": ["models/cybsec/hls_embedded_specialize_layers.json"],
+        "folding_config_file": ["models/cybsec/hls_embedded_folding_config.json"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
@@ -30,7 +32,7 @@
         # 4. standalone RTL thresholds, HLS MVAUs with embedded weights
         "dut": ["cybsec"],
         "standalone_thresholds": [true],
-        "specialize_layers_config_file": ["models/cybsec/hls_embedded_specialize_layers.json"],
+        "folding_config_file": ["models/cybsec/hls_embedded_folding_config.json"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
@@ -39,7 +41,7 @@
         "target_fps": [100000000],
         "mvau_wwidth_max": [1200],
         "standalone_thresholds": [true],
-        "specialize_layers_config_file": ["models/cybsec/hls_embedded_specialize_layers.json"],
+        "folding_config_file": ["models/cybsec/unrolled_hls_embedded_folding_config.json"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
@@ -48,7 +50,7 @@
         "target_fps": [100000000],
         "mvau_wwidth_max": [1200],
         "standalone_thresholds": [true],
-        "specialize_layers_config_file": ["models/cybsec/hls_embedded_specialize_layers.json"],
+        "folding_config_file": ["models/cybsec/unrolled_hls_embedded_folding_config.json"],
         "enable_da_mvau": [true],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
