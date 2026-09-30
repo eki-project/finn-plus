@@ -247,3 +247,25 @@ def test_specialize_da_mvau_after_folding(act):
         inst.set_nodeattr("resType", "dsp")
         dsp = model.transform(SpecializeDAMVAU())
         assert getCustomOp(dsp.graph.node[0]).get_nodeattr("mem_mode") == "internal_decoupled"
+
+
+@pytest.mark.fpgadataflow
+def test_isolated_mvau_mem_mode_for_fifo_sizing():
+    """The FIFO sizing streams the weights of HLS MVAUs in the isolated copy,
+    except for the DA core and for embedded HLS MVAUs whose weight stream would
+    exceed the ap_int width limit."""
+    from finn.transformation.fpgadataflow.simulation_build import isolated_mvau_mem_mode
+
+    small = {"mem_mode": "internal_embedded", "SIMD": 64, "PE": 1, "weightDataType": "INT2"}
+    assert isolated_mvau_mem_mode("MVAU_hls", small) == "internal_decoupled"
+    assert (
+        isolated_mvau_mem_mode("MVAU_hls", {**small, "mem_mode": "internal_decoupled"})
+        == "internal_decoupled"
+    )
+    huge = {"mem_mode": "internal_embedded", "SIMD": 600, "PE": 64, "weightDataType": "INT2"}
+    assert isolated_mvau_mem_mode("MVAU_hls", huge) == "internal_embedded"
+    assert isolated_mvau_mem_mode("MVAU_rtl", small) == "internal_embedded"
+    assert (
+        isolated_mvau_mem_mode("MVAU_rtl", {**small, "mem_mode": "internal_decoupled"})
+        == "internal_decoupled"
+    )

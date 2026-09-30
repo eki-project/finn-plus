@@ -35,6 +35,7 @@ from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import (
+    MAX_ALLOWED_AP_INT_W,
     getHWCustomOp,
     launch_process_helper,
     make_build_dir,
@@ -637,15 +638,9 @@ class SimulationBuilder:
                     params["rhs_style"] = "const"
                     params_changed = True
             if target_node.op_type.startswith("MVAU"):
-                # Stream the weights instead of embedding them in HLS, except for the
-                # distributed-arithmetic RTL core, which only exists with embedded
-                # weights and simulates exactly as in the full design.
-                is_da_core = (
-                    target_node.op_type == "MVAU_rtl"
-                    and params.get("mem_mode") == "internal_embedded"
-                )
-                if not is_da_core:
-                    params["mem_mode"] = "internal_decoupled"
+                mem_mode = isolated_mvau_mem_mode(target_node.op_type, params)
+                if mem_mode != params.get("mem_mode"):
+                    params["mem_mode"] = mem_mode
                     params_changed = True
         if "mlo_max_iter" in params:
             del params["mlo_max_iter"]
@@ -1369,6 +1364,30 @@ class SimulationBuilder:
             functional_sim: If True, use functional simulation (faster but takes some time to build)
         """
         return self._build_simulations_parallel(with_live_display, functional_sim)
+
+
+def isolated_mvau_mem_mode(op_type: str, params: dict) -> str:
+    """Memory mode of an MVAU in its isolated simulation copy.
+
+    The weights are streamed (``internal_decoupled``) instead of embedded so that
+    the FIFO sizing does not pay for a constant-weight HLS synthesis, except when
+    that is impossible or pointless: the distributed-arithmetic RTL core only
+    exists with embedded weights and simulates exactly as in the full design, and
+    a fully unrolled HLS MVAU whose weight stream would exceed the ap_int width
+    limit can only be built with embedded weights.
+    """
+    mem_mode = params.get("mem_mode", "internal_decoupled")
+    if op_type == "MVAU_rtl" and mem_mode == "internal_embedded":
+        return mem_mode
+    if op_type == "MVAU_hls" and mem_mode == "internal_embedded":
+        weight_stream_bits = (
+            int(params.get("SIMD", 1))
+            * int(params.get("PE", 1))
+            * DataType[params["weightDataType"]].bitwidth()
+        )
+        if weight_stream_bits > MAX_ALLOWED_AP_INT_W:
+            return mem_mode
+    return "internal_decoupled"
 
 
 class BuildSimulation(Transformation):
