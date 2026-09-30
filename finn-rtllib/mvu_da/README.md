@@ -31,11 +31,13 @@ accepts one input vector per clock cycle.
 
 Layer selection is **opt-in**, in one of two ways:
 
-* Build config option `enable_da_mvau: true`: `SpecializeLayers` turns every
-  MVAU without an explicit `preferred_impl_style` whose constraints hold
-  (standalone thresholds, static integer weights, no XNOR mode, tiling or
-  pumping) into the DA core and `SetFolding` unrolls it fully regardless of
-  `target_fps`. Meant for small networks or maximum-throughput design points.
+* Build config option `enable_da_mvau: true`: after the folding has been
+  applied (`step_apply_folding_config`), `SpecializeDAMVAU` switches every MVAU
+  that the folding already implements with `SIMD=MW, PE=MH` and whose other
+  constraints hold (constant on-chip weights, standalone thresholds, no XNOR
+  mode, tiling, pumping or explicit `resType: dsp`) to the DA core. The
+  folding itself is never changed, so partially folded layers keep their
+  implementation and designs do not grow by enabling the option.
 * Per layer: `preferred_impl_style="rtl"` together with `mem_mode="internal_embedded"`
   in the specialize/folding config files. Without either, such a node stays an
   HLS MVAU and an info message points at the RTL alternative when it qualifies.

@@ -16,7 +16,7 @@ from finn.analysis.fpgadataflow.res_estimation import res_estimation
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
-from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+from finn.transformation.fpgadataflow.specialize_layers import SpecializeDAMVAU, SpecializeLayers
 from finn.util.exception import FINNUserError
 from tests.fpgadataflow.test_fpgadataflow_mvau import make_single_fclayer_modelwrapper
 
@@ -211,28 +211,39 @@ def test_mvau_rtl_da_estimate_runs_solver():
 
 @pytest.mark.parametrize("act", [False, True])
 @pytest.mark.fpgadataflow
-def test_specialize_mvau_da_auto_option(act):
-    """enable_da_mvau: every MVAU without an explicit preference that meets the DA
-    constraints becomes the DA core (embedded weights, LUT-only); fused thresholds
-    keep the regular selection; an explicit preference wins."""
+def test_specialize_da_mvau_after_folding(act):
+    """enable_da_mvau (SpecializeDAMVAU): only MVAUs that the folding already
+    unrolls fully become the DA core; the folding is never changed, fused
+    thresholds and explicit DSP resources keep the regular implementation."""
     model = make_embedded_mvau_model(preferred="", act=act)
     inst = getCustomOp(model.graph.node[0])
     inst.set_nodeattr("mem_mode", "internal_decoupled")
     inst.set_nodeattr("resType", "auto")
-    model_off = model.transform(SpecializeLayers(DSP48E2_PART, enable_da_mvau=False))
-    assert getCustomOp(model_off.graph.node[0]).get_nodeattr("mem_mode") == "internal_decoupled"
-    model_on = model.transform(SpecializeLayers(DSP48E2_PART, enable_da_mvau=True))
-    node = model_on.graph.node[0]
+    model = model.transform(SpecializeLayers(DSP48E2_PART))
+    assert getCustomOp(model.graph.node[0]).get_nodeattr("mem_mode") == "internal_decoupled"
+    # partially folded: untouched
+    inst = getCustomOp(model.graph.node[0])
+    inst.set_nodeattr("SIMD", 8)
+    inst.set_nodeattr("PE", 16)
+    partial = model.transform(SpecializeDAMVAU())
+    p_inst = getCustomOp(partial.graph.node[0])
+    assert p_inst.get_nodeattr("mem_mode") == "internal_decoupled"
+    assert (p_inst.get_nodeattr("SIMD"), p_inst.get_nodeattr("PE")) == (8, 16)
+    # fully unrolled: DA core unless thresholds are fused
+    inst.set_nodeattr("SIMD", 16)
+    full = model.transform(SpecializeDAMVAU())
+    node = full.graph.node[0]
+    f_inst = getCustomOp(node)
+    assert (f_inst.get_nodeattr("SIMD"), f_inst.get_nodeattr("PE")) == (16, 16)
     if act:
-        assert getCustomOp(node).get_nodeattr("mem_mode") == "internal_decoupled"
+        assert f_inst.get_nodeattr("mem_mode") == "internal_decoupled"
     else:
         assert node.op_type == "MVAU_rtl"
-        inst = getCustomOp(node)
-        assert inst.get_nodeattr("mem_mode") == "internal_embedded"
-        assert inst.get_nodeattr("resType") == "lut"
-        assert inst._is_da_mode()
-    # explicit preference is respected
-    model_hls = make_embedded_mvau_model(preferred="hls", act=act)
-    getCustomOp(model_hls.graph.node[0]).set_nodeattr("mem_mode", "internal_decoupled")
-    model_hls = model_hls.transform(SpecializeLayers(DSP48E2_PART, enable_da_mvau=True))
-    assert model_hls.graph.node[0].op_type == "MVAU_hls"
+        assert f_inst.get_nodeattr("mem_mode") == "internal_embedded"
+        assert f_inst.get_nodeattr("resType") == "lut"
+        assert f_inst._is_da_mode()
+        assert node.name == model.graph.node[0].name
+        # explicit DSP resources are respected
+        inst.set_nodeattr("resType", "dsp")
+        dsp = model.transform(SpecializeDAMVAU())
+        assert getCustomOp(dsp.graph.node[0]).get_nodeattr("mem_mode") == "internal_decoupled"

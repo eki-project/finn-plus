@@ -225,9 +225,7 @@ class ApplySimulatedFIFOSizes(Transformation):
 
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(GiveReadableTensorNames())
-        model = model.transform(
-            SpecializeLayers(self.cfg._resolve_fpga_part(), enable_da_mvau=self.cfg.enable_da_mvau)
-        )
+        model = model.transform(SpecializeLayers(self.cfg._resolve_fpga_part()))  # noqa
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(GiveReadableTensorNames())
 

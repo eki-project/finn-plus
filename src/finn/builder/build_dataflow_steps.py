@@ -179,7 +179,7 @@ from finn.transformation.fpgadataflow.simulation_connected import (
     NodeConnectedSimulation,
     RunLayerParallelSimulation,
 )
-from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+from finn.transformation.fpgadataflow.specialize_layers import SpecializeDAMVAU, SpecializeLayers
 from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
 from finn.transformation.fpgadataflow.transpose_decomposition import (
     InferInnerOuterShuffles,
@@ -836,9 +836,7 @@ def step_set_fifo_depths(
             for node in model.get_nodes_by_op_type("StreamingFIFO"):
                 node_inst = getCustomOp(node)
                 node_inst.set_nodeattr("preferred_impl_style", "rtl")
-            model = model.transform(
-                SpecializeLayers(cfg._resolve_fpga_part(), enable_da_mvau=cfg.enable_da_mvau)
-            )
+            model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
 
             # Clean up model
             model = model.transform(SortGraph())
@@ -864,9 +862,7 @@ def step_set_fifo_depths(
             )
             model = model.transform(InsertDWC())
             model = model.transform(InsertFIFO(create_shallow_fifos=True))
-            model = model.transform(
-                SpecializeLayers(cfg._resolve_fpga_part(), enable_da_mvau=cfg.enable_da_mvau)
-            )
+            model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
             model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
             model = model.transform(GiveReadableTensorNames())
         else:
@@ -883,9 +879,7 @@ def step_set_fifo_depths(
         # need to make sure all FIFOs are created so that their depth can be
         # set by ApplyConfig, so create_shallow_fifos=True
         model = model.transform(InsertFIFO(create_shallow_fifos=True))
-        model = model.transform(
-            SpecializeLayers(cfg._resolve_fpga_part(), enable_da_mvau=cfg.enable_da_mvau)
-        )
+        model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
         model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
         model = model.transform(GiveReadableTensorNames())
         model = model.transform(ApplyFIFODepthsFromFile(cfg.fifo_config_file))
@@ -1384,9 +1378,7 @@ def step_specialize_layers(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
     if cfg.specialize_layers_config_file is not None:
         model = model.transform(GiveUniqueNodeNamesRecursive())
         model = model.transform(ApplyConfig(cfg.specialize_layers_config_file))
-    model = model.transform(
-        SpecializeLayers(cfg._resolve_fpga_part(), enable_da_mvau=cfg.enable_da_mvau)
-    )
+    model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
     model = model.transform(GiveUniqueNodeNamesRecursive())
     model = model.transform(InferShapes())
     model = model.transform(InferDataTypes())
@@ -1411,7 +1403,7 @@ def step_transpose_decomposition(model: ModelWrapper, cfg: DataflowBuildConfig) 
         model = model.transform(ShuffleDecomposition(), apply_to_subgraphs=True)
         model = model.transform(InferInnerOuterShuffles(), apply_to_subgraphs=True)
         model = model.transform(
-            SpecializeLayers(cfg._resolve_fpga_part(), enable_da_mvau=cfg.enable_da_mvau),
+            SpecializeLayers(cfg._resolve_fpga_part()),
             apply_to_subgraphs=True,
         )
         model = model.transform(InferShapes(), apply_to_subgraphs=True)
@@ -1506,6 +1498,11 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
         )
     else:
         log.info("No folding config json provided, skipping step_apply_folding_config.")
+
+    if cfg.enable_da_mvau:
+        # the folding is final now: fully unrolled MVAUs with constant weights
+        # become distributed-arithmetic cores
+        model = model.transform(SpecializeDAMVAU())
 
     return model
 
@@ -2027,9 +2024,7 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
             model = model.transform(InsertDWC())
             model = model.transform(GiveUniqueNodeNamesRecursive())
             model = model.transform(GiveReadableTensorNames())
-            model = model.transform(
-                SpecializeLayers(cfg._resolve_fpga_part(), enable_da_mvau=cfg.enable_da_mvau)
-            )
+            model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
             model = model.transform(GiveUniqueNodeNamesRecursive())
             model = model.transform(GiveReadableTensorNames())
             model = model.transform(PrepareIP(part, clk_ns))
