@@ -5,15 +5,18 @@
 
 import pytest
 
+from functools import partial
+
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.util.basic import gen_finn_dt_tensor
 
+from finn.analysis.fpgadataflow.res_estimation import res_estimation
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
-from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+from finn.transformation.fpgadataflow.specialize_layers import SpecializeDAMVAU, SpecializeLayers
 from finn.util.exception import FINNUserError
 from tests.fpgadataflow.test_fpgadataflow_mvau import make_single_fclayer_modelwrapper
 
@@ -84,3 +87,215 @@ def test_mvau_rtl_codegen_rejects_wide_operands():
     model.graph.node[0].domain = "finn.custom_op.fpgadataflow.rtl"
     with pytest.raises(FINNUserError, match="exceeds the .* activation datapath limit"):
         model.transform(PrepareIP(DSP48E2_PART, 10.0))
+
+
+# ---------------------------------------------------------------------------
+# Distributed-arithmetic RTL MVU (mem_mode=internal_embedded)
+# ---------------------------------------------------------------------------
+
+
+def make_embedded_mvau_model(idt="UINT4", wdt="INT4", mw=16, mh=16, preferred="rtl", act=False):
+    """Single MVAU with static weights and mem_mode=internal_embedded."""
+    W = gen_finn_dt_tensor(DataType[wdt], (mw, mh))
+    T, tdt, odt = None, None, DataType["INT32"]
+    if act:
+        import numpy as np
+
+        odt, tdt = DataType["INT4"], DataType["INT32"]
+        T = np.sort(np.random.randint(-64, 64, (mh, 15)).astype(np.float32), axis=1)
+    model = make_single_fclayer_modelwrapper(W, 1, 1, DataType[wdt], DataType[idt], odt, T, tdt)
+    inst = getCustomOp(model.graph.node[0])
+    inst.set_nodeattr("mem_mode", "internal_embedded")
+    inst.set_nodeattr("resType", "lut")
+    inst.set_nodeattr("preferred_impl_style", preferred)
+    return minimize_bit_widths(model)
+
+
+@pytest.mark.fpgadataflow
+def test_specialize_mvau_rtl_da_opt_in():
+    model = make_embedded_mvau_model(preferred="rtl")
+    model = model.transform(SpecializeLayers(DSP48E2_PART))
+    assert model.graph.node[0].op_type == "MVAU_rtl"
+    inst = getCustomOp(model.graph.node[0])
+    assert inst.get_nodeattr("mem_mode") == "internal_embedded"
+    assert inst._is_da_mode()
+
+
+@pytest.mark.parametrize("preferred", ["hls", ""])
+@pytest.mark.fpgadataflow
+def test_specialize_mvau_embedded_stays_hls_without_opt_in(preferred):
+    model = make_embedded_mvau_model(preferred=preferred)
+    model = model.transform(SpecializeLayers(DSP48E2_PART))
+    assert model.graph.node[0].op_type == "MVAU_hls"
+    assert getCustomOp(model.graph.node[0]).get_nodeattr("mem_mode") == "internal_embedded"
+
+
+@pytest.mark.parametrize(
+    "attr, value, reason",
+    [
+        ("binaryXnorMode", 1, "binaryXnorMode"),
+        ("runtime_writeable_weights", 1, "runtime_writeable_weights"),
+        ("resType", "dsp", "LUT-only"),
+        ("TH", 2, "tiling"),
+        ("pumpedMemory", 1, "clock pumping"),
+    ],
+)
+@pytest.mark.fpgadataflow
+def test_specialize_mvau_rtl_da_rejects(attr, value, reason):
+    model = make_embedded_mvau_model(preferred="rtl")
+    getCustomOp(model.graph.node[0]).set_nodeattr(attr, value)
+    with pytest.raises(FINNUserError, match=reason):
+        model.transform(SpecializeLayers(DSP48E2_PART))
+
+
+@pytest.mark.fpgadataflow
+def test_specialize_mvau_rtl_da_rejects_embedded_thresholds():
+    model = make_embedded_mvau_model(preferred="rtl", act=True)
+    with pytest.raises(FINNUserError, match="standalone thresholds"):
+        model.transform(SpecializeLayers(DSP48E2_PART))
+
+
+@pytest.mark.fpgadataflow
+def test_mvau_rtl_da_codegen_rejects_partial_folding():
+    """SIMD=MW and PE=MH is only checked at code generation time."""
+    model = make_embedded_mvau_model(preferred="rtl")
+    model = model.transform(SpecializeLayers(DSP48E2_PART))
+    inst = getCustomOp(model.graph.node[0])
+    inst.set_nodeattr("SIMD", 8)
+    inst.set_nodeattr("PE", 16)
+    with pytest.raises(FINNUserError, match="SIMD=MW"):
+        model.transform(PrepareIP(DSP48E2_PART, 5))
+    # fully unrolled: code generation succeeds and reports the solution
+    inst.set_nodeattr("SIMD", 16)
+    model = model.transform(PrepareIP(DSP48E2_PART, 5))
+    inst = getCustomOp(model.graph.node[0])
+    assert inst.get_nodeattr("da_cost") > 0
+    assert inst.get_nodeattr("da_latency_cycles") >= 2
+    assert inst.lut_estimation(DSP48E2_PART) > 0
+    assert inst.dsp_estimation(DSP48E2_PART) == 0
+    files = inst.get_rtl_file_list(abspath=True)
+    import os
+
+    assert all(os.path.isfile(f) for f in files), files
+    assert any(f.endswith("mvu_da_axi.sv") for f in files)
+    assert any(f.endswith("_da_core_wrapper.v") for f in files)
+
+
+@pytest.mark.fpgadataflow
+def test_mvau_rtl_da_estimate_runs_solver():
+    """The estimate reports run before code generation; the analysis pass runs the
+    solver so that the LUT estimate is based on the adder graph."""
+    import math
+
+    model = make_embedded_mvau_model(preferred="rtl")
+    model = model.transform(SpecializeLayers(DSP48E2_PART))
+    inst = getCustomOp(model.graph.node[0])
+    inst.set_nodeattr("SIMD", 16)
+    inst.set_nodeattr("PE", 16)
+    fallback = inst.lut_estimation(DSP48E2_PART)
+    res = model.analysis(partial(res_estimation, fpgapart=DSP48E2_PART))
+    inst = getCustomOp(model.graph.node[0])
+    da_cost = inst.get_nodeattr("da_cost")
+    assert da_cost > 0
+    queue = 16 * inst.get_output_datatype().bitwidth()
+    assert res["MVAU_rtl_0"]["LUT"] == math.ceil(da_cost) + queue
+    assert res["MVAU_rtl_0"]["LUT"] != fallback
+    assert res["MVAU_rtl_0"]["DSP"] == 0
+    # partially folded: the solver is skipped and the fallback estimate remains
+    model2 = make_embedded_mvau_model(preferred="rtl")
+    model2 = model2.transform(SpecializeLayers(DSP48E2_PART))
+    res2 = model2.analysis(partial(res_estimation, fpgapart=DSP48E2_PART))
+    assert getCustomOp(model2.graph.node[0]).get_nodeattr("da_cost") == 0
+    assert res2["MVAU_rtl_0"]["LUT"] > 0
+
+
+@pytest.mark.parametrize("act", [False, True])
+@pytest.mark.fpgadataflow
+def test_specialize_da_mvau_after_folding(act):
+    """enable_da_mvau (SpecializeDAMVAU): only MVAUs that the folding already
+    unrolls fully become the DA core; the folding is never changed, fused
+    thresholds and explicit DSP resources keep the regular implementation."""
+    model = make_embedded_mvau_model(preferred="", act=act)
+    inst = getCustomOp(model.graph.node[0])
+    inst.set_nodeattr("mem_mode", "internal_decoupled")
+    inst.set_nodeattr("resType", "auto")
+    model = model.transform(SpecializeLayers(DSP48E2_PART))
+    assert getCustomOp(model.graph.node[0]).get_nodeattr("mem_mode") == "internal_decoupled"
+    # partially folded: untouched
+    inst = getCustomOp(model.graph.node[0])
+    inst.set_nodeattr("SIMD", 8)
+    inst.set_nodeattr("PE", 16)
+    partial = model.transform(SpecializeDAMVAU())
+    p_inst = getCustomOp(partial.graph.node[0])
+    assert p_inst.get_nodeattr("mem_mode") == "internal_decoupled"
+    assert (p_inst.get_nodeattr("SIMD"), p_inst.get_nodeattr("PE")) == (8, 16)
+    # fully unrolled: DA core unless thresholds are fused
+    inst.set_nodeattr("SIMD", 16)
+    full = model.transform(SpecializeDAMVAU())
+    node = full.graph.node[0]
+    f_inst = getCustomOp(node)
+    assert (f_inst.get_nodeattr("SIMD"), f_inst.get_nodeattr("PE")) == (16, 16)
+    if act:
+        assert f_inst.get_nodeattr("mem_mode") == "internal_decoupled"
+    else:
+        assert node.op_type == "MVAU_rtl"
+        assert f_inst.get_nodeattr("mem_mode") == "internal_embedded"
+        assert f_inst.get_nodeattr("resType") == "lut"
+        assert f_inst._is_da_mode()
+        assert node.name == model.graph.node[0].name
+        # explicit DSP resources are respected
+        inst.set_nodeattr("resType", "dsp")
+        dsp = model.transform(SpecializeDAMVAU())
+        assert getCustomOp(dsp.graph.node[0]).get_nodeattr("mem_mode") == "internal_decoupled"
+
+
+@pytest.mark.fpgadataflow
+def test_isolated_mvau_mem_mode_for_fifo_sizing():
+    """The FIFO sizing streams the weights of HLS MVAUs in the isolated copy,
+    except for the DA core and for embedded HLS MVAUs whose weight stream would
+    exceed the ap_int width limit."""
+    from finn.transformation.fpgadataflow.simulation_build import isolated_mvau_mem_mode
+
+    small = {"mem_mode": "internal_embedded", "SIMD": 64, "PE": 1, "weightDataType": "INT2"}
+    assert isolated_mvau_mem_mode("MVAU_hls", small) == "internal_decoupled"
+    assert (
+        isolated_mvau_mem_mode("MVAU_hls", {**small, "mem_mode": "internal_decoupled"})
+        == "internal_decoupled"
+    )
+    huge = {"mem_mode": "internal_embedded", "SIMD": 600, "PE": 64, "weightDataType": "INT2"}
+    assert isolated_mvau_mem_mode("MVAU_hls", huge) == "internal_embedded"
+    assert isolated_mvau_mem_mode("MVAU_rtl", small) == "internal_embedded"
+    assert (
+        isolated_mvau_mem_mode("MVAU_rtl", {**small, "mem_mode": "internal_decoupled"})
+        == "internal_decoupled"
+    )
+
+
+@pytest.mark.fpgadataflow
+def test_mvau_hls_single_iteration_top_pipelining():
+    """The HLS MVAU pipelines its top function only when a call processes a single
+    weight tile of a single input vector (WMEM=1, one vector), where the inner loop
+    is flattened away and the unpipelined top would set the interval."""
+    W = gen_finn_dt_tensor(DataType["INT4"], (16, 16))
+    model = make_single_fclayer_modelwrapper(
+        W, 16, 16, DataType["INT4"], DataType["UINT4"], DataType["INT32"]
+    )
+    inst = getCustomOp(model.graph.node[0])
+    inst.set_nodeattr("preferred_impl_style", "hls")
+    inst.set_nodeattr("mem_mode", "internal_embedded")
+    model = model.transform(SpecializeLayers(DSP48E2_PART))
+    inst = getCustomOp(model.graph.node[0])
+    assert model.graph.node[0].op_type == "MVAU_hls"
+    assert inst.single_iteration_per_call()
+    inst.code_gen_dict = {}
+    inst.pragmas()
+    assert "#pragma HLS pipeline II=1 style=flp" in inst.code_gen_dict["$PRAGMAS$"]
+    # partially folded or several vectors per call: no function-level pipelining
+    inst.set_nodeattr("SIMD", 8)
+    assert not inst.single_iteration_per_call()
+    inst.set_nodeattr("SIMD", 16)
+    inst.set_nodeattr("numInputVectors", [3, 3])
+    assert not inst.single_iteration_per_call()
+    inst.code_gen_dict = {}
+    inst.pragmas()
+    assert "#pragma HLS pipeline II=1 style=flp" not in inst.code_gen_dict["$PRAGMAS$"]

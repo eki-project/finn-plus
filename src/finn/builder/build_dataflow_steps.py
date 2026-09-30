@@ -179,7 +179,7 @@ from finn.transformation.fpgadataflow.simulation_connected import (
     NodeConnectedSimulation,
     RunLayerParallelSimulation,
 )
-from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+from finn.transformation.fpgadataflow.specialize_layers import SpecializeDAMVAU, SpecializeLayers
 from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
 from finn.transformation.fpgadataflow.transpose_decomposition import (
     InferInnerOuterShuffles,
@@ -1402,7 +1402,10 @@ def step_transpose_decomposition(model: ModelWrapper, cfg: DataflowBuildConfig) 
     if has_shuffle:
         model = model.transform(ShuffleDecomposition(), apply_to_subgraphs=True)
         model = model.transform(InferInnerOuterShuffles(), apply_to_subgraphs=True)
-        model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()), apply_to_subgraphs=True)
+        model = model.transform(
+            SpecializeLayers(cfg._resolve_fpga_part()),
+            apply_to_subgraphs=True,
+        )
         model = model.transform(InferShapes(), apply_to_subgraphs=True)
         model = model.transform(InferDataTypes(), apply_to_subgraphs=True)
         model = model.transform(GiveUniqueNodeNamesRecursive())
@@ -1495,6 +1498,11 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
         )
     else:
         log.info("No folding config json provided, skipping step_apply_folding_config.")
+
+    if cfg.enable_da_mvau:
+        # the folding is final now: fully unrolled MVAUs with constant weights
+        # become distributed-arithmetic cores
+        model = model.transform(SpecializeDAMVAU())
 
     return model
 

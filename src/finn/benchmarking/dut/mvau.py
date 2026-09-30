@@ -149,7 +149,8 @@ class bench_mvau(bench):
         elif backend == "rtl":
             customop_name = "MVAU_rtl"
             domain = "finn.custom_op.fpgadataflow.rtl"
-            resType = "dsp"
+            # embedded weights select the LUT-only distributed-arithmetic core
+            resType = "lut" if mem_mode == "internal_embedded" else "dsp"
 
         mvau_node = helper.make_node(
             customop_name,
@@ -290,19 +291,30 @@ class bench_mvau(bench):
             # only standalone thresholds supported
             if act is not None:
                 return "skipped"
-            # only decoupled mem mode supported
-            if mem_mode != "internal_decoupled":
-                return "skipped"
-            # only signed weights supported
-            if not wdt.signed():
-                return "skipped"
-            # bitwidth restrictions
-            if idt.bitwidth() < 4 or idt.bitwidth() > 8:
-                return "skipped"
-            if wdt.bitwidth() < 4 or wdt.bitwidth() > 8:
-                return "skipped"
-            # TODO: narrow-range restrictions for DSP48E1
-            # TODO: special case of 9-bit signed input
+            if mem_mode == "internal_embedded":
+                # distributed-arithmetic core: constant weights compiled into an
+                # adder graph, only exists fully unrolled
+                if simd != mw or pe != mh:
+                    print("RTL MVAU with embedded weights requires SIMD=MW, PE=MH, skipping")
+                    return "skipped"
+                if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
+                    print("RTL MVAU with embedded weights does not support XNOR mode, skipping")
+                    return "skipped"
+            else:
+                # DSP-based core
+                # only decoupled mem mode supported
+                if mem_mode != "internal_decoupled":
+                    return "skipped"
+                # only signed weights supported
+                if not wdt.signed():
+                    return "skipped"
+                # bitwidth restrictions
+                if idt.bitwidth() < 4 or idt.bitwidth() > 8:
+                    return "skipped"
+                if wdt.bitwidth() < 4 or wdt.bitwidth() > 8:
+                    return "skipped"
+                # TODO: narrow-range restrictions for DSP48E1
+                # TODO: special case of 9-bit signed input
 
         # Weight stream width limitation for HLS MVAU
         if backend == "hls" and mem_mode == "internal_decoupled":
@@ -414,6 +426,23 @@ class bench_mvau(bench):
         output_dict["zero_weights"] = round(num_zeros / W.size, 2)
         output_dict["easy_weights"] = round((num_zeros + num_ones + num_p2) / W.size, 2)
 
+        # Distributed-arithmetic cost of the same weights (alkaid solver only, no HDL),
+        # logged for every fully unrolled layer so that HLS and DA builds of identical
+        # matrices can be compared and the DA LUT estimate calibrated
+        if (
+            simd == mw
+            and pe == mh
+            and not (wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"])
+        ):
+            from finn.custom_op.fpgadataflow.rtl.da_codegen import da_cost_estimate
+
+            da_hard_dc = self._params.get("da_hard_dc", 2)
+            try:
+                output_dict.update(da_cost_estimate(W, idt, hard_dc=da_hard_dc))
+                output_dict["da_hard_dc"] = da_hard_dc
+            except Exception as e:  # informational only, must not fail the build
+                print(f"DA cost estimate failed: {e}")
+
         # Generate thresholds
         if act is None:
             # no activation, produce accumulators
@@ -466,8 +495,14 @@ class bench_mvau(bench):
             backend,
         )
         model = model.transform(GiveUniqueNodeNames())
-        # node = model.get_nodes_by_op_type("MVAU_hls")[0]
-        # inst = getCustomOp(node)
+        if backend == "rtl" and mem_mode == "internal_embedded":
+            from qonnx.custom_op.registry import getCustomOp
+
+            for node in model.get_nodes_by_op_type("MVAU_rtl"):
+                inst = getCustomOp(node)
+                inst.set_nodeattr("da_hard_dc", self._params.get("da_hard_dc", 2))
+                if "da_latency_cutoff" in self._params:
+                    inst.set_nodeattr("da_latency_cutoff", self._params["da_latency_cutoff"])
 
         # log additional info about the generated model (e.g. SIMD/PE or sparsity)
         with open(self._build_inputs["build_dir"] / "report/dut_info.json", "w") as f:
