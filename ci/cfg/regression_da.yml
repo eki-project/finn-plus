@@ -3,13 +3,14 @@
 # MVU. At the regular folding target of the regression (1 M fps, hidden layers at
 # SIMD=64, PE=1) the four combinations of fused vs. standalone (RTL) thresholds
 # and streamed vs. embedded HLS weights; then every layer fully unrolled (one
-# frame per cycle, 100 M fps target with a raised mvau_wwidth_max) with the HLS
-# MVAU and embedded weights, and the same design point with enable_da_mvau, which
-# switches the unrolled MVAUs to the distributed-arithmetic RTL MVAU after the
-# folding. Embedded HLS weights come from the folding configs (mem_mode/resType
-# defaults by op type; the unrolled one also fixes SIMD/PE per layer, the 100 M
-# fps target only lets SetFolding unroll whatever the config does not name); the
-# RTL thresholds come from auto specialization.
+# frame per cycle) with the HLS MVAU and embedded weights, and the same design
+# point with enable_da_mvau, which switches the unrolled MVAUs to the
+# distributed-arithmetic RTL MVAU after the folding. Embedded HLS weights come
+# from the folding configs (mem_mode/resType defaults by op type); the unrolled
+# one fixes SIMD/PE of every layer explicitly and auto folding is disabled
+# (target_fps null), since SetFolding would cap the PE of the 600-wide first
+# layer by the weight-stream width of the still streamed HLS weights. The RTL
+# thresholds come from auto specialization.
 [
     {
         # 1. reference: fused thresholds, HLS MVAUs with streamed weights
@@ -38,8 +39,7 @@
     {
         # 5. fully unrolled, HLS MVAUs with embedded weights, standalone RTL thresholds
         "dut": ["cybsec"],
-        "target_fps": [100000000],
-        "mvau_wwidth_max": [1200],
+        "target_fps": [null],
         "standalone_thresholds": [true],
         "folding_config_file": ["models/cybsec/unrolled_hls_embedded_folding_config.json"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
@@ -47,8 +47,7 @@
     {
         # 6. as 5, but the unrolled MVAUs become distributed-arithmetic RTL MVAUs
         "dut": ["cybsec"],
-        "target_fps": [100000000],
-        "mvau_wwidth_max": [1200],
+        "target_fps": [null],
         "standalone_thresholds": [true],
         "folding_config_file": ["models/cybsec/unrolled_hls_embedded_folding_config.json"],
         "enable_da_mvau": [true],
