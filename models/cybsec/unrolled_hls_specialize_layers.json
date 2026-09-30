@@ -1,0 +1,11 @@
+{
+  "Defaults": {
+    "preferred_impl_style": ["hls", ["MVAU"]],
+    "mem_mode": ["internal_embedded", ["MVAU"]],
+    "resType": ["lut", ["MVAU"]]
+  },
+  "Thresholding_0": {"preferred_impl_style": "rtl"},
+  "Thresholding_1": {"preferred_impl_style": "rtl"},
+  "Thresholding_2": {"preferred_impl_style": "rtl"},
+  "Thresholding_3": {"preferred_impl_style": "rtl"}
+}

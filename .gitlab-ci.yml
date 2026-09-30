@@ -227,13 +227,12 @@ Bench (Basic):
       # One Slurm array task per experiment of the config, so PARALLEL_JOBS has to be kept in
       # sync with the number of experiments in ci/cfg/<BENCH_CFG>.yml. The large models need
       # a bigger node than the rest, hence the split into two configs.
-      - BENCH_CFG: [regression_small]
-        PARALLEL_JOBS: "13"
-      - BENCH_CFG: [regression_large]
+      # TODO(feature/mvau-rtl-da4ml): the regular regression configs are replaced by the
+      # cybsec end-to-end comparison of the distributed-arithmetic MVU while the PR is
+      # evaluated; restore regression_small (13 jobs) and regression_large (3 jobs, 128
+      # cores, 512G) before merging.
+      - BENCH_CFG: [regression_da]
         PARALLEL_JOBS: "3"
-        BENCH_CPU_CORES: "128"
-        BENCH_FINN_WORKERS: "128"
-        MEM_BENCH: "512G"
 
 Bench (Extended):
   stage: test
