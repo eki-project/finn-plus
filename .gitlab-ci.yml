@@ -232,7 +232,7 @@ Bench (Basic):
       # evaluated; restore regression_small (13 jobs) and regression_large (3 jobs, 128
       # cores, 512G) before merging.
       - BENCH_CFG: [regression_da]
-        PARALLEL_JOBS: "3"
+        PARALLEL_JOBS: "6"
 
 Bench (Extended):
   stage: test

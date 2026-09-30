@@ -1,35 +1,54 @@
-# End-to-end comparison of the distributed-arithmetic MVU on the cybsec MLP
-# (600 -> 64 -> 64 -> 64 -> 1, 2-bit weights). Three design points:
-#   1. the regular regression build (auto folding for 1 M fps, HLS MVAUs with
-#      streamed weights, thresholds fused into the MVAUs)
-#   2. every layer fully unrolled (one frame per cycle) with the HLS MVAU and
-#      embedded weights, standalone RTL thresholds
-#   3. exactly the same design point with the build option enable_da_mvau, which
-#      switches the fully unrolled MVAUs to the distributed-arithmetic RTL MVAU
-#      after folding (the only difference to variant 2)
-# The unrolled variants get a 100 M fps target so that SetFolding unrolls every
-# MVAU and threshold layer; mvau_wwidth_max is raised so that the 600-wide first
-# layer is not capped, and the embedded weights of the HLS MVAU (for which there
-# is no build option) come from the shared specialize config.
+# The cybsec MLP (600 -> 64 -> 64 -> 64 -> 1, 2-bit weights) across the MVAU and
+# threshold implementation options, as a benchmark for the distributed-arithmetic
+# MVU. At the regular folding target of the regression (1 M fps, hidden layers at
+# SIMD=64, PE=1) the four combinations of fused vs. standalone (RTL) thresholds
+# and streamed vs. embedded HLS weights; then every layer fully unrolled (one
+# frame per cycle, 100 M fps target with a raised mvau_wwidth_max) with the HLS
+# MVAU and embedded weights, and the same design point with enable_da_mvau, which
+# switches the unrolled MVAUs to the distributed-arithmetic RTL MVAU after the
+# folding. Embedded HLS weights need the shared specialize config since there is
+# no build option for them; the RTL thresholds come from auto specialization.
 [
     {
+        # 1. reference: fused thresholds, HLS MVAUs with streamed weights
         "dut": ["cybsec"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
+        # 2. fused thresholds, HLS MVAUs with embedded weights
         "dut": ["cybsec"],
-        "target_fps": [100000000],
-        "mvau_wwidth_max": [1200],
-        "standalone_thresholds": [true],
-        "specialize_layers_config_file": ["models/cybsec/unrolled_hls_specialize_layers.json"],
+        "specialize_layers_config_file": ["models/cybsec/hls_embedded_specialize_layers.json"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
+        # 3. standalone RTL thresholds, HLS MVAUs with streamed weights
+        "dut": ["cybsec"],
+        "standalone_thresholds": [true],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        # 4. standalone RTL thresholds, HLS MVAUs with embedded weights
+        "dut": ["cybsec"],
+        "standalone_thresholds": [true],
+        "specialize_layers_config_file": ["models/cybsec/hls_embedded_specialize_layers.json"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        # 5. fully unrolled, HLS MVAUs with embedded weights, standalone RTL thresholds
         "dut": ["cybsec"],
         "target_fps": [100000000],
         "mvau_wwidth_max": [1200],
         "standalone_thresholds": [true],
-        "specialize_layers_config_file": ["models/cybsec/unrolled_hls_specialize_layers.json"],
+        "specialize_layers_config_file": ["models/cybsec/hls_embedded_specialize_layers.json"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        # 6. as 5, but the unrolled MVAUs become distributed-arithmetic RTL MVAUs
+        "dut": ["cybsec"],
+        "target_fps": [100000000],
+        "mvau_wwidth_max": [1200],
+        "standalone_thresholds": [true],
+        "specialize_layers_config_file": ["models/cybsec/hls_embedded_specialize_layers.json"],
         "enable_da_mvau": [true],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
