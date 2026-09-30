@@ -103,3 +103,24 @@ copied at build time from the installed package.
 * `ci/cfg/microbenchmark_da_baseline.yml` / `microbenchmark_da.yml`: HLS vs. DA
   out-of-context synthesis sweeps for the calibration of the LUT estimate and
   the latency budget.
+
+## Results (CI sweep `microbenchmark_da`, xczu28dr, 10 ns, out-of-context synthesis of the stitched node)
+
+LUT / FF / fmax (MHz) of the HLS MVAU with embedded weights against the DA core (`da_hard_dc=2`) on identical, fully unrolled random weight matrices; `sp` is the fraction of zeroed weights.
+
+| activations x weights | MW x MH | sp | HLS embedded | DA | LUT ratio |
+|---|---|---|---|---|---|
+| UINT4 x INT4 | 16x16 | 0 | 2900 / 1982 / 178 | 1912 / 1562 / 234 | 1.52 |
+| UINT4 x INT4 | 64x64 | 0 | 29686 / 7975 / 106 | 18424 / 10929 / 142 | 1.61 |
+| UINT4 x INT4 | 64x64 | 0.5 | 17938 / 7842 / 121 | 11941 / 9487 / 156 | 1.50 |
+| INT8 x INT8 | 16x16 | 0 | 10292 / 3008 / 132 | 4387 / 3710 / 232 | 2.35 |
+| INT8 x INT8 | 64x64 | 0 | 141100 / 16833 / 104 | 47632 / 22757 / 102 | 2.96 |
+| INT8 x INT8 | 64x64 | 0.5 | 73166 / 15384 / 105 | 29948 / 16718 / 107 | 2.44 |
+| UINT4 x BIPOLAR | 16x16 | 0 | 2094 / 1982 / 203 | 1278 / 1529 / 267 | 1.64 |
+| UINT4 x BIPOLAR | 64x64 | 0 | 18790 / 8260 / 121 | 8786 / 8661 / 180 | 2.14 |
+| BIPOLAR x INT4 | 16x16 | 0 | 920 / 910 / 240 | 772 / 766 / 257 | 1.19 |
+| BIPOLAR x INT4 | 64x64 | 0 | 10088 / 6071 / 149 | 8913 / 8401 / 193 | 1.13 |
+
+Over all 24 matrices of the sweep the DA core needs 1.1x (1-bit activations) to 3.0x (INT8) fewer LUTs than the embedded HLS MVAU, mean 1.8x, at equal or higher fmax and with no DSPs. `da_hard_dc=-1` (unconstrained trees) never saved LUTs and lowered fmax for some INT8 layers. The HLS MVAU with `internal_decoupled` weights at the same folding needs another 2.5x more LUTs than the embedded one, i.e. constant folding already buys a lot in HLS; the DA core is the gain on top of that. Every DA build sustains one input vector per cycle in rtlsim (`rtlsim_performance`), and the whole build of a layer takes seconds instead of a Vitis HLS run.
+
+The solver-backed LUT estimate (`da_cost + MH * ACCU_WIDTH`) lands at 0.5 to 1.2x, mean 0.83x, of the synthesized stitched node across the sweep; the shortfall is the TLastMarker and stitching logic outside the MVAU (about one LUT per output bit plus ~300), which dominates only for the smallest layers.

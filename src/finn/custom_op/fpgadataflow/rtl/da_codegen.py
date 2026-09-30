@@ -80,17 +80,21 @@ DA_PRIMITIVE_MODULES = (
 # float32 mantissa would be rounded.
 DA_MAX_WEIGHT_BITS = 24
 
-# Initial mapping from the target clock period to alkaid's per-stage latency
-# budget. alkaid's latency unit is a surrogate delay (~1.1 units per adder level
-# plus a small width-dependent carry term, calibrated on UltraScale+), so a
-# budget of roughly one unit per nanosecond of clock period is the starting
-# point. To be calibrated against out-of-context synthesis results.
+# Mapping from the target clock period to alkaid's per-stage latency budget.
+# alkaid's latency unit is a surrogate delay (~1.1 units per adder level plus a
+# small width-dependent carry term). Calibration (CI sweep microbenchmark_da,
+# xczu28dr-2, 10 ns, 16..64 x 16..64, UINT4/INT8/BIPOLAR activations, INT4/INT8/
+# BIPOLAR weights): with 0.85 units per ns every design met timing, with a slack
+# of 0.2 ns for 64x64 INT8xINT8 up to 6.4 ns for the small 4-bit layers.
 DA_LATENCY_CUTOFF_PER_NS = 0.85
 DA_MIN_LATENCY_CUTOFF = 1.0
 
-# Initial LUT-per-cost-unit factor for resource estimation. alkaid's ``cost`` is
-# the number of active result bits of all adders in the graph (one LUT+carry per
-# bit is the ideal mapping). To be calibrated against out-of-context synthesis.
+# LUT-per-cost-unit factor for resource estimation. alkaid's ``cost`` is the
+# number of active result bits of all adders in the graph. Calibration on the
+# same sweep: LUT(stitched node) = 0.99 * cost + 1.93 * output bits + 302 (9 %
+# mean error over 28 designs); a hierarchical synthesis attributes 1.03 LUT per
+# cost unit to the core and one LUT per output bit to the SRL output queue of the
+# bracket, the rest is the TLastMarker and stitching overhead outside the node.
 DA_LUT_PER_COST_BIT = 1.0
 
 
