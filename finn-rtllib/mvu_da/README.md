@@ -29,11 +29,18 @@ small CNNs, i.e. every layer that reaches `WMEM = 1`. Reuse across input
 vectors (`numInputVectors > 1`, convolutions after im2col) is fine: the core
 accepts one input vector per clock cycle.
 
-Layer selection is **opt-in**: `SpecializeLayers` picks the core only when the
-node has `preferred_impl_style="rtl"` and `mem_mode="internal_embedded"`. With
-an empty preference such a node stays an HLS MVAU, and an info message points
-at the RTL alternative when the layer qualifies. Per-layer configuration in the
-specialize/folding config files:
+Layer selection is **opt-in**, in one of two ways:
+
+* Build config option `enable_da_mvau: true`: `SpecializeLayers` turns every
+  MVAU without an explicit `preferred_impl_style` whose constraints hold
+  (standalone thresholds, static integer weights, no XNOR mode, tiling or
+  pumping) into the DA core and `SetFolding` unrolls it fully regardless of
+  `target_fps`. Meant for small networks or maximum-throughput design points.
+* Per layer: `preferred_impl_style="rtl"` together with `mem_mode="internal_embedded"`
+  in the specialize/folding config files. Without either, such a node stays an
+  HLS MVAU and an info message points at the RTL alternative when it qualifies.
+
+Per-layer configuration:
 
 ```json
 "MVAU_0": {

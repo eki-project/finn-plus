@@ -207,3 +207,32 @@ def test_mvau_rtl_da_estimate_runs_solver():
     res2 = model2.analysis(partial(res_estimation, fpgapart=DSP48E2_PART))
     assert getCustomOp(model2.graph.node[0]).get_nodeattr("da_cost") == 0
     assert res2["MVAU_rtl_0"]["LUT"] > 0
+
+
+@pytest.mark.parametrize("act", [False, True])
+@pytest.mark.fpgadataflow
+def test_specialize_mvau_da_auto_option(act):
+    """enable_da_mvau: every MVAU without an explicit preference that meets the DA
+    constraints becomes the DA core (embedded weights, LUT-only); fused thresholds
+    keep the regular selection; an explicit preference wins."""
+    model = make_embedded_mvau_model(preferred="", act=act)
+    inst = getCustomOp(model.graph.node[0])
+    inst.set_nodeattr("mem_mode", "internal_decoupled")
+    inst.set_nodeattr("resType", "auto")
+    model_off = model.transform(SpecializeLayers(DSP48E2_PART, enable_da_mvau=False))
+    assert getCustomOp(model_off.graph.node[0]).get_nodeattr("mem_mode") == "internal_decoupled"
+    model_on = model.transform(SpecializeLayers(DSP48E2_PART, enable_da_mvau=True))
+    node = model_on.graph.node[0]
+    if act:
+        assert getCustomOp(node).get_nodeattr("mem_mode") == "internal_decoupled"
+    else:
+        assert node.op_type == "MVAU_rtl"
+        inst = getCustomOp(node)
+        assert inst.get_nodeattr("mem_mode") == "internal_embedded"
+        assert inst.get_nodeattr("resType") == "lut"
+        assert inst._is_da_mode()
+    # explicit preference is respected
+    model_hls = make_embedded_mvau_model(preferred="hls", act=act)
+    getCustomOp(model_hls.graph.node[0]).set_nodeattr("mem_mode", "internal_decoupled")
+    model_hls = model_hls.transform(SpecializeLayers(DSP48E2_PART, enable_da_mvau=True))
+    assert model_hls.graph.node[0].op_type == "MVAU_hls"

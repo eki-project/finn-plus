@@ -661,6 +661,16 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: flexibility, and makes it possible to have runtime-writable thresholds.
     standalone_thresholds: bool = False
 
+    #: Whether MVAU layers with constant weights and standalone thresholds are
+    #: implemented as the distributed-arithmetic RTL MVAU (MVAU_rtl with
+    #: mem_mode=internal_embedded, see finn-rtllib/mvu_da/README.md): the weight
+    #: matrix is compiled into a pipelined, multiplier-free adder graph. Such a
+    #: layer only exists fully unrolled (SIMD=MW, PE=MH) and is unrolled by
+    #: SetFolding regardless of target_fps, so this is meant for small networks
+    #: or maximum-throughput design points. A preferred_impl_style given in the
+    #: specialize_layers_config_file takes precedence.
+    enable_da_mvau: bool = False
+
     #: (Optional) Bitwidth threshold for choosing between Requant and Thresholding
     #: for MultiThreshold nodes. When output bitwidth >= this threshold, Requant is
     #: preferred (if thresholds are uniform). When output bitwidth < threshold,

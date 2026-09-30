@@ -46,11 +46,14 @@ from finn.util.exception import FINNUserError
 from finn.util.logging import log
 
 
-def _determine_impl_style(node, fpgapart, model):
+def _determine_impl_style(node, fpgapart, model, enable_da_mvau=False):
     """Determine the optimal implementation style (HLS or RTL) for a given node.
 
     Analyzes node constraints, FPGA capabilities, and user preferences to select
-    the best hardware implementation variant for a dataflow layer.
+    the best hardware implementation variant for a dataflow layer. With
+    enable_da_mvau, MVAU layers without an explicit preference become the
+    distributed-arithmetic RTL MVAU (embedded weights, LUT-only, fully unrolled
+    by SetFolding) whenever its constraints allow.
     """
     optype = node.op_type
 
@@ -67,6 +70,16 @@ def _determine_impl_style(node, fpgapart, model):
     if impl_style == "":
         if rtl_variant:
             if optype == "MVAU":
+                if enable_da_mvau:
+                    da_possible, reason = _mvu_rtl_da_possible(node, model)
+                    if da_possible:
+                        node_inst.set_nodeattr("mem_mode", "internal_embedded")
+                        node_inst.set_nodeattr("resType", "lut")
+                        return "rtl"
+                    log.info(
+                        f"{node.name}: not using the distributed-arithmetic RTL MVU "
+                        f"because {reason}."
+                    )
                 if node_inst.get_nodeattr("mem_mode") == "internal_embedded":
                     # the RTL variant with embedded weights is the distributed-arithmetic
                     # core, which is opt-in (preferred_impl_style="rtl") for now
@@ -454,14 +467,17 @@ def _requant_rtl_possible(n, fpgapart):
 class SpecializeLayers(Transformation):
     """Specialize all layers to either HLS or RTL variants."""
 
-    def __init__(self, fpgapart):
+    def __init__(self, fpgapart, enable_da_mvau=False):
         """Initialize the SpecializeLayers transformation.
 
         Args:
             fpgapart: Target FPGA part string for implementation selection
+            enable_da_mvau: Use the distributed-arithmetic RTL MVAU for every MVAU
+                without an explicit preference whose constraints allow it
         """
         super().__init__()
         self.fpgapart = fpgapart
+        self.enable_da_mvau = enable_da_mvau
 
     def apply(self, model):
         """Apply layer specialization transformation to model.
@@ -482,7 +498,7 @@ class SpecializeLayers(Transformation):
             if node.op_type == "Shuffle":
                 continue
             node_ind += 1
-            impl_style = _determine_impl_style(node, self.fpgapart, model)
+            impl_style = _determine_impl_style(node, self.fpgapart, model, self.enable_da_mvau)
             optype = node.op_type + "_" + impl_style
 
             new_node = helper.make_node(

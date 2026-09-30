@@ -55,7 +55,9 @@ def step_collapse_multi_dnn(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(CollapseModels())
     model = model.transform(InferSplitIntoSplitMultiHeads())
     model = model.transform(InferConcatLayer())
-    model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))  # For Concat and Split
+    model = model.transform(
+        SpecializeLayers(cfg._resolve_fpga_part(), enable_da_mvau=cfg.enable_da_mvau)
+    )  # For Concat and Split
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(NameNodeContainerNodes())
     return model

@@ -4,10 +4,12 @@
 #      streamed weights, thresholds fused into the MVAUs)
 #   2. every layer fully unrolled (one frame per cycle) with the HLS MVAU and
 #      embedded weights, standalone RTL thresholds
-#   3. the same with the distributed-arithmetic RTL MVAU
+#   3. the same with the distributed-arithmetic RTL MVAU, selected purely by the
+#      build option enable_da_mvau (auto specialization, no per-model config)
 # The unrolled variants get a 100 M fps target so that SetFolding unrolls every
 # MVAU (the DA MVAU unrolls itself) and threshold layer; mvau_wwidth_max is raised
-# so that the 600-wide first layer is not capped for the HLS variant.
+# so that the 600-wide first layer is not capped for the HLS variant, whose
+# embedded weights need the specialize config (there is no build option for it).
 [
     {
         "dut": ["cybsec"],
@@ -26,7 +28,7 @@
         "target_fps": [100000000],
         "mvau_wwidth_max": [1200],
         "standalone_thresholds": [true],
-        "specialize_layers_config_file": ["models/cybsec/unrolled_da_specialize_layers.json"],
+        "enable_da_mvau": [true],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
 ]
