@@ -138,3 +138,4 @@ bench_work
 
 # In repo test directory
 FINN_TEST_BUILD_DIR
+/reports
