@@ -1,0 +1,15 @@
+{
+  "Defaults": {
+    "mem_mode": ["internal_embedded", ["MVAU_hls"]],
+    "resType": ["lut", ["MVAU_hls"]]
+  },
+  "Thresholding_rtl_0": {"PE": 1},
+  "MVAU_hls_0": {"SIMD": 490, "PE": 256},
+  "Thresholding_rtl_1": {"PE": 256},
+  "MVAU_hls_1": {"SIMD": 256, "PE": 256},
+  "Thresholding_rtl_2": {"PE": 256},
+  "MVAU_hls_2": {"SIMD": 256, "PE": 256},
+  "Thresholding_rtl_3": {"PE": 256},
+  "MVAU_hls_3": {"SIMD": 256, "PE": 12},
+  "LabelSelect_hls_0": {"PE": 12}
+}

@@ -57,10 +57,13 @@
     },
     # ------------------------------------------------------------------------------
     # KWS MLP (490 -> 256 -> 256 -> 256 -> 12, dense 3-bit weights, ~21 % zeros).
-    # Unrolling the whole network does not fit the board (~2 LUTs per weight, 260 k
-    # weights), so the unrolled design points unroll the output layer only (256x12,
-    # ~7 k LUTs as a DA core): with enable_da_mvau exactly that layer becomes a DA
-    # core while the folded layers keep their HLS implementation.
+    # Unrolling the whole network is not expected to fit the board (~2 LUTs per
+    # weight, 260 k weights), so the HLS vs. DA comparison unrolls the output layer
+    # only (256x12, ~7 k LUTs as a DA core): with enable_da_mvau exactly that layer
+    # becomes a DA core while the folded layers keep their HLS implementation. The
+    # last variant unrolls every layer as a DA core anyway to get the real size (or
+    # the over-utilization reported by Vivado); there is no HLS counterpart, its
+    # synthesis time would be extreme.
     {
         # 7. reference: current folding, HLS MVAUs with streamed weights, fused thresholds
         "dut": ["kws"],
@@ -95,6 +98,15 @@
         # 12. as 11, but the unrolled output layer becomes a distributed-arithmetic RTL MVAU
         "dut": ["kws"],
         "folding_config_file": ["models/kws/kws_last_unrolled_hls_embedded_folding_config.json"],
+        "enable_da_mvau": [true],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        # 13. every layer fully unrolled as a distributed-arithmetic RTL MVAU, standalone
+        #     RTL thresholds
+        "dut": ["kws"],
+        "standalone_thresholds": [true],
+        "folding_config_file": ["models/kws/kws_unrolled_hls_embedded_folding_config.json"],
         "enable_da_mvau": [true],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
