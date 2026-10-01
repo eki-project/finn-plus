@@ -6,6 +6,15 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
+## 1.6.1 - 01.10.2026
+
+### Changed
+- The `finn-plus-tests` package is removed: the test suite is no longer packaged, `finn test` runs it from the `tests/` directory of a repository checkout (`--tests-path`, default `./tests`) and its tooling is available as the `test` extra (`pip install finn-plus[test]`) (eki-project#284)
+
+### Fixed
+- A plain `pip install finn-plus` could not start the CLI because it imported `junitparser`, a dependency of the optional test suite, on start-up (eki-project#284)
+- The cycle estimate of the RTL sliding window generator in 1D depthwise mode was about 2x too low for windows spanning a whole sequence, and `SetFolding` now folds the window generator together with the pooling/depthwise layer it feeds so that it no longer becomes the throughput bottleneck (eki-project#280)
+
 ## 1.6.0 - 28.09.2026
 
 ### Added

@@ -1,12 +1,12 @@
 """Manage FINNs testsuite."""
 
+import importlib.util
 import os
 import re
 import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
-from junitparser import JUnitXml, TestCase
 from pathlib import Path
 from re import Pattern
 
@@ -14,6 +14,42 @@ from finn.interface import IS_POSIX
 from finn.interface.interface_utils import status
 from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
+
+# Python modules the test runner needs beyond the finn-plus package itself. They come with
+# the "test" extra only, so a plain "pip install finn-plus" must not import any of them at
+# module level, or the whole CLI breaks on start-up. They are checked here, when "finn test"
+# is actually invoked (tests/util/test_import_hygiene.py guards the package against this).
+_TEST_SUITE_MODULES = ("pytest", "xdist", "junitparser")
+
+
+def resolve_tests_dir(tests_dir: Path | None) -> Path:
+    """Locate the test suite and check that its tooling is installed.
+
+    The suite is the tests/ directory of a repository checkout and is not part of the pip
+    package. It is taken from the argument, or else from ./tests of the current directory.
+    The environment is deliberately not consulted: a FINN_TESTS variable exported by a shell
+    profile would silently point every other checkout or worktree at the wrong suite.
+    Raises a FINNUserError explaining what is missing otherwise.
+    """
+    if tests_dir is None:
+        tests_dir = Path.cwd() / "tests"
+    tests_dir = tests_dir.expanduser().absolute()
+    problems = []
+    if not (tests_dir / "conftest.py").is_file():
+        problems.append(
+            f"no test suite found at {tests_dir}. The suite is the tests/ directory of "
+            "a finn-plus repository checkout, pass it with --tests-path or run 'finn test' "
+            "from the checkout root"
+        )
+    missing = [m for m in _TEST_SUITE_MODULES if importlib.util.find_spec(m) is None]
+    if missing:
+        problems.append(
+            "missing Python modules: " + ", ".join(missing) + ". Install the test tooling "
+            "with 'poetry install' in a checkout or with 'pip install finn-plus[test]'"
+        )
+    if problems:
+        raise FINNUserError("Cannot run the FINN+ test suite: " + "; ".join(problems))
+    return tests_dir
 
 
 def run_doctests(num_workers: int) -> bool:
@@ -68,8 +104,14 @@ CI_TEST_TIMEOUT_ARGS = (
 )
 
 
-def run_test(variant: str, num_workers: str, args: str = "") -> None:
-    """Run a given test variant with the given number of workers."""
+def run_test(variant: str, num_workers: str, tests_dir: Path, args: str = "") -> None:
+    """Run a given test variant with the given number of workers.
+
+    The test suite at tests_dir (see resolve_tests_dir) is run against the installed finn
+    package: pytest picks up the pyproject.toml of the checkout as its configuration and
+    puts the checkout root on sys.path for the tests package, while "import finn" resolves
+    like in any other process of this interpreter.
+    """
     original_dir = Path.cwd()
 
     # TODO: Make this optional
@@ -79,7 +121,9 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
         ci_project_dir = str(get_settings().finn_build_dir)
     status(f"Putting test reports into {ci_project_dir}")
 
-    os.chdir(os.environ["FINN_TESTS"])
+    # Export the suite that is actually run, replacing any stale value from the shell
+    os.environ["FINN_TESTS"] = str(tests_dir)
+    os.chdir(tests_dir)
     match variant:
         case "custom":
             if args == "":
@@ -135,6 +179,9 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                 )
             )
         case "full_ci":
+            # Only this variant parses JUnit reports, keep the test-only dependency local
+            from junitparser import JUnitXml, TestCase
+
             main_xml = f"{ci_project_dir}/reports/main.xml"
             main_html = f"{ci_project_dir}/reports/main.html"
             crash_xml = f"{ci_project_dir}/reports/crash_rerun.xml"
@@ -287,7 +334,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                     posix=IS_POSIX,
                 )
             )
-            script_dir = Path(get_settings().finn_tests) / "testing_util" / "merge_xml_reports.py"
+            script_dir = tests_dir / "testing_util" / "merge_xml_reports.py"
             success = subprocess.run(
                 shlex.split(
                     (

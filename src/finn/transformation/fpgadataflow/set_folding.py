@@ -306,6 +306,27 @@ class SetFolding(Transformation):
                 if swu_node.op_type.startswith("ConvolutionInputGenerator"):
                     swu_node_inst = getCustomOp(swu_node)
                     swu_node_inst.set_nodeattr("SIMD", pe)
+                    # The depthwise SWU replays its buffered window once per channel
+                    # fold, so it can be slower than the VVAU/Pool it feeds (e.g. a
+                    # global pooling window over the whole feature map). Keep raising
+                    # the shared parallelism until the SWU meets the target as well.
+                    if swu_node_inst.get_exp_cycles() > self.target_cycles_per_frame:
+                        for val in divisors(max_pe):
+                            if val <= pe:
+                                continue
+                            pe = val
+                            node_inst.set_nodeattr("PE", pe)
+                            swu_node_inst.set_nodeattr("SIMD", pe)
+                            if swu_node_inst.get_exp_cycles() <= self.target_cycles_per_frame:
+                                break
+                        else:
+                            self.any_throughput_target_missed = True
+                            log.warning(
+                                f"Node {swu_node.name} did not meet the target cycles. SIMD "
+                                f"was finalized to {pe} (bound to PE of {node.name}). "
+                                f"Estimated: {swu_node_inst.get_exp_cycles()} (cyc/frame), "
+                                f"Target: {self.target_cycles_per_frame} (cyc/frame)."
+                            )
                     # enable parallel_window mode of RTL SWG if needed
                     if swu_node.op_type == "ConvolutionInputGenerator_rtl":
                         if (
