@@ -9,11 +9,11 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 
 ### Added
-- The PYNQ driver validates accelerators on more datasets, so that the CI measures the accuracy of all trained regression models on the board: Google Speech Commands v2 (`speechcommands`, KWS), GTSRB (`gtsrb`), the evaluation split of the RadioML transformer (`radioml_transformer`) and masked token prediction on TinyStories (`tinystories`, language transformer); `scripts/prepare_validation_datasets.py` fetches the new datasets into the dataset directory
+- The PYNQ driver validates accelerators on more datasets, so that the CI measures the accuracy of all trained regression models on the board: Google Speech Commands v2 (`speechcommands`, KWS), GTSRB (`gtsrb`), the evaluation split of the RadioML transformer (`radioml_transformer`) and masked token prediction on TinyStories (`tinystories`, language transformer); `scripts/prepare_validation_datasets.py` fetches the new datasets into the dataset directory (eki-project#290)
 
 ### Changed
 - Pin `onnx-passes` to 0.4.1 (eki-project#288)
-- The CIFAR validation of the PYNQ driver normalizes the images for every accelerator with a float input, not only for CIFAR-100 (override with the `normalize` kwarg of `validate`)
+- The CIFAR validation of the PYNQ driver normalizes the images for every accelerator with a float input, not only for CIFAR-100 (override with the `normalize` kwarg of `validate`) (eki-project#290)
 
 ### Fixed
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
