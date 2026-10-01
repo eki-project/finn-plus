@@ -34,36 +34,36 @@ class AuroraPartitioner(Partitioner):
         """Run some checks on the model and configuration. This will warn or error,
         in case issues are detected.
         """
-        if self.pcfg.num_fpgas > len(self.modelwrapper.graph.node):
+        if self.mfcfg.num_fpgas > len(self.modelwrapper.graph.node):
             # Stop if there are more devices than nodes
             raise FINNMultiFPGAPartitionerError(
                 f"Model infeasible: Cannot partition a model with "
-                f"{len(self.modelwrapper.graph.node)} nodes to {self.pcfg.num_fpgas} devices!"
+                f"{len(self.modelwrapper.graph.node)} nodes to {self.mfcfg.num_fpgas} devices!"
             )
 
-        if self.pcfg.partition_strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
-            if self.pcfg.max_utilization > 1.0:
+        if self.mfcfg.partition_strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
+            if self.mfcfg.max_utilization > 1.0:
                 raise FINNMultiFPGAPartitionerError(
-                    f"Max utilization was set to {self.pcfg.max_utilization:2.2%} > "
+                    f"Max utilization was set to {self.mfcfg.max_utilization:2.2%} > "
                     f"100%. Decrease max_utilization to continue."
                 )
-            if self.pcfg.ideal_utilization > 1.0:
+            if self.mfcfg.ideal_utilization > 1.0:
                 raise FINNMultiFPGAPartitionerError(
-                    f"Ideal utilization was set to {self.pcfg.ideal_utilization:2.2%} > "
+                    f"Ideal utilization was set to {self.mfcfg.ideal_utilization:2.2%} > "
                     f"100%. Decrease ideal_utilization to continue."
                 )
 
-            if self.pcfg.ideal_utilization > self.pcfg.max_utilization:
+            if self.mfcfg.ideal_utilization > self.mfcfg.max_utilization:
                 raise FINNMultiFPGAPartitionerError(
                     "Cannot create Multi-FPGA partition if the requested ideal utilization"
                     "is greater than the requested max allowed utilization "
-                    f"({self.pcfg.ideal_utilization:.2%} > {self.pcfg.max_utilization:.2%})"
+                    f"({self.mfcfg.ideal_utilization:.2%} > {self.mfcfg.max_utilization:.2%})"
                 )
 
             # Warn about shell utilization
-            if self.pcfg.max_utilization >= 0.85:
+            if self.mfcfg.max_utilization >= 0.85:
                 log.warning(
-                    f"Max utilization per device is set to {self.pcfg.max_utilization:2.2%}. "
+                    f"Max utilization per device is set to {self.mfcfg.max_utilization:2.2%}. "
                     f"Setting the max utilization too high might cause issues during P&R, "
                     f"due to the shell's own resource requirements, as well as difficulties "
                     f"during routing. Consider decreasing max utilization "
@@ -90,23 +90,25 @@ class AuroraPartitioner(Partitioner):
                 )
 
             # Warn about total resources
-            for restype in self.pcfg.considered_resources:
+            for restype in self.mfcfg.considered_resources:
                 total_required = sum([rv[restype] for rv in self.resource_estimates.values()])
                 total_on_devices = (
-                    self.pcfg.max_utilization * self.pcfg.num_fpgas * self.device_resources[restype]
+                    self.mfcfg.max_utilization
+                    * self.mfcfg.num_fpgas
+                    * self.device_resources[restype]
                 )
                 if total_required > total_on_devices:
                     raise FINNMultiFPGAPartitionerError(
                         f"The model requires a total of "
                         f"{total_required} {restype}, but "
-                        f"{self.pcfg.num_fpgas} devices combined only have "
+                        f"{self.mfcfg.num_fpgas} devices combined only have "
                         f"{total_on_devices} {restype} in total "
                         f"(considering the current max utilization value configured)."
                     )
                 factor = total_required / total_on_devices
                 ceiled_factor = ceil(factor)
                 if (ceiled_factor - factor) < 0.15 and int(ceiled_factor) == int(
-                    self.pcfg.num_fpgas
+                    self.mfcfg.num_fpgas
                 ):
                     log.warning(
                         f"The total resources of type {restype} required by the "
@@ -122,14 +124,14 @@ class AuroraPartitioner(Partitioner):
             for node in self.modelwrapper.graph.node:
                 for restype in self.resource_estimates[node.name].keys():
                     thresh_percentage = (
-                        0.1 if self.pcfg.max_utilization >= 0.1 else self.pcfg.max_utilization
+                        0.1 if self.mfcfg.max_utilization >= 0.1 else self.mfcfg.max_utilization
                     )
                     if restype not in self.device_resources.keys():
                         continue
                     warn_threshold = (
-                        self.pcfg.max_utilization - thresh_percentage
+                        self.mfcfg.max_utilization - thresh_percentage
                     ) * self.device_resources[restype]
-                    max_util = self.device_resources[restype] * self.pcfg.max_utilization
+                    max_util = self.device_resources[restype] * self.mfcfg.max_utilization
                     if self.resource_estimates[node.name][restype] >= warn_threshold:
                         if self.resource_estimates[node.name][restype] < max_util:
                             log.warning(
@@ -161,14 +163,14 @@ class AuroraPartitioner(Partitioner):
         # the model was solved
         self.status: mip.OptimizationStatus | None = None
 
-        if self.pcfg.num_fpgas < 1:
+        if self.mfcfg.num_fpgas < 1:
             raise NotImplementedError()
 
         # We need to estimate how many resources the model will likely need
         self.resource_estimates = get_estimated_model_resources(
             self.modelwrapper,
             self.cfg._resolve_fpga_part(),  # noqa
-            self.pcfg.considered_resources,
+            self.mfcfg.considered_resources,
             True,
         )
 
@@ -178,12 +180,12 @@ class AuroraPartitioner(Partitioner):
                 "Please specify the 'board' parameter in your dataflow config."
             )
         self.device_resources = available_resources_on_platform(
-            platforms[self.cfg.board](), self.pcfg.considered_resources
+            platforms[self.cfg.board](), self.mfcfg.considered_resources
         )
 
         # What nodes need to stay together?
         self.inseparable_nodes = None
-        if self.pcfg.single_stream_network:
+        if self.mfcfg.single_stream_network:
             self.inseparable_nodes = get_inseparable_nodes(modelwrapper)
 
         # Check that no issues are present
@@ -195,7 +197,7 @@ class AuroraPartitioner(Partitioner):
         self.devices = {
             node.name: [
                 self.model.add_var(name=f"node{node.name}_on_device{device}", var_type=mip.BINARY)
-                for device in range(self.pcfg.num_fpgas)
+                for device in range(self.mfcfg.num_fpgas)
             ]
             for node in modelwrapper.graph.node
         }
@@ -219,11 +221,11 @@ class AuroraPartitioner(Partitioner):
         }
         for node in modelwrapper.graph.node:
             self.model += self.chosen_device[node.name] == xsum(
-                self.devices[node.name][device] * device for device in range(self.pcfg.num_fpgas)
+                self.devices[node.name][device] * device for device in range(self.mfcfg.num_fpgas)
             )
 
         # Custom constraints
-        for name, device in self.pcfg.custom_partitioning_constraints.items():
+        for name, device in self.mfcfg.custom_partitioning_constraints.items():
             self.model += self.chosen_device[name] == device
 
         # Grouped nodes need to stay together
@@ -243,16 +245,16 @@ class AuroraPartitioner(Partitioner):
                         "nodes in the graph!)"
                     )
                 # 2. Num. nodes == Num. groups. Leads to atleast 1 empty device
-                if len(group) == nodecount and self.pcfg.num_fpgas > 1:
+                if len(group) == nodecount and self.mfcfg.num_fpgas > 1:
                     raise FINNMultiFPGAPartitionerError(
                         f"Group {i} has the same number of nodes as the graph in total. However "
                         "since more than 1 device is used, this would result in one device "
                         "being completely empty, leading to an invalid partitioning model."
                     )
             # 3. Not enough devices to have this many nodes in groups
-            if self.pcfg.num_fpgas > max_devices_possible:
+            if self.mfcfg.num_fpgas > max_devices_possible:
                 raise FINNMultiFPGAPartitionerError(
-                    f"Requested number of FPGAs ({self.pcfg.num_fpgas})"
+                    f"Requested number of FPGAs ({self.mfcfg.num_fpgas})"
                     f" is larger than the number of "
                     f"devices possible. {nodecount - nodes_in_groups} nodes can be alone on a "
                     f"device, and {len(self.inseparable_nodes)} groups of nodes can be on a "
@@ -270,9 +272,9 @@ class AuroraPartitioner(Partitioner):
         # Number of nodes having this device as their ID
         self.nodesperdevice = [
             self.model.add_var(name=f"lpd_{device}", var_type=mip.INTEGER)
-            for device in range(self.pcfg.num_fpgas)
+            for device in range(self.mfcfg.num_fpgas)
         ]
-        for device in range(self.pcfg.num_fpgas):
+        for device in range(self.mfcfg.num_fpgas):
             self.model += self.nodesperdevice[device] == xsum(
                 self.devices[node.name][device] for node in modelwrapper.graph.node
             )
@@ -290,7 +292,7 @@ class AuroraPartitioner(Partitioner):
                 }
                 for node in modelwrapper.graph.node
             }
-            for device in range(self.pcfg.num_fpgas)
+            for device in range(self.mfcfg.num_fpgas)
         ]
 
         # Condition A: NODE is on DEVICE
@@ -299,7 +301,7 @@ class AuroraPartitioner(Partitioner):
         #   C <= 1, C <= 1, C >= 1 (thus C = 1)
         # If one is not true, then
         #   C <= 0, C <= 1, C >= 0 (thus C = 0)
-        for device in range(self.pcfg.num_fpgas):
+        for device in range(self.mfcfg.num_fpgas):
             for node in modelwrapper.graph.node:
                 for suc in self.get_successors(node):
                     self.model += (
@@ -316,9 +318,9 @@ class AuroraPartitioner(Partitioner):
         # Finally calculating the conections per device
         self.connections_per_device = [
             self.model.add_var(name=f"connections_on_device_{device}", var_type=mip.INTEGER)
-            for device in range(self.pcfg.num_fpgas)
+            for device in range(self.mfcfg.num_fpgas)
         ]
-        for device in range(self.pcfg.num_fpgas):
+        for device in range(self.mfcfg.num_fpgas):
             self.model += self.connections_per_device[device] == xsum(
                 self.device_switch[device][node.name][suc.name]
                 for suc in self.get_successors(node)
@@ -326,8 +328,8 @@ class AuroraPartitioner(Partitioner):
             )
 
         # Limit the number of connections per device (depends on the FPGAs QSFP ports)
-        for device in range(self.pcfg.num_fpgas):
-            self.model += self.connections_per_device[device] <= self.pcfg.ports_per_device
+        for device in range(self.mfcfg.num_fpgas):
+            self.model += self.connections_per_device[device] <= self.mfcfg.ports_per_device
 
         # Consecutive nodes must be on consecutive devices
         self.device_diff: dict[str, dict[str, mip.Var]] = {}
@@ -373,12 +375,12 @@ class AuroraPartitioner(Partitioner):
                 "device. To change this, "
                 "pass custom device constraints to the partitioner."
             )
-        match self.pcfg.topology:
+        match self.mfcfg.topology:
             case MFTopology.CHAIN:
                 for node in input_nodes:
                     self.model += self.chosen_device[node.name] == 0
                 for node in output_nodes:
-                    self.model += self.chosen_device[node.name] == self.pcfg.num_fpgas - 1
+                    self.model += self.chosen_device[node.name] == self.mfcfg.num_fpgas - 1
 
                 # We also need to make sure, that for a chain, every succeeding
                 # node has the same or higher device id to prevent going back and forth
@@ -394,36 +396,36 @@ class AuroraPartitioner(Partitioner):
 
             case _:
                 raise FINNMultiFPGAConfigError(
-                    f"Invalid communication scheme for Aurora partitioner: {self.pcfg.topology}"
+                    f"Invalid communication scheme for Aurora partitioner: {self.mfcfg.topology}"
                 )
 
         # Objective Function
-        if self.pcfg.partition_strategy == PartitioningStrategy.LAYER_COUNT:
+        if self.mfcfg.partition_strategy == PartitioningStrategy.LAYER_COUNT:
             # Calculcate the difference to the "ideal" load
             # (All devices have the same number of layers)
             avg_diff = [
-                self.model.add_var(var_type=mip.CONTINUOUS) for i in range(self.pcfg.num_fpgas)
+                self.model.add_var(var_type=mip.CONTINUOUS) for i in range(self.mfcfg.num_fpgas)
             ]
-            avg_ideal_load = len(modelwrapper.graph.node) / self.pcfg.num_fpgas
-            for i in range(self.pcfg.num_fpgas):
+            avg_ideal_load = len(modelwrapper.graph.node) / self.mfcfg.num_fpgas
+            for i in range(self.mfcfg.num_fpgas):
                 self.model += avg_diff[i] >= self.nodesperdevice[i] - avg_ideal_load  # type: ignore
                 self.model += avg_diff[i] >= avg_ideal_load - self.nodesperdevice[i]  # type: ignore
 
             # Get the largest of those differences
             max_diff = self.model.add_var(name="max_diff", var_type=mip.CONTINUOUS)
-            for device in range(self.pcfg.num_fpgas):
+            for device in range(self.mfcfg.num_fpgas):
                 self.model += max_diff >= avg_diff[device]
 
             # Try to minimize the max difference to ideal
             self.model.objective = max_diff
             self.model.sense = mip.MINIMIZE
 
-        elif self.pcfg.partition_strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
+        elif self.mfcfg.partition_strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
             # Collect the resource usage of all nodes on a device
             self.resource_use_int = {}
-            for device in range(self.pcfg.num_fpgas):
+            for device in range(self.mfcfg.num_fpgas):
                 self.resource_use_int[device] = {}
-                for resource_name in self.pcfg.considered_resources:
+                for resource_name in self.mfcfg.considered_resources:
                     self.resource_use_int[device][resource_name] = self.model.add_var(
                         f"resource_use_int_device{device}_resource{resource_name}",
                         var_type=mip.INTEGER,
@@ -438,10 +440,10 @@ class AuroraPartitioner(Partitioner):
                     )
 
             # Limit resource usage to (available resources * max usage in percent)
-            for device in range(self.pcfg.num_fpgas):
-                for resource_name in self.pcfg.considered_resources:
+            for device in range(self.mfcfg.num_fpgas):
+                for resource_name in self.mfcfg.considered_resources:
                     max_resources = int(
-                        self.device_resources[resource_name] * self.pcfg.max_utilization
+                        self.device_resources[resource_name] * self.mfcfg.max_utilization
                     )
                     self.model += self.resource_use_int[device][resource_name] <= max_resources
 
@@ -450,10 +452,10 @@ class AuroraPartitioner(Partitioner):
             # Use relative values because resources are available at vastly different scales
             self.resource_diff = {}
             self.resource_use_relative = {}
-            for device in range(self.pcfg.num_fpgas):
+            for device in range(self.mfcfg.num_fpgas):
                 self.resource_diff[device] = {}
                 self.resource_use_relative[device] = {}
-                for resource_name in self.pcfg.considered_resources:
+                for resource_name in self.mfcfg.considered_resources:
                     self.resource_diff[device][resource_name] = self.model.add_var(
                         name=f"resource_diff_to_ideal_device{device}_resource{resource_name}",
                         var_type=mip.CONTINUOUS,
@@ -472,20 +474,20 @@ class AuroraPartitioner(Partitioner):
                     # Convert to float and get diff
                     self.model += self.resource_diff[device][resource_name] >= (
                         self.resource_use_relative[device][resource_name]
-                        - self.pcfg.ideal_utilization
+                        - self.mfcfg.ideal_utilization
                     )
                     self.model += self.resource_diff[device][resource_name] >= (
-                        self.pcfg.ideal_utilization
+                        self.mfcfg.ideal_utilization
                         - self.resource_use_relative[device][resource_name]
                     )
 
             # A device cannot be completely empty
-            for device in range(self.pcfg.num_fpgas):
+            for device in range(self.mfcfg.num_fpgas):
                 self.model += (
                     xsum(
                         [
                             self.resource_use_relative[device][res]
-                            for res in self.pcfg.considered_resources
+                            for res in self.mfcfg.considered_resources
                         ]
                     )
                     # Needs to be really small so the model is still valid for very small designs
@@ -496,11 +498,11 @@ class AuroraPartitioner(Partitioner):
             # (If ideal is 70%, and we have LUT: 61% and DSP: 32%,
             # then we use 61%, so diff is 70%-61%=9%)
             self.min_resource_diff = []
-            for device in range(self.pcfg.num_fpgas):
+            for device in range(self.mfcfg.num_fpgas):
                 self.min_resource_diff.append(
                     self.model.add_var(f"min_resource_diff_device{device}", var_type=mip.CONTINUOUS)
                 )
-                for res in self.pcfg.considered_resources:
+                for res in self.mfcfg.considered_resources:
                     self.model += self.min_resource_diff[device] <= self.resource_diff[device][res]
 
                     # If we dont specify this, it will stay at the initial value of 0,
@@ -509,9 +511,9 @@ class AuroraPartitioner(Partitioner):
 
             # Maximum of the min resource diff of all devices
             max_diff = self.model.add_var("max_diff", var_type=mip.CONTINUOUS)
-            for device in range(self.pcfg.num_fpgas):
+            for device in range(self.mfcfg.num_fpgas):
                 self.model += max_diff >= xsum(
-                    [self.resource_diff[device][res] for res in self.pcfg.considered_resources]
+                    [self.resource_diff[device][res] for res in self.mfcfg.considered_resources]
                 )
 
             # Set objective function
@@ -520,7 +522,7 @@ class AuroraPartitioner(Partitioner):
 
         else:
             raise FINNMultiFPGAConfigError(
-                f"Unknown partitioning strategy: " f"{self.pcfg.partition_strategy}"
+                f"Unknown partitioning strategy: " f"{self.mfcfg.partition_strategy}"
             )
 
     def create_result(self) -> dict[str, int]:
@@ -547,7 +549,7 @@ class AuroraPartitioner(Partitioner):
                 "before the model was solved. Please call solve() first."
             )
         data = {}
-        for device in range(self.pcfg.num_fpgas):
+        for device in range(self.mfcfg.num_fpgas):
             data[device] = {}
             for restype in self.resource_use_relative[device].keys():
                 data[device][restype] = self.resource_use_relative[device][restype].x

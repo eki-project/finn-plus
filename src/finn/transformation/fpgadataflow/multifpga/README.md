@@ -2,12 +2,12 @@
 The modules in this directory provide MultiFPGA capabilities for FINN+. Introducing MultiFPGA into FINN was already done before, notably in the [Elastic-DF Paper](https://dl.acm.org/doi/10.1145/3470567). This extention utilizes a similar (M)ILP based approach to partitioning, but uses a different communication backend and implements infrastructure to integrate MultiFPGA flows tightly into the normal FINN+ flow.
 
 ## How to use
-In your configuration file, simply provide a value in the `partitioning_configuration` field. Most fields have sensible defaults, but at least `num_fpgas` and `parallel_synthesis_workers` should be set manually.
+In your configuration file, simply provide a value in the `multifpga_configuration` field. Most fields have sensible defaults, but at least `num_fpgas` and `parallel_synthesis_workers` should be set manually.
 The flow will automatically switch to MultiFPGA. The difference should not be noticeable - only some more logging output. If everything worked correctly, instead of one `finn-accel.xclbin`, you should see `finn-accel-0.xclbin, finn-accel-1.xclbin` and so on.
 
 An example configuration could look like this:
 ```YAML
-partitioning_configuration:
+multifpga_configuration:
   num_fpgas: 2
   partition_strategy: resource_utilization
   topology: chain

@@ -11,7 +11,7 @@ from qonnx.util.basic import qonnx_make_model
 from finn.builder.build_dataflow_config import (
     MFCommunicationKernel,
     MFVerbosity,
-    PartitioningConfiguration,
+    MultiFPGAConfiguration,
 )
 from finn.transformation.fpgadataflow.multifpga.aurora.link_config_transform import (
     AddAuroraToLinkConfig,
@@ -50,10 +50,10 @@ def test_link_config_shared_aurora_kernel(monkeypatch: pytest.MonkeyPatch) -> No
             oh.make_graph(nodes, inputs=[tensors[0]], outputs=[tensors[-1]], name="graph")
         )
     )
-    pcfg = PartitioningConfiguration(
+    mfcfg = MultiFPGAConfiguration(
         communication_kernel=MFCommunicationKernel.AURORA, verbosity=MFVerbosity.NONE
     )
-    model = model.transform(CreateNetworkMetadata(pcfg))
+    model = model.transform(CreateNetworkMetadata(mfcfg))
 
     # Stand-ins for the packaged Aurora kernels (normally set by PrepareAuroraFlow)
     meta = AuroraNetworkMetadata.load_from_model(model)

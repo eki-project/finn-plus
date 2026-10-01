@@ -9,7 +9,7 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 
-from finn.builder.build_dataflow_config import MFVerbosity, PartitioningConfiguration
+from finn.builder.build_dataflow_config import MFVerbosity, MultiFPGAConfiguration
 from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
 from finn.util.basic import make_build_dir
 from finn.util.exception import (
@@ -40,7 +40,7 @@ class PrepareAuroraFlow(Transformation):
         self,
         platform: str,
         part: str,
-        partitioning_configuration: PartitioningConfiguration,
+        multifpga_configuration: MultiFPGAConfiguration,
         aurora_version: str | None = None,
     ) -> None:
         """Prepare AuroraFlow."""
@@ -48,11 +48,11 @@ class PrepareAuroraFlow(Transformation):
         # TODO: non-vitis platforms?
         self.platform = platform
         self.part = part
-        self.verbosity = partitioning_configuration.verbosity
+        self.verbosity = multifpga_configuration.verbosity
         self.make_args = " ".join(
-            f"{k}={v}" for k, v in partitioning_configuration.communication_kernel_arguments.items()
+            f"{k}={v}" for k, v in multifpga_configuration.communication_kernel_arguments.items()
         )
-        self.ports = partitioning_configuration.ports_per_device
+        self.ports = multifpga_configuration.ports_per_device
         self.aurora_storage = Path(make_build_dir("aurora_storage_")).absolute()
         self.aurora_path = get_settings().finn_deps / "AuroraFlow"
         if not self.aurora_path.exists():
@@ -99,7 +99,7 @@ class PrepareAuroraFlow(Transformation):
         Inside are the packaged xo files.
 
         >>> from finn.builder.build_dataflow_config import MFCommunicationKernel
-        >>> p = PartitioningConfiguration(
+        >>> p = MultiFPGAConfiguration(
         ...     num_fpgas=2, ports_per_device=2, communication_kernel=MFCommunicationKernel.AURORA
         ... )
         >>> t = PrepareAuroraFlow("xilinx_u55c_gen3x16_xdma_3_202210_1", "xcu55c-fsvh2892-2L-e", p)

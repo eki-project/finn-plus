@@ -16,7 +16,7 @@ execution environment with driver testing.
 #     MFCommunicationKernel,
 #     MFTopology,
 #     MFVerbosity,
-#     PartitioningConfiguration,
+#     MultiFPGAConfiguration,
 #     PartitioningStrategy,
 #     ShellFlowType,
 #     VitisOptStrategy,
@@ -44,7 +44,7 @@ execution environment with driver testing.
 # ) -> None:
 #     """Do a complete end2end test of the Multi-FPGA variant of the mobilenet."""
 #     cfg = DataflowBuildConfig(
-#         partitioning_configuration=PartitioningConfiguration(
+#         multifpga_configuration=MultiFPGAConfiguration(
 #             partitioning=None,
 #             num_fpgas=fpgas,
 #             ports_per_device=2,

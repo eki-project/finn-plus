@@ -6,7 +6,7 @@ from pathlib import Path
 from qonnx.transformation.base import Transformation
 from typing import TYPE_CHECKING
 
-from finn.builder.build_dataflow_config import MFVerbosity, PartitioningConfiguration
+from finn.builder.build_dataflow_config import MFVerbosity, MultiFPGAConfiguration
 from finn.transformation.fpgadataflow.multifpga.backend import get_backend
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNMultiFPGAError
@@ -32,20 +32,20 @@ class CreateNetworkMetadata(Transformation):
         using `NetworkMetadata.load_from_model(...)`.
     """
 
-    def __init__(self, partitioning_configuration: PartitioningConfiguration) -> None:
+    def __init__(self, multifpga_configuration: MultiFPGAConfiguration) -> None:
         """Create a metadata object for the communication kernel given in the partitioning
         configuration. The metadata class reads any further settings it needs from the
         configuration (e.g. the number of ports per device).
         """
         super().__init__()
-        self.verbosity = partitioning_configuration.verbosity
+        self.verbosity = multifpga_configuration.verbosity
         self.metadata_type: type[NetworkMetadata] = get_backend(
-            partitioning_configuration.communication_kernel
+            multifpga_configuration.communication_kernel
         ).metadata_type
 
         # Create the empty metadata object
-        self.metadata: NetworkMetadata = self.metadata_type.create_from_partitioning_configuration(
-            partitioning_configuration
+        self.metadata: NetworkMetadata = self.metadata_type.create_from_multifpga_configuration(
+            multifpga_configuration
         )
 
     def save_metadata(self, model: ModelWrapper, suffix: str = "yaml") -> Path:

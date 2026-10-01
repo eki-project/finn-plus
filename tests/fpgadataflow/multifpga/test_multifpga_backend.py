@@ -5,7 +5,7 @@ import pytest
 from finn.builder.build_dataflow_config import (
     MFCommunicationKernel,
     MFVerbosity,
-    PartitioningConfiguration,
+    MultiFPGAConfiguration,
 )
 from finn.transformation.fpgadataflow.multifpga import backend as backend_module
 from finn.transformation.fpgadataflow.multifpga.backend import get_backend, register_backend
@@ -30,11 +30,11 @@ def test_missing_backend_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delitem(backend_module._BACKENDS, MFCommunicationKernel.AURORA)  # noqa: SLF001
     with pytest.raises(FINNMultiFPGAConfigError, match="AURORA has no Multi-FPGA backend"):
         get_backend(MFCommunicationKernel.AURORA)
-    pcfg = PartitioningConfiguration(
+    mfcfg = MultiFPGAConfiguration(
         communication_kernel=MFCommunicationKernel.AURORA, verbosity=MFVerbosity.NONE
     )
     with pytest.raises(FINNMultiFPGAConfigError, match="AURORA has no Multi-FPGA backend"):
-        CreateNetworkMetadata(pcfg)
+        CreateNetworkMetadata(mfcfg)
 
 
 @pytest.mark.multifpga

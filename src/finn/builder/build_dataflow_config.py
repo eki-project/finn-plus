@@ -236,7 +236,7 @@ class MFTopology(str, Enum):
 
 
 @dataclass
-class PartitioningConfiguration:
+class MultiFPGAConfiguration:
     """Configuration dataclass for Multi-FPGA. As soon as such a configuration is
     set in the BuildDataflowConfig, FINN+ automatically switches to Multi-FPGA.
     """
@@ -391,6 +391,17 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """Config for (de)serialization of the dataflow builder class."""
 
         forbid_extra_keys = True
+
+    @classmethod
+    def __pre_deserialize__(cls, d: dict[Any, Any]) -> dict[Any, Any]:
+        """Point configs that still use the pre-rename Multi-FPGA field to its new name."""
+        if "partitioning_configuration" in d:
+            raise FINNConfigurationError(
+                "The build config field 'partitioning_configuration' (PartitioningConfiguration) "
+                "was renamed to 'multifpga_configuration' (MultiFPGAConfiguration). "
+                "Please update your config."
+            )
+        return d
 
     @classmethod
     def construct_from(cls, from_this: Path | DataflowBuildConfig) -> DataflowBuildConfig:
@@ -860,7 +871,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: Configuration that provides parameters for Multi-FPGA partitioning.
     #: If set to something other than None, we assume the Multi-FPGA case
-    partitioning_configuration: Optional[PartitioningConfiguration] = None
+    multifpga_configuration: Optional[MultiFPGAConfiguration] = None
 
     #: If set to True, the FINN compiler tries to create an MLO design based on
     #: loop_body_hierarchy and loop_body_range

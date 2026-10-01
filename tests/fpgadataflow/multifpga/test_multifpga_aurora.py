@@ -32,7 +32,7 @@ from finn.builder.build_dataflow_config import (
     MFTopology,
     MFVerbosity,
     MIPSolver,
-    PartitioningConfiguration,
+    MultiFPGAConfiguration,
     PartitioningStrategy,
     ShellFlowType,
 )
@@ -101,14 +101,14 @@ class TestAuroraFlowPreparationAndMetadata:
         cfg = DataflowBuildConfig(
             output_dir=make_build_dir("test_aurora_packaging_integrated_build"),
             board=board,
-            partitioning_configuration=PartitioningConfiguration(
+            multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=devices,
                 communication_kernel=MFCommunicationKernel.AURORA,
                 topology=topology,
                 communication_kernel_arguments=communication_kernel_args,
             ),
         )
-        assert cfg.partitioning_configuration is not None
+        assert cfg.multifpga_configuration is not None
 
         # Execute the whole Aurora packaging flow
         model = model.transform(
@@ -118,7 +118,7 @@ class TestAuroraFlowPreparationAndMetadata:
                 verbosity=MFVerbosity.NONE,
             )
         )
-        model = model.transform(CreateNetworkMetadata(cfg.partitioning_configuration))
+        model = model.transform(CreateNetworkMetadata(cfg.multifpga_configuration))
 
         # No kernels packaged yet
         meta = AuroraNetworkMetadata.load_from_model(model)
@@ -132,7 +132,7 @@ class TestAuroraFlowPreparationAndMetadata:
             PrepareAuroraFlow(
                 cfg._resolve_vitis_platform(),  # noqa
                 cfg._resolve_fpga_part(),  # noqa
-                cfg.partitioning_configuration,
+                cfg.multifpga_configuration,
             )
         )
 
@@ -172,18 +172,18 @@ class TestAuroraFlowPreparationAndMetadata:
         cfg = DataflowBuildConfig(
             output_dir=make_build_dir("test_aurora_package_single_output_dir"),
             board=board,
-            partitioning_configuration=PartitioningConfiguration(
+            multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=2,
                 topology=topology,
                 communication_kernel=MFCommunicationKernel.AURORA,
                 communication_kernel_arguments=communication_kernel_args,
             ),
         )
-        assert cfg.partitioning_configuration is not None
+        assert cfg.multifpga_configuration is not None
         prep = PrepareAuroraFlow(
             cfg._resolve_vitis_platform(),  # noqa
             cfg._resolve_fpga_part(),  # noqa
-            cfg.partitioning_configuration,
+            cfg.multifpga_configuration,
         )
         assert prep.aurora_storage.exists()
         res = prep.package_single("", 0, 0)
@@ -223,24 +223,24 @@ class TestAuroraFlowPartitioning:
         """Check if a model requires more resources than the given number of devices supplies.
         Considers the number of devices, as well as the max utilization percentage.
         """
-        assert cfg.partitioning_configuration is not None, "No partitioning configuration found!"
+        assert cfg.multifpga_configuration is not None, "No Multi-FPGA configuration found!"
         assert cfg.board is not None, (
             "Partitioning requires the 'board' " "parameter to be set in the dataflow config."
         )
         resource_estimates = get_estimated_model_resources(
             model,
             cfg._resolve_fpga_part(),  # noqa
-            cfg.partitioning_configuration.considered_resources,
+            cfg.multifpga_configuration.considered_resources,
             True,
         )
         device_resources = available_resources_on_platform(
-            platforms[cfg.board](), cfg.partitioning_configuration.considered_resources
+            platforms[cfg.board](), cfg.multifpga_configuration.considered_resources
         )
-        for restype in cfg.partitioning_configuration.considered_resources:
+        for restype in cfg.multifpga_configuration.considered_resources:
             total_required = sum([rv[restype] for rv in resource_estimates.values()])
             total_on_devices = (
-                cfg.partitioning_configuration.max_utilization
-                * cfg.partitioning_configuration.num_fpgas
+                cfg.multifpga_configuration.max_utilization
+                * cfg.multifpga_configuration.num_fpgas
                 * device_resources[restype]
             )
             if total_required > total_on_devices:
@@ -315,7 +315,7 @@ class TestAuroraFlowPartitioning:
             standalone_thresholds=True,
             minimize_bit_width=True,
             shell_flow_type=flow_type,
-            partitioning_configuration=PartitioningConfiguration(
+            multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=devices,
                 topology=topology,
                 communication_kernel=MFCommunicationKernel.AURORA,
@@ -345,7 +345,7 @@ class TestAuroraFlowPartitioning:
         if self.requires_too_many_resources(model, cfg):
             pytest.skip(
                 "Requires more resources than are available in "
-                "this partitioning configuration."  # type: ignore
+                "this Multi-FPGA configuration."  # type: ignore
             )
 
         # Catch if there are more devices than nodes
@@ -358,7 +358,7 @@ class TestAuroraFlowPartitioning:
         # which is why it could happen that the solver does not find a solution in the given time,
         # despite the model being feasible. The current timeout should prevent this from happening.
         with context:
-            assert cfg.partitioning_configuration is not None
+            assert cfg.multifpga_configuration is not None
             part = PartitionForMultiFPGA(cfg)
             model = model.transform(part)
 
@@ -373,7 +373,7 @@ class TestAuroraFlowPartitioning:
             mip.OptimizationStatus.FEASIBLE,
             mip.OptimizationStatus.OPTIMAL,
         ]
-        assert cfg.partitioning_configuration is not None
+        assert cfg.multifpga_configuration is not None
 
         # Get the solution data
         solution = part.mapping
@@ -388,7 +388,7 @@ class TestAuroraFlowPartitioning:
 
             # Available resources on this device
             res_per_device = available_resources_on_platform(
-                platforms[board](), cfg.partitioning_configuration.considered_resources
+                platforms[board](), cfg.multifpga_configuration.considered_resources
             )
 
             # Every device is utilized
@@ -510,7 +510,7 @@ class TestAuroraFlowPartitioning:
             standalone_thresholds=True,
             minimize_bit_width=True,
             shell_flow_type=self.get_shell_flow_type(board),
-            partitioning_configuration=PartitioningConfiguration(
+            multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=2,
                 topology=topology,
                 communication_kernel=MFCommunicationKernel.AURORA,
@@ -557,10 +557,10 @@ class TestAuroraFlowPartitioning:
                     if idealutil > maxutil:
                         continue
                     thisconfig = deepcopy(cfg)
-                    assert thisconfig.partitioning_configuration is not None
-                    thisconfig.partitioning_configuration.num_fpgas = device
-                    thisconfig.partitioning_configuration.max_utilization = maxutil
-                    thisconfig.partitioning_configuration.ideal_utilization = idealutil
+                    assert thisconfig.multifpga_configuration is not None
+                    thisconfig.multifpga_configuration.num_fpgas = device
+                    thisconfig.multifpga_configuration.max_utilization = maxutil
+                    thisconfig.multifpga_configuration.ideal_utilization = idealutil
                     thismodel = deepcopy(model)
 
                     # Identifier string for lookup of results
@@ -689,7 +689,7 @@ class TestAuroraFlowPartitioning:
         cfg = DataflowBuildConfig(
             output_dir=make_build_dir("test_artificial_aurora_partitioning_"),
             board=board,
-            partitioning_configuration=PartitioningConfiguration(
+            multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=devices,
                 max_utilization=max_util,
                 ideal_utilization=ideal_util,
@@ -873,7 +873,7 @@ class TestAuroraFlowPartitioning:
         cfg = DataflowBuildConfig(
             output_dir=make_build_dir(f"test_bad_config_{fail_type}_"),
             board=board,
-            partitioning_configuration=PartitioningConfiguration(
+            multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=devices,
                 max_utilization=max_util,
                 ideal_utilization=0.4,

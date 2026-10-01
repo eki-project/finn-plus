@@ -13,7 +13,7 @@ from finn.builder.build_dataflow_config import (
     MFCommunicationKernel,
     MFTopology,
     MFVerbosity,
-    PartitioningConfiguration,
+    MultiFPGAConfiguration,
 )
 from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
 from finn.transformation.fpgadataflow.multifpga.backend import get_backend
@@ -25,11 +25,11 @@ from finn.util.fpgadataflow import get_device_id, set_device_id
 from tests.fpgadataflow.test_set_folding import make_multi_fclayer_model
 
 
-def make_pcfg(
+def make_mfcfg(
     communication_kernel: MFCommunicationKernel, ports_per_device: int = 2
-) -> PartitioningConfiguration:
-    """Return a partitioning configuration for metadata creation, without logging output."""
-    return PartitioningConfiguration(
+) -> MultiFPGAConfiguration:
+    """Return a Multi-FPGA configuration for metadata creation, without logging output."""
+    return MultiFPGAConfiguration(
         communication_kernel=communication_kernel,
         ports_per_device=ports_per_device,
         verbosity=MFVerbosity.NONE,
@@ -90,7 +90,7 @@ def test_metadata_sdp_only(nodes: int, communication_kernel: MFCommunicationKern
         3, DataType["BINARY"], DataType["BINARY"], DataType["BINARY"], nodes
     )
     with pytest.raises(FINNError):
-        _ = model.transform(CreateNetworkMetadata(make_pcfg(communication_kernel)))
+        _ = model.transform(CreateNetworkMetadata(make_mfcfg(communication_kernel)))
 
 
 @pytest.mark.multifpga
@@ -103,7 +103,7 @@ def test_metadata(
 ) -> None:
     """Test that metadata for a model is created correctly."""
     model = sdp_model(topology)
-    model = model.transform(CreateNetworkMetadata(make_pcfg(communication_kernel)))
+    model = model.transform(CreateNetworkMetadata(make_mfcfg(communication_kernel)))
     path = get_metadata_prop_path(model, "network_metadata", must_exist=True)
 
     # Metadata file exists
@@ -210,7 +210,7 @@ def test_metadata_ports_per_device(
             oh.make_graph(nodes, inputs=[tensors[0]], outputs=[tensors[-1]], name="graph")
         )
     )
-    transform = CreateNetworkMetadata(make_pcfg(communication_kernel, ports_per_device))
+    transform = CreateNetworkMetadata(make_mfcfg(communication_kernel, ports_per_device))
     match communication_kernel:
         case MFCommunicationKernel.AURORA:
             # Adding a connection that needs a new kernel on a device whose ports are all in use
@@ -286,7 +286,7 @@ def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
     set_device_id(c_nodes[1], 1)
     set_device_id(c_nodes[2], 2)
     metadata_type = get_backend(communication_kernel).metadata_type
-    chain_model = chain_model.transform(CreateNetworkMetadata(make_pcfg(communication_kernel)))
+    chain_model = chain_model.transform(CreateNetworkMetadata(make_mfcfg(communication_kernel)))
     meta = metadata_type.load_from_model(chain_model)
     assert meta.node_is_sender(c_nodes[0].name)
     assert meta.node_is_sender(c_nodes[1].name)
@@ -304,7 +304,7 @@ def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
     set_device_id(rc_nodes[0], 0)
     set_device_id(rc_nodes[1], 1)
     set_device_id(rc_nodes[2], 0)
-    rchain_model = rchain_model.transform(CreateNetworkMetadata(make_pcfg(communication_kernel)))
+    rchain_model = rchain_model.transform(CreateNetworkMetadata(make_mfcfg(communication_kernel)))
     meta = metadata_type.load_from_model(rchain_model)
     assert meta.node_is_sender(rc_nodes[0].name)
     assert meta.node_is_sender(rc_nodes[1].name)

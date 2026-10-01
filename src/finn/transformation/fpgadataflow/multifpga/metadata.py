@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from qonnx.core.modelwrapper import ModelWrapper
 
-    from finn.builder.build_dataflow_config import PartitioningConfiguration
+    from finn.builder.build_dataflow_config import MultiFPGAConfiguration
 
 
 class DataDirection(str, Enum):
@@ -30,11 +30,11 @@ class NetworkMetadata(ABC):
     """
 
     @classmethod
-    def create_from_partitioning_configuration(
-        cls, pcfg: PartitioningConfiguration  # noqa: ARG003
+    def create_from_multifpga_configuration(
+        cls, mfcfg: MultiFPGAConfiguration  # noqa: ARG003
     ) -> NetworkMetadata:
         """Create an empty metadata object. Subclasses can override this to read the settings
-        they need from the partitioning configuration.
+        they need from the Multi-FPGA configuration.
         """
         return cls()
 

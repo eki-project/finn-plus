@@ -17,7 +17,7 @@ from finn.util.exception import FINNInternalError, FINNMultiFPGAConfigError
 if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
 
-    from finn.builder.build_dataflow_config import PartitioningConfiguration
+    from finn.builder.build_dataflow_config import MultiFPGAConfiguration
 
 
 @dataclass
@@ -62,11 +62,11 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
     loaded_from_path: Path | None = field(default=None, metadata={"serialize": "omit"})
 
     @classmethod
-    def create_from_partitioning_configuration(
-        cls, pcfg: PartitioningConfiguration
+    def create_from_multifpga_configuration(
+        cls, mfcfg: MultiFPGAConfiguration
     ) -> AuroraNetworkMetadata:
         """Create an empty metadata object, using the configured number of ports per device."""
-        return cls(ports_per_device=pcfg.ports_per_device)
+        return cls(ports_per_device=mfcfg.ports_per_device)
 
     @staticmethod
     def load_from_model(model: ModelWrapper) -> AuroraNetworkMetadata:

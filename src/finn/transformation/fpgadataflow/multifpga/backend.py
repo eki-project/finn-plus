@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     MFCommunicationKernel,
-    PartitioningConfiguration,
+    MultiFPGAConfiguration,
 )
 from finn.transformation.fpgadataflow.multifpga.aurora.link_config_transform import (
     AddAuroraToLinkConfig,
@@ -94,13 +94,13 @@ def get_backend(kernel: MFCommunicationKernel) -> CommunicationBackend:
         ) from e
 
 
-def _get_partitioning_configuration(cfg: DataflowBuildConfig) -> PartitioningConfiguration:
-    """Return the partitioning configuration, which must be set when using a backend."""
-    if cfg.partitioning_configuration is None:
+def _get_multifpga_configuration(cfg: DataflowBuildConfig) -> MultiFPGAConfiguration:
+    """Return the Multi-FPGA configuration, which must be set when using a backend."""
+    if cfg.multifpga_configuration is None:
         raise FINNInternalError(
-            "A Multi-FPGA backend was used, but no partitioning configuration is set."
+            "A Multi-FPGA backend was used, but no Multi-FPGA configuration is set."
         )
-    return cfg.partitioning_configuration
+    return cfg.multifpga_configuration
 
 
 def _get_board(cfg: DataflowBuildConfig) -> str:
@@ -118,7 +118,7 @@ register_backend(
     prepare_kernels=lambda cfg: PrepareAuroraFlow(
         cfg._resolve_vitis_platform(),  # noqa: SLF001
         cfg._resolve_fpga_part(),  # noqa: SLF001
-        _get_partitioning_configuration(cfg),
+        _get_multifpga_configuration(cfg),
     ),
     modify_link_config=lambda cfg: AddAuroraToLinkConfig(
         _get_board(cfg),

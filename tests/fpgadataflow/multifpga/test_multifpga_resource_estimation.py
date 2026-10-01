@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, cast
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     DataflowOutputType,
-    PartitioningConfiguration,
+    MultiFPGAConfiguration,
     ShellFlowType,
 )
 from finn.util.basic import make_build_dir
@@ -57,7 +57,7 @@ def test_resource_est_for_all_layers(
         steps=[],
         target_fps=3000,
         shell_flow_type=shell,
-        partitioning_configuration=PartitioningConfiguration(),
+        multifpga_configuration=MultiFPGAConfiguration(),
     )
 
     model, _ = get_model(
@@ -71,11 +71,11 @@ def test_resource_est_for_all_layers(
     )
 
     # Run the resource estimation
-    assert cfg.partitioning_configuration is not None
+    assert cfg.multifpga_configuration is not None
     estimates: dict[str, dict[str, int | float]] = get_estimated_model_resources(
         model,
         fpga_part=cfg._resolve_fpga_part(),  # noqa
-        considered_resources=cfg.partitioning_configuration.considered_resources,
+        considered_resources=cfg.multifpga_configuration.considered_resources,
         add_missing_resources=True,
     )
 

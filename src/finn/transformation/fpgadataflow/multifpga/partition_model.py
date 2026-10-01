@@ -14,7 +14,7 @@ from rich.table import Table
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     MFVerbosity,
-    PartitioningConfiguration,
+    MultiFPGAConfiguration,
 )
 from finn.transformation.fpgadataflow.multifpga.backend import get_backend
 from finn.transformation.fpgadataflow.multifpga.partitioner import Partitioner
@@ -103,15 +103,15 @@ class PartitionForMultiFPGA(Transformation):
         """
         self.auto_solution_attempts = automatic_solution_attempts
         self.cfg = cfg
-        if self.cfg.partitioning_configuration is None:
+        if self.cfg.multifpga_configuration is None:
             raise FINNMultiFPGAConfigError(
                 "Partitioning config is None, but " "'PartitionForMultiFPGA' was called. "
             )
-        self.pcfg: PartitioningConfiguration = cfg.partitioning_configuration  # type: ignore
-        self.verbosity = self.pcfg.verbosity
+        self.mfcfg: MultiFPGAConfiguration = cfg.multifpga_configuration  # type: ignore
+        self.verbosity = self.mfcfg.verbosity
 
         # Select the partitioner based on the communication kernel
-        self.partitioner_type = get_backend(self.pcfg.communication_kernel).partitioner
+        self.partitioner_type = get_backend(self.mfcfg.communication_kernel).partitioner
 
         # These will be filled out after partitioning
         self.partitioner: Partitioner | None = None
@@ -154,7 +154,7 @@ class PartitionForMultiFPGA(Transformation):
             raise FINNInternalError(
                 "Cannot log post-solving information before the model was solved."
             )
-        assert self.cfg.partitioning_configuration is not None
+        assert self.cfg.multifpga_configuration is not None
         assert self.cfg.board is not None
 
         s = ""
@@ -163,46 +163,46 @@ class PartitionForMultiFPGA(Transformation):
         s += f"{' Model and Configuration ':=^80}\n"
         s += "=" * 80 + "\n"
         s += f"{'Layers: ' + str(len(model.graph.node)):<10}\n"
-        s += f"{'Devices: ' + str(self.cfg.partitioning_configuration.num_fpgas):<10}\n"
+        s += f"{'Devices: ' + str(self.cfg.multifpga_configuration.num_fpgas):<10}\n"
         s += f"{'Time elapsed: ' + str(elapsed_seconds) + 's':<10}\n"
 
         # Resources
         resource_estimates = get_estimated_model_resources(
             model,
             self.cfg._resolve_fpga_part(),  # noqa
-            self.cfg.partitioning_configuration.considered_resources,
+            self.cfg.multifpga_configuration.considered_resources,
             True,
         )
         device_resources = available_resources_on_platform(
-            platforms[self.cfg.board](), self.cfg.partitioning_configuration.considered_resources
+            platforms[self.cfg.board](), self.cfg.multifpga_configuration.considered_resources
         )
 
         s += f"\n{' Required Resources by the Model ':=^80}\n"
         s += "=" * 80 + "\n"
-        for restype in self.cfg.partitioning_configuration.considered_resources:
+        for restype in self.cfg.multifpga_configuration.considered_resources:
             total_required = sum([rv[restype] for rv in resource_estimates.values()])
             total_on_device = (
-                self.cfg.partitioning_configuration.max_utilization * device_resources[restype]
+                self.cfg.multifpga_configuration.max_utilization * device_resources[restype]
             )
             factor = total_required / total_on_device
             s += (
                 f"{restype:<15}{total_required:<15_}   ({factor:.2f}x  "
                 f"on  {self.cfg.board}  at  "
-                f"{self.cfg.partitioning_configuration.max_utilization:.2%}  max utilization)\n"
+                f"{self.cfg.multifpga_configuration.max_utilization:.2%}  max utilization)\n"
             )
 
         s += f"\n{' Available Resources on Devices at Utilization Percentages':=^80}\n"
         s += "=" * 80 + "\n"
-        maxutil = self.cfg.partitioning_configuration.max_utilization
-        maxutil_percent = f"{self.cfg.partitioning_configuration.max_utilization:.2%}"
-        devices = self.cfg.partitioning_configuration.num_fpgas
+        maxutil = self.cfg.multifpga_configuration.max_utilization
+        maxutil_percent = f"{self.cfg.multifpga_configuration.max_utilization:.2%}"
+        devices = self.cfg.multifpga_configuration.num_fpgas
         s += (
             " " * 15 + f"{'1x @ ' + maxutil_percent:^15}"
             f"{'1x @ 100%':^15}"
             f"{str(devices) + 'x @ ' + maxutil_percent + '(!)':^15}"
             f"{str(devices) + 'x @ 100%':^15}\n"
         )
-        for restype in self.cfg.partitioning_configuration.considered_resources:
+        for restype in self.cfg.multifpga_configuration.considered_resources:
             res = int(device_resources[restype])
             s += (
                 f"{restype:<15}"
@@ -214,7 +214,7 @@ class PartitionForMultiFPGA(Transformation):
 
         s += f"\n{' Largest Nodes by Resource Type ':=^80}\n"
         s += "=" * 80 + "\n"
-        for restype in self.cfg.partitioning_configuration.considered_resources:
+        for restype in self.cfg.multifpga_configuration.considered_resources:
             largest = ""
             largest_amount = 0
             for layer in resource_estimates.keys():
@@ -253,12 +253,12 @@ class PartitionForMultiFPGA(Transformation):
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Partition the model."""
-        if self.cfg.partitioning_configuration is None or self.cfg.board is None:
+        if self.cfg.multifpga_configuration is None or self.cfg.board is None:
             raise FINNMultiFPGAConfigError("No Multi-FPGA partitioning config or board given.")
 
         # Try solving with these device counts
-        device_counts = [self.cfg.partitioning_configuration.num_fpgas]
-        if self.cfg.partitioning_configuration.num_fpgas <= 0:
+        device_counts = [self.cfg.multifpga_configuration.num_fpgas]
+        if self.cfg.multifpga_configuration.num_fpgas <= 0:
             # Calculate all factors and use the biggest one. Since 2.4x is not a valid device
             # count, ceil to the next value. This will be the lower bound for the number of
             # devices to try out.
@@ -266,8 +266,8 @@ class PartitionForMultiFPGA(Transformation):
                 model,
                 platforms[self.cfg.board](),
                 self.cfg._resolve_fpga_part(),  # noqa
-                self.cfg.partitioning_configuration.considered_resources,
-                self.cfg.partitioning_configuration.max_utilization,
+                self.cfg.multifpga_configuration.considered_resources,
+                self.cfg.multifpga_configuration.max_utilization,
             )
             if factors is None:
                 raise FINNMultiFPGAUserError(
@@ -284,7 +284,7 @@ class PartitionForMultiFPGA(Transformation):
                     "The number of required devices (lower bound) "
                     "was set to 1! To explicitly force partitioning across multiple "
                     "devices, set a fixed 'num_fpgas' number in your "
-                    "partitioning configuration."
+                    "Multi-FPGA configuration."
                 )
 
         solution_found = False
@@ -295,7 +295,7 @@ class PartitionForMultiFPGA(Transformation):
             )
 
             # Set the device count
-            self.cfg.partitioning_configuration.num_fpgas = device_count
+            self.cfg.multifpga_configuration.num_fpgas = device_count
 
             # Create the partitioner, releasing the solver of the previous attempt first
             if self.partitioner is not None:
@@ -304,7 +304,9 @@ class PartitionForMultiFPGA(Transformation):
 
             # Solve the model (timed)
             start = time.time()
-            self.mapping = self.partitioner.solve(solver_timeout=self.pcfg.partition_solver_timeout)
+            self.mapping = self.partitioner.solve(
+                solver_timeout=self.mfcfg.partition_solver_timeout
+            )
             elapsed_seconds = time.time() - start
 
             # Minimal logging

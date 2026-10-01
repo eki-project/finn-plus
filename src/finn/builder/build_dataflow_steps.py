@@ -1993,7 +1993,7 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
             "DataflowOutputType.BITFILE not in requested outputs, skipping step_prepare_synthesis."
         )
         return model
-    if cfg.partitioning_configuration is not None and cfg.board is None:
+    if cfg.multifpga_configuration is not None and cfg.board is None:
         raise FINNMultiFPGAUserError(
             "Cannot do Multi-FPGA without " "'board' being specified in the config!"
         )
@@ -2021,7 +2021,7 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
 
             # Partitioning / Floorplan
             sdp_partition_dir = cfg.get_intermediate_models_directory() / "kernel_partitions"
-            if cfg.partitioning_configuration is None:
+            if cfg.multifpga_configuration is None:
                 # Single FPGA
                 model = model.transform(Floorplan(cfg.vitis_floorplan_file))
                 model = model.transform(CreateDataflowPartition(str(sdp_partition_dir)))
@@ -2032,17 +2032,17 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                 log.info(
                     "Detected a Multi-FPGA configuration. " "Running Multi-FPGA specific steps..."
                 )
-                pc = cfg.partitioning_configuration
-                if pc.partitioning is not None:
-                    model = model.transform(ApplyPartitioning(pc.partitioning))
+                mfcfg = cfg.multifpga_configuration
+                if mfcfg.partitioning is not None:
+                    model = model.transform(ApplyPartitioning(mfcfg.partitioning))
                 else:
                     model = model.transform(PartitionForMultiFPGA(cfg))
                 model = model.transform(
                     CreateMultiFPGAStreamingDataflowPartition(
-                        pc.separate_iodmas, sdp_partition_dir, pc.verbosity
+                        mfcfg.separate_iodmas, sdp_partition_dir, mfcfg.verbosity
                     )
                 )
-                if cfg.partitioning_configuration.single_stream_network:
+                if cfg.multifpga_configuration.single_stream_network:
                     for node in model.graph.node:
                         if model.is_fork_node(node):
                             raise FINNUserError(
@@ -2050,8 +2050,8 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                                 ", but a forking node was found after "
                                 "StreamingDataflowPartition creation!"
                             )
-                model = model.transform(CreateNetworkMetadata(pc))
-                backend = get_backend(pc.communication_kernel)
+                model = model.transform(CreateNetworkMetadata(mfcfg))
+                backend = get_backend(mfcfg.communication_kernel)
                 model = model.transform(backend.prepare_kernels(cfg))
 
             # Create / package XOs for all SDPs

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
-    PartitioningConfiguration,
+    MultiFPGAConfiguration,
     ShellFlowType,
 )
 from finn.transformation.fpgadataflow.multifpga.partition_model import ApplyPartitioning
@@ -59,7 +59,7 @@ def test_apply_partitioning(model_type: tuple[str, int, int, bool]) -> None:
         steps=[],
         target_fps=3000,
         shell_flow_type=ShellFlowType.VITIS_ALVEO,
-        partitioning_configuration=PartitioningConfiguration(),
+        multifpga_configuration=MultiFPGAConfiguration(),
     )
 
     # Create a model

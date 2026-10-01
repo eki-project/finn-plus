@@ -101,8 +101,8 @@ class ParallelVitisSynthesis(Transformation):
         configs = VitisLinkConfiguration.load_from_model(model)
 
         # Figure out number of parallel synthesis runs
-        if self.cfg.partitioning_configuration is not None:
-            workers = self.cfg.partitioning_configuration.parallel_synthesis_workers
+        if self.cfg.multifpga_configuration is not None:
+            workers = self.cfg.multifpga_configuration.parallel_synthesis_workers
         else:
             workers = 1
 
@@ -173,9 +173,9 @@ class VitisBuild(Transformation):
         )
 
         # Multi-FPGA specific config changes
-        if self.cfg.partitioning_configuration is not None:
+        if self.cfg.multifpga_configuration is not None:
             log.info("Modifying linking configuration for Multi-FPGA...")
-            backend = get_backend(self.cfg.partitioning_configuration.communication_kernel)
+            backend = get_backend(self.cfg.multifpga_configuration.communication_kernel)
             model = model.transform(backend.modify_link_config(self.cfg))
 
         # Check for errors and warnings

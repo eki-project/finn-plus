@@ -44,7 +44,7 @@ class Partitioner(ABC):
     """  # noqa
 
     def init_model(self, solver: MIPSolver | None) -> mip.Model:
-        """Initialize the LP model, considering the partitioning configuration."""
+        """Initialize the LP model, considering the Multi-FPGA configuration."""
         if solver is None:
             try:
                 return Model()
@@ -168,10 +168,10 @@ class Partitioner(ABC):
 
     def __init__(self, cfg: DataflowBuildConfig) -> None:
         """Initialize a new partitioner. This involves creating the mip model."""
-        assert cfg.partitioning_configuration is not None
+        assert cfg.multifpga_configuration is not None
         self.cfg = cfg
-        self.pcfg = cfg.partitioning_configuration
-        self.verbosity = cfg.partitioning_configuration.verbosity
+        self.mfcfg = cfg.multifpga_configuration
+        self.verbosity = cfg.multifpga_configuration.verbosity
 
         # Store locale. Necessary to avoid a bug, where a failed Gurobi model instantiation
         # causes the default locale/encoding to switch away from UTF8, causing file
@@ -183,8 +183,8 @@ class Partitioner(ABC):
         self.status: mip.OptimizationStatus | None = None
         self.objective_value: float | None = None
         self._resource_use_relative_cache: dict[int, dict[str, Any]] | None = None
-        self.model = self.init_model(cfg.partitioning_configuration.partition_solver)
-        self.model.emphasis = cfg.partitioning_configuration.partition_solver_emphasis
+        self.model = self.init_model(cfg.multifpga_configuration.partition_solver)
+        self.model.emphasis = cfg.multifpga_configuration.partition_solver_emphasis
 
         # Restore locale, as mentioned above.
         locale.setlocale(locale.LC_CTYPE, current_locale)
@@ -301,7 +301,7 @@ class Partitioner(ABC):
         resource usage. If no optimization was done, the dict will contain None's
         Actual implementation is left to the subclasses.
         """
-        if self.pcfg.partition_strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
+        if self.mfcfg.partition_strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
             if self._resource_use_relative_cache is None:
                 self._resource_use_relative_cache = self._get_resource_use_relative()
             return self._resource_use_relative_cache
