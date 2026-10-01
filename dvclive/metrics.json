@@ -1,0 +1,129 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 0.0,
+            "DSP": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 400,
+            "max_cycles": 400,
+            "max_cycles_node_name": "FMPadding_rtl_0",
+            "estimated_throughput_fps": 250000.0,
+            "estimated_latency_ns": 4000.0
+        }
+    },
+    "empirical_estimate": {
+        "resources": {
+            "LUT": 0.0,
+            "DSP": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        },
+        "power": {
+            "power": 0.0
+        }
+    },
+    "synth(ooc)": {
+        "resources": {
+            "LUT": 92,
+            "LUTRAM": 0,
+            "FF": 141,
+            "DSP": 0,
+            "BRAM": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 0,
+            "URAM": 0
+        },
+        "timing": {
+            "WNS": 7.642,
+            "fmax_mhz": 424.0882103477524
+        }
+    },
+    "synth": {
+        "resources_extra": {
+            "LUT": 44,
+            "FF": 76,
+            "SRL": 0,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 0,
+            "URAM": 0,
+            "num_nodes": 1
+        },
+        "resources": {
+            "LUT": 29,
+            "FF": 45,
+            "SRL": 0,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 0,
+            "URAM": 0
+        }
+    },
+    "vivado_estimate": {
+        "power": {
+            "power_sim_total": 1.086,
+            "power_sim_static": 1.084,
+            "power_sim_dynamic": 0.001,
+            "power_12.5_0.5_total": 1.086,
+            "power_12.5_0.5_static": 1.084,
+            "power_12.5_0.5_dynamic": 0.001,
+            "power_25_0.5_total": 1.086,
+            "power_25_0.5_static": 1.084,
+            "power_25_0.5_dynamic": 0.002,
+            "power_50_0.5_total": 1.087,
+            "power_50_0.5_static": 1.085,
+            "power_50_0.5_dynamic": 0.003,
+            "power_75_0.5_total": 1.088,
+            "power_75_0.5_static": 1.085,
+            "power_75_0.5_dynamic": 0.004,
+            "power_100_0.5_total": 1.089,
+            "power_100_0.5_static": 1.085,
+            "power_100_0.5_dynamic": 0.005
+        }
+    },
+    "measurement": {
+        "power": {
+            "avg_0V85_power": 1849.172434210527,
+            "avg_3V3_power": 954.6804605263161,
+            "avg_total_power": 2803.8528947368413,
+            "min_0V85_power": 1849.172434210527,
+            "min_3V3_power": 954.6804605263161,
+            "min_total_power": 2803.8528947368413,
+            "max_0V85_power": 1849.172434210527,
+            "max_3V3_power": 954.6804605263161,
+            "max_total_power": 2803.8528947368413
+        },
+        "report_experiment_instrumentation": {
+            "latency_ms": 0.0045,
+            "latency_cycles": 450,
+            "pipeline_depth": 1.12,
+            "throughput_fps": 250000,
+            "min_latency_cycles": 362,
+            "interval_cycles": 400,
+            "min_latency_ms": 0.00362,
+            "min_pipeline_depth": 0.91,
+            "checksum": 14333,
+            "error": false,
+            "frequency_mhz": 100
+        }
+    },
+    "time": {
+        "step_create_dataflow_partition": 0,
+        "step_minimize_bit_width": 0,
+        "step_generate_estimate_reports": 0,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 1,
+        "step_create_stitched_ip": 77,
+        "step_measure_rtlsim_performance": 185,
+        "step_out_of_context_synthesis": 156,
+        "step_vivado_power_estimation": 82,
+        "step_synthesize_bitfile": 346,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 847
+    }
+}
