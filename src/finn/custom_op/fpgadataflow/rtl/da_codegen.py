@@ -53,8 +53,10 @@ Bus layout between FINN and the generated core (see also ``mvu_da_axi_wrapper.v`
   ``out_shift_left = -out_frac``.
 """
 
+import hashlib
 import numpy as np
 import re
+import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -206,6 +208,78 @@ def _input_kif(idt: "BaseDataType", mw: int) -> tuple[np.ndarray, np.ndarray, np
     return np.full(mw, k), np.full(mw, i), np.zeros(mw, dtype=int)
 
 
+# Adder graphs by problem digest. One build solves every layer several times
+# (resource estimate, IP generation, the isolated copies of the FIFO sizing) and
+# the solver time grows about cubically with the layer size (seconds for 64x64,
+# 20 min for a dense 256x256 INT3 matrix), so the combinational solution is kept
+# for the lifetime of the process. Pipelining and code generation depend on the
+# clock target and the node name and are cheap, they are redone on every call.
+DA_SOLUTION_CACHE_SIZE = 32
+_solution_cache: dict[str, object] = {}
+_solution_cache_lock = threading.Lock()
+
+
+def clear_da_solution_cache() -> None:
+    """Forget all cached adder graphs."""
+    with _solution_cache_lock:
+        _solution_cache.clear()
+
+
+def _solve_adder_graph(
+    W: np.ndarray,
+    idt: "BaseDataType",
+    hard_dc: int,
+    ternary_fuse: bool,
+    search_all_decompose_dc: bool,
+):
+    """Run the alkaid solver on ``y = x @ W`` for FINN-encoded inputs of type
+    ``idt`` and return the combinational adder graph (alkaid ``CombLogic``)."""
+    ak = _import_alkaid()
+    mw = W.shape[0]
+    # FINN encodes BIPOLAR activations as a single bit b (0 -> -1, 1 -> +1).
+    # Substitute x = 2b - 1: y = x @ W = b @ (2W) - sum(W, axis=0).
+    k, i, f = _input_kif(idt, mw)
+    if idt.get_canonical_name() == "BIPOLAR":
+        matrix = 2.0 * W.astype(np.float64)
+        bias = -W.astype(np.float64).sum(axis=0)
+    else:
+        matrix = W.astype(np.float64)
+        bias = None
+
+    digest = hashlib.sha256()
+    for part in (
+        repr((matrix.shape, int(k[0]), int(i[0]), int(hard_dc), bool(ternary_fuse))),
+        repr((bool(search_all_decompose_dc), bias is not None)),
+    ):
+        digest.update(part.encode())
+    digest.update(np.ascontiguousarray(matrix).tobytes())
+    key = digest.hexdigest()
+    with _solution_cache_lock:
+        comb = _solution_cache.get(key)
+    if comb is not None:
+        return comb
+
+    solver_options = {
+        "hard_dc": int(hard_dc),
+        "search_all_decompose_dc": bool(search_all_decompose_dc),
+    }
+    hwconf = ak["HWConfig"](1, 1, -1)
+    inp = ak["FVArray"].from_kif(k, i, f, hwconf, 0.0, solver_options)
+    out = inp @ matrix.astype(np.float32)
+    if bias is not None:
+        out = out + bias
+    comb = ak["trace"](inp, out)
+    if ternary_fuse:
+        comb = ak["add_surrogate"](
+            ak["dead_code_elimin"](ak["fuse_ternary_adders"](comb)), _skip_op8_cost=True
+        )
+    with _solution_cache_lock:
+        while len(_solution_cache) >= DA_SOLUTION_CACHE_SIZE:
+            _solution_cache.pop(next(iter(_solution_cache)))
+        _solution_cache[key] = comb
+    return comb
+
+
 def _padded_precision(precisions) -> tuple[bool, int, int]:
     """Element-wise maximum of (signed, integer bits, fractional bits), mirroring
     alkaid's io wrapper slot layout."""
@@ -307,32 +381,7 @@ def build_da_core(
         )
         latency_cutoff = latency_cutoff_from_clk(clk_ns)
 
-    # --- symbolic inputs -----------------------------------------------------
-    # FINN encodes BIPOLAR activations as a single bit b (0 -> -1, 1 -> +1).
-    # Substitute x = 2b - 1: y = x @ W = b @ (2W) - sum(W, axis=0).
-    k, i, f = _input_kif(idt, mw)
-    is_bipolar_in = idt.get_canonical_name() == "BIPOLAR"
-    if is_bipolar_in:
-        matrix = 2.0 * W.astype(np.float64)
-        bias = -W.astype(np.float64).sum(axis=0)
-    else:
-        matrix = W.astype(np.float64)
-        bias = None
-
-    solver_options = {
-        "hard_dc": int(hard_dc),
-        "search_all_decompose_dc": bool(search_all_decompose_dc),
-    }
-    hwconf = ak["HWConfig"](1, 1, -1)
-    inp = ak["FVArray"].from_kif(k, i, f, hwconf, 0.0, solver_options)
-    out = inp @ matrix.astype(np.float32)
-    if bias is not None:
-        out = out + bias
-    comb = ak["trace"](inp, out)
-    if ternary_fuse:
-        comb = ak["add_surrogate"](
-            ak["dead_code_elimin"](ak["fuse_ternary_adders"](comb)), _skip_op8_cost=True
-        )
+    comb = _solve_adder_graph(W, idt, hard_dc, ternary_fuse, search_all_decompose_dc)
 
     opcodes = {op.opcode for op in comb.ops}
     _require(
@@ -446,30 +495,7 @@ def da_cost_estimate(
 ) -> dict:
     """Run only the alkaid solver (no Verilog) and return the cost figures.
     Used by the microbenchmark DUT to log the DA numbers next to HLS builds."""
-    ak = _import_alkaid()
-    W = np.asarray(W)
-    mw, mh = W.shape
-    k, i, f = _input_kif(idt, mw)
-    if idt.get_canonical_name() == "BIPOLAR":
-        matrix, bias = 2.0 * W.astype(np.float64), -W.astype(np.float64).sum(axis=0)
-    else:
-        matrix, bias = W.astype(np.float64), None
-    inp = ak["FVArray"].from_kif(
-        k,
-        i,
-        f,
-        ak["HWConfig"](1, 1, -1),
-        0.0,
-        {"hard_dc": int(hard_dc), "search_all_decompose_dc": True},
-    )
-    out = inp @ matrix.astype(np.float32)
-    if bias is not None:
-        out = out + bias
-    comb = ak["trace"](inp, out)
-    if ternary_fuse:
-        comb = ak["add_surrogate"](
-            ak["dead_code_elimin"](ak["fuse_ternary_adders"](comb)), _skip_op8_cost=True
-        )
+    comb = _solve_adder_graph(np.asarray(W), idt, hard_dc, ternary_fuse, True)
     return {
         "da_cost": float(comb.cost),
         "da_adders": int(sum(op.opcode in (0, 1, 4, 11) for op in comb.ops)),

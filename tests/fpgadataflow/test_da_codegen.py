@@ -38,6 +38,7 @@ from qonnx.util.basic import calculate_matvec_accumulator_range, gen_finn_dt_ten
 from finn.custom_op.fpgadataflow.rtl.da_codegen import (
     DA_PRIMITIVE_MODULES,
     build_da_core,
+    clear_da_solution_cache,
     da_cost_estimate,
     latency_cutoff_from_clk,
     module_names_in,
@@ -159,7 +160,10 @@ def test_da_codegen_deterministic():
     W = structured_weights(DataType["INT4"], 32, 32, seed=3)
     odt = accumulator_datatype(W, DataType["UINT4"])
     a = build_da_core(W, DataType["UINT4"], DataType["INT4"], odt, "n_da_core", clk_ns=4.0)
+    # solve again from scratch, not from the solution cache
+    clear_da_solution_cache()
     b = build_da_core(W, DataType["UINT4"], DataType["INT4"], odt, "n_da_core", clk_ns=4.0)
+    assert a.comb is not b.comb
     assert a.files == b.files
     assert (a.cost, a.adders, a.depth, a.latency_cycles) == (
         b.cost,
@@ -167,6 +171,32 @@ def test_da_codegen_deterministic():
         b.depth,
         b.latency_cycles,
     )
+
+
+@pytest.mark.fpgadataflow
+def test_da_codegen_solution_cache():
+    """The solver runs once per weight matrix and solver options; the node name
+    and the clock target only affect pipelining and code generation."""
+    clear_da_solution_cache()
+    idt, wdt = DataType["UINT4"], DataType["INT4"]
+    W = structured_weights(wdt, 32, 32, seed=5)
+    odt = accumulator_datatype(W, idt)
+    a = build_da_core(W, idt, wdt, odt, "a_da_core", clk_ns=4.0)
+    b = build_da_core(W, idt, wdt, odt, "b_da_core", clk_ns=20.0)
+    assert b.comb is a.comb
+    assert da_cost_estimate(W, idt)["da_cost"] == a.cost
+    assert all(name.startswith("b_da_core") for name in b.files)
+    assert b.n_stages <= a.n_stages
+    x = gen_finn_dt_tensor(idt, (8, 32))
+    assert np.array_equal(b.golden(x), x @ W)
+    # other solver options, input datatype or weights are different problems
+    assert build_da_core(W, idt, wdt, odt, "c_da_core", clk_ns=4.0, hard_dc=-1).comb is not a.comb
+    odt8 = accumulator_datatype(W, DataType["INT8"])
+    assert build_da_core(W, DataType["INT8"], wdt, odt8, "d_da_core", clk_ns=4.0).comb is not a.comb
+    W2 = W.copy()
+    W2[0, 0] = W2[0, 0] + 1 if W2[0, 0] < wdt.max() else W2[0, 0] - 1
+    odt2 = accumulator_datatype(W2, idt)
+    assert build_da_core(W2, idt, wdt, odt2, "e_da_core", clk_ns=4.0).comb is not a.comb
 
 
 @pytest.mark.fpgadataflow

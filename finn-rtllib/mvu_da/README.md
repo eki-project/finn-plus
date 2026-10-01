@@ -8,8 +8,12 @@ Networks on FPGAs*, TRETS 2026) into a pipelined, multiplier-free adder graph:
 canonical-signed-digit recoding, common-subexpression sharing across all
 outputs, exact per-node bit widths and a depth-constrained tree construction.
 FINN wraps that graph in its AXI-stream protocol; no HLS is involved, so the
-build time of a layer drops from a Vitis HLS run to a few seconds of solver
-time plus the Vivado synthesis of plain adders.
+build time of a layer drops from a Vitis HLS run to the solver time plus the
+Vivado synthesis of plain adders. The solver takes seconds up to about 64x64
+weights and grows roughly cubically from there (30 s for a dense 128x128 INT3
+matrix, 20 min for 256x256); its result is cached per weight matrix within a
+build process, so the estimate, IP generation and FIFO sizing steps share one
+solver run.
 
 ## When to use it
 
