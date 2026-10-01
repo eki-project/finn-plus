@@ -13,6 +13,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ### Fixed
 - A plain `pip install finn-plus` could not start the CLI because it imported `junitparser`, a dependency of the optional test suite, on start-up (eki-project#284)
+- The cycle estimate of the RTL sliding window generator in 1D depthwise mode was about 2x too low for windows spanning a whole sequence, and `SetFolding` now folds the window generator together with the pooling/depthwise layer it feeds so that it no longer becomes the throughput bottleneck (eki-project#280)
 
 ## 1.6.0 - 28.09.2026
 
