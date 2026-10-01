@@ -120,6 +120,7 @@
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": [65536],
+        "validation_dataset" : ["radioml_transformer"],
     },
 
     # vision model
@@ -134,6 +135,7 @@
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": [1525],
+        "validation_dataset" : ["cifar"],
     },
 
     # language model
@@ -148,6 +150,7 @@
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": [1024],
+        "validation_dataset" : ["tinystories"],
     },
 
     # Synthetic non-linear models

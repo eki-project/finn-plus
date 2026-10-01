@@ -121,8 +121,13 @@ class bench:
             self._params["validation_dataset"] = "imagenet"
         elif self._params["dut"] == "cybsec":
             self._params["validation_dataset"] = "unswnb15"
+        elif self._params["dut"] == "kws":
+            self._params["validation_dataset"] = "speechcommands"
+        elif self._params["dut"] == "gtsrb":
+            self._params["validation_dataset"] = "gtsrb"
         else:
-            # TODO implement for gtsrb, kws, transformer, synthetic_nonlinear (?), mvau (?)
+            # The transformer DUT serves models trained on different datasets, which the
+            # bench configs select per model. TODO implement for synthetic_nonlinear (?), mvau (?)
             log.warning(
                 "No dataset available for the selected DUT. Configure manually if possible."
             )
