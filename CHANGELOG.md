@@ -6,6 +6,14 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
+## Unreleased
+
+### Changed
+- Pin `onnx-passes` to 0.4.1
+
+### Fixed
+- Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus`
+
 ## 1.6.1 - 01.10.2026
 
 ### Changed
