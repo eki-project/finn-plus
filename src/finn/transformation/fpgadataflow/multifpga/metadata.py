@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from qonnx.core.modelwrapper import ModelWrapper
 
+    from finn.builder.build_dataflow_config import PartitioningConfiguration
+
 
 class DataDirection(str, Enum):
     """Data movement direction."""
@@ -27,9 +29,18 @@ class NetworkMetadata(ABC):
     devices, as well as which nodes on the devices are responsible for communication.
     """
 
+    @classmethod
+    def create_from_partitioning_configuration(
+        cls, pcfg: PartitioningConfiguration  # noqa: ARG003
+    ) -> NetworkMetadata:
+        """Create an empty metadata object. Subclasses can override this to read the settings
+        they need from the partitioning configuration.
+        """
+        return cls()
+
     @staticmethod
     @abstractmethod
-    def from_model(model: ModelWrapper) -> NetworkMetadata:
+    def load_from_model(model: ModelWrapper) -> NetworkMetadata:
         """Load the metadata from a modelwrapper."""
         pass  # noqa
 

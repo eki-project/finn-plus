@@ -189,7 +189,7 @@ class PrepareAuroraFlow(Transformation):
         are stored.
         """
         # Load the metadata from the model's metadata prop
-        metadata = AuroraNetworkMetadata.from_model(model)
+        metadata = AuroraNetworkMetadata.load_from_model(model)
 
         # Store the location of the aurora kernels in the model as well - just in case
         model.set_metadata_prop("aurora_storage", str(self.aurora_storage.absolute()))

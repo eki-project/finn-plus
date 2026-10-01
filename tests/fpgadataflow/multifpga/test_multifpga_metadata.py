@@ -3,21 +3,36 @@ import pytest
 import onnx.helper as oh
 from copy import deepcopy
 from onnx import TensorProto
+from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import qonnx_make_model
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
-from finn.builder.build_dataflow_config import MFCommunicationKernel, MFTopology, MFVerbosity
+from finn.builder.build_dataflow_config import (
+    MFCommunicationKernel,
+    MFTopology,
+    MFVerbosity,
+    PartitioningConfiguration,
+)
+from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
 from finn.transformation.fpgadataflow.multifpga.create_network_metadata import CreateNetworkMetadata
 from finn.transformation.fpgadataflow.multifpga.metadata import DataDirection
-from finn.util.basic import get_metadata_prop_path
-from finn.util.exception import FINNError
+from finn.util.basic import get_metadata_prop_path, make_build_dir
+from finn.util.exception import FINNError, FINNMultiFPGAConfigError
 from finn.util.fpgadataflow import get_device_id, set_device_id
 from tests.fpgadataflow.test_set_folding import make_multi_fclayer_model
 
-if TYPE_CHECKING:
-    from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
+
+def make_pcfg(
+    communication_kernel: MFCommunicationKernel, ports_per_device: int = 2
+) -> PartitioningConfiguration:
+    """Return a partitioning configuration for metadata creation, without logging output."""
+    return PartitioningConfiguration(
+        communication_kernel=communication_kernel,
+        ports_per_device=ports_per_device,
+        verbosity=MFVerbosity.NONE,
+    )
 
 
 def sdp_model(partition_topology: MFTopology) -> ModelWrapper:  # noqa
@@ -74,11 +89,7 @@ def test_metadata_sdp_only(nodes: int, communication_kernel: MFCommunicationKern
         3, DataType["BINARY"], DataType["BINARY"], DataType["BINARY"], nodes
     )
     with pytest.raises(FINNError):
-        _ = model.transform(
-            CreateNetworkMetadata(
-                communication_kernel=communication_kernel, verbosity=MFVerbosity.NONE
-            )
-        )
+        _ = model.transform(CreateNetworkMetadata(make_pcfg(communication_kernel)))
 
 
 @pytest.mark.multifpga
@@ -91,16 +102,15 @@ def test_metadata(
 ) -> None:
     """Test that metadata for a model is created correctly."""
     model = sdp_model(topology)
-    model = model.transform(CreateNetworkMetadata(communication_kernel, MFVerbosity.NONE))
+    model = model.transform(CreateNetworkMetadata(make_pcfg(communication_kernel)))
     path = get_metadata_prop_path(model, "network_metadata", must_exist=True)
 
     # Metadata file exists
     assert path.exists()
 
     # Load from model
-    meta = CreateNetworkMetadata.COMMUNICATION_KERNEL_METADATA_MAP[communication_kernel].from_model(
-        model
-    )
+    metadata_type = CreateNetworkMetadata.COMMUNICATION_KERNEL_METADATA_MAP[communication_kernel]
+    meta = metadata_type.load_from_model(model)
 
     # Check per connection
     for node in model.graph.node:
@@ -163,6 +173,87 @@ def test_metadata(
                 f"Connection {key} found {combinations_graph[key]} time(s) in the "
                 f"graph and {combinations_metadata[key]} time(s) in the metadata. "
             )
+    else:
+        raise NotImplementedError(
+            f"No checks implemented for communication kernel {communication_kernel.name}"
+        )
+
+
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
+@pytest.mark.parametrize("communication_kernel", [MFCommunicationKernel.AURORA])
+@pytest.mark.parametrize("ports_per_device", [2, 3, 4])
+def test_metadata_ports_per_device(
+    communication_kernel: MFCommunicationKernel, ports_per_device: int
+) -> None:
+    """Test that the configured number of ports per device is respected by the metadata."""
+    # Six SDPs alternating between device 0 and 1 cross devices five times. Both devices take
+    # part in all five crossings, which needs three kernels (two directions each) per device.
+    node_count = 6
+    tensors = [
+        oh.make_tensor_value_info(f"t_{i}", TensorProto.FLOAT, [1, 1])
+        for i in range(node_count + 1)
+    ]
+    nodes = [
+        oh.make_node(
+            "StreamingDataflowPartition",
+            [tensors[i].name],
+            [tensors[i + 1].name],
+            name=f"n{i}",
+            domain="finn.custom_op.fpgadataflow",
+            device_id=i % 2,
+        )
+        for i in range(node_count)
+    ]
+    model = ModelWrapper(
+        qonnx_make_model(
+            oh.make_graph(nodes, inputs=[tensors[0]], outputs=[tensors[-1]], name="graph")
+        )
+    )
+    transform = CreateNetworkMetadata(make_pcfg(communication_kernel, ports_per_device))
+    match communication_kernel:
+        case MFCommunicationKernel.AURORA:
+            # Adding a connection that needs a new kernel on a device whose ports are all in use
+            # raises in AuroraNetworkMetadata._add_single_connection
+            if ports_per_device < 3:
+                with pytest.raises(FINNMultiFPGAConfigError, match="communication ports"):
+                    _ = model.transform(transform)
+                return
+            model = model.transform(transform)
+            meta = AuroraNetworkMetadata.load_from_model(model)
+            assert meta.ports_per_device == ports_per_device
+            assert len(meta.data[0]) == 3
+            assert len(meta.data[1]) == 3
+        case _:
+            raise NotImplementedError(
+                f"No checks implemented for communication kernel {communication_kernel.name}"
+            )
+
+
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
+def test_aurora_metadata_path_serialization() -> None:
+    """Test that the load path is not stored in the file, but set again when loading."""
+    build_dir = Path(make_build_dir("test_aurora_metadata_path_"))
+    path = build_dir / "metadata.yaml"
+    meta = AuroraNetworkMetadata(ports_per_device=4)
+    meta.add_connection(0, "n0", 1, "n1")
+    meta.save(path)
+    assert "loaded_from_path" not in path.read_text()
+
+    # Loading sets the path, so saving without a path writes back to the same file
+    loaded = AuroraNetworkMetadata.load(path)
+    assert loaded.loaded_from_path == path
+    assert loaded.ports_per_device == 4
+    assert loaded.data == meta.data
+    loaded.add_connection(1, "n1", 2, "n2")
+    loaded.save()
+    assert AuroraNetworkMetadata.load(path).data == loaded.data
+
+    # A moved file is loaded from (and saved to) its new location
+    moved = build_dir / "moved.yaml"
+    path.rename(moved)
+    assert AuroraNetworkMetadata.load(moved).loaded_from_path == moved
 
 
 @pytest.mark.multifpga
@@ -194,12 +285,9 @@ def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
     set_device_id(c_nodes[0], 0)
     set_device_id(c_nodes[1], 1)
     set_device_id(c_nodes[2], 2)
-    chain_model = chain_model.transform(
-        CreateNetworkMetadata(communication_kernel, MFVerbosity.NONE)
-    )
-    meta = CreateNetworkMetadata.COMMUNICATION_KERNEL_METADATA_MAP[communication_kernel].from_model(
-        chain_model
-    )
+    metadata_type = CreateNetworkMetadata.COMMUNICATION_KERNEL_METADATA_MAP[communication_kernel]
+    chain_model = chain_model.transform(CreateNetworkMetadata(make_pcfg(communication_kernel)))
+    meta = metadata_type.load_from_model(chain_model)
     assert meta.node_is_sender(c_nodes[0].name)
     assert meta.node_is_sender(c_nodes[1].name)
     assert not meta.node_is_sender(c_nodes[2].name)
@@ -216,12 +304,8 @@ def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
     set_device_id(rc_nodes[0], 0)
     set_device_id(rc_nodes[1], 1)
     set_device_id(rc_nodes[2], 0)
-    rchain_model = rchain_model.transform(
-        CreateNetworkMetadata(communication_kernel, MFVerbosity.NONE)
-    )
-    meta = CreateNetworkMetadata.COMMUNICATION_KERNEL_METADATA_MAP[communication_kernel].from_model(
-        rchain_model
-    )
+    rchain_model = rchain_model.transform(CreateNetworkMetadata(make_pcfg(communication_kernel)))
+    meta = metadata_type.load_from_model(rchain_model)
     assert meta.node_is_sender(rc_nodes[0].name)
     assert meta.node_is_sender(rc_nodes[1].name)
     assert not meta.node_is_sender(rc_nodes[2].name)
@@ -244,3 +328,7 @@ def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
             rc_nodes[2].name,
             rc_nodes[1].name,
         ), str(meta.data[0])
+    else:
+        raise NotImplementedError(
+            f"No checks implemented for communication kernel {communication_kernel.name}"
+        )

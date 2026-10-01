@@ -118,14 +118,10 @@ class TestAuroraFlowPreparationAndMetadata:
                 verbosity=MFVerbosity.NONE,
             )
         )
-        model = model.transform(
-            CreateNetworkMetadata(
-                cfg.partitioning_configuration.communication_kernel, MFVerbosity.NONE
-            )
-        )
+        model = model.transform(CreateNetworkMetadata(cfg.partitioning_configuration))
 
         # No kernels packaged yet
-        meta = AuroraNetworkMetadata.from_model(model)
+        meta = AuroraNetworkMetadata.load_from_model(model)
         unprepared_aurora_kernels = len(meta.get_unprepared_aurora_kernels())
         if devices > 1:
             assert unprepared_aurora_kernels == (devices - 1) * 2
@@ -141,7 +137,7 @@ class TestAuroraFlowPreparationAndMetadata:
         )
 
         # Try and load the previously generated metadata from the models metadata prop
-        meta = AuroraNetworkMetadata.from_model(model)
+        meta = AuroraNetworkMetadata.load_from_model(model)
         unprepared_aurora_kernels = len(meta.get_unprepared_aurora_kernels())
         assert unprepared_aurora_kernels == 0
 

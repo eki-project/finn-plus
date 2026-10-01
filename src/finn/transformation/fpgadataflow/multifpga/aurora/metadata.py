@@ -17,6 +17,8 @@ from finn.util.exception import FINNInternalError, FINNMultiFPGAConfigError
 if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
 
+    from finn.builder.build_dataflow_config import PartitioningConfiguration
+
 
 @dataclass
 class AuroraNetworkKernelMetadata:
@@ -56,10 +58,18 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
 
     data: dict[int, list[AuroraNetworkKernelMetadata]] = field(default_factory=dict)
     ports_per_device: int = 2
-    loaded_from_path: Path | None = None
+    # Not serialized, since it is only valid for the file it was loaded from. Set by load().
+    loaded_from_path: Path | None = field(default=None, metadata={"serialize": "omit"})
+
+    @classmethod
+    def create_from_partitioning_configuration(
+        cls, pcfg: PartitioningConfiguration
+    ) -> AuroraNetworkMetadata:
+        """Create an empty metadata object, using the configured number of ports per device."""
+        return cls(ports_per_device=pcfg.ports_per_device)
 
     @staticmethod
-    def from_model(model: ModelWrapper) -> AuroraNetworkMetadata:
+    def load_from_model(model: ModelWrapper) -> AuroraNetworkMetadata:
         """Load metadata from the model."""
         p = get_metadata_prop_path(
             model,
@@ -70,16 +80,16 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
                 "Did you forget to run the 'AssignMetadata' transformation before this?"
             ),
         )
-        meta = AuroraNetworkMetadata.load(p)
-        meta.loaded_from_path = p
-        return meta
+        return AuroraNetworkMetadata.load(p)
 
     @staticmethod
     def load(p: Path) -> AuroraNetworkMetadata:
-        """Load from a YAML file."""
+        """Load from a YAML file. Afterwards, `save()` without a path stores to the same file."""
         if not p.exists():
             raise FINNInternalError(f"Tried loading Aurora metadata from non-existing path: {p}")
-        return AuroraNetworkMetadata.from_yaml(p.read_text())
+        meta = AuroraNetworkMetadata.from_yaml(p.read_text())
+        meta.loaded_from_path = p
+        return meta
 
     def save(self, p: Path | None = None) -> None:
         """Store data at the given path. If none is given, store to the location

@@ -2055,9 +2055,7 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                                 ", but a forking node was found after "
                                 "StreamingDataflowPartition creation!"
                             )
-                model = model.transform(
-                    CreateNetworkMetadata(pc.communication_kernel, pc.verbosity)
-                )
+                model = model.transform(CreateNetworkMetadata(pc))
                 model = model.transform(PrepareCommunicationKernels(platform, part, pc))
 
             # Create / package XOs for all SDPs

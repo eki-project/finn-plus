@@ -97,7 +97,7 @@ class AddAuroraToLinkConfig(Transformation):
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Modify the link config."""
-        metadata = AuroraNetworkMetadata.from_model(model)
+        metadata = AuroraNetworkMetadata.load_from_model(model)
         configs = VitisLinkConfiguration.load_from_model(model)
 
         # Packaging dummy kernels
