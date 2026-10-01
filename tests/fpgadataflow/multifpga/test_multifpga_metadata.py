@@ -16,6 +16,7 @@ from finn.builder.build_dataflow_config import (
     PartitioningConfiguration,
 )
 from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
+from finn.transformation.fpgadataflow.multifpga.backend import get_backend
 from finn.transformation.fpgadataflow.multifpga.create_network_metadata import CreateNetworkMetadata
 from finn.transformation.fpgadataflow.multifpga.metadata import DataDirection
 from finn.util.basic import get_metadata_prop_path, make_build_dir
@@ -109,8 +110,7 @@ def test_metadata(
     assert path.exists()
 
     # Load from model
-    metadata_type = CreateNetworkMetadata.COMMUNICATION_KERNEL_METADATA_MAP[communication_kernel]
-    meta = metadata_type.load_from_model(model)
+    meta = get_backend(communication_kernel).metadata_type.load_from_model(model)
 
     # Check per connection
     for node in model.graph.node:
@@ -285,7 +285,7 @@ def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
     set_device_id(c_nodes[0], 0)
     set_device_id(c_nodes[1], 1)
     set_device_id(c_nodes[2], 2)
-    metadata_type = CreateNetworkMetadata.COMMUNICATION_KERNEL_METADATA_MAP[communication_kernel]
+    metadata_type = get_backend(communication_kernel).metadata_type
     chain_model = chain_model.transform(CreateNetworkMetadata(make_pcfg(communication_kernel)))
     meta = metadata_type.load_from_model(chain_model)
     assert meta.node_is_sender(c_nodes[0].name)

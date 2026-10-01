@@ -13,11 +13,10 @@ from rich.table import Table
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
-    MFCommunicationKernel,
     MFVerbosity,
     PartitioningConfiguration,
 )
-from finn.transformation.fpgadataflow.multifpga.aurora.partitioner import AuroraPartitioner
+from finn.transformation.fpgadataflow.multifpga.backend import get_backend
 from finn.transformation.fpgadataflow.multifpga.partitioner import Partitioner
 from finn.util.basic import make_build_dir
 from finn.util.exception import (
@@ -111,16 +110,8 @@ class PartitionForMultiFPGA(Transformation):
         self.pcfg: PartitioningConfiguration = cfg.partitioning_configuration  # type: ignore
         self.verbosity = self.pcfg.verbosity
 
-        # Select the partitioner class based on the communication kernel
-        partitioners = {MFCommunicationKernel.AURORA: AuroraPartitioner}
-        try:
-            self.partitioner_type = partitioners[self.pcfg.communication_kernel]
-        except KeyError as ke:
-            raise FINNMultiFPGAConfigError(
-                f"There is currently no partitioner implementation "
-                f"for usage with the communication kernel "
-                f"{self.pcfg.communication_kernel.name}"
-            ) from ke
+        # Select the partitioner based on the communication kernel
+        self.partitioner_type = get_backend(self.pcfg.communication_kernel).partitioner
 
         # These will be filled out after partitioning
         self.partitioner: Partitioner | None = None

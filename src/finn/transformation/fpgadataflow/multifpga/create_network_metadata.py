@@ -4,14 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from qonnx.transformation.base import Transformation
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
-from finn.builder.build_dataflow_config import (
-    MFCommunicationKernel,
-    MFVerbosity,
-    PartitioningConfiguration,
-)
-from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
+from finn.builder.build_dataflow_config import MFVerbosity, PartitioningConfiguration
+from finn.transformation.fpgadataflow.multifpga.backend import get_backend
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNMultiFPGAError
 from finn.util.fpgadataflow import get_device_id
@@ -36,10 +32,6 @@ class CreateNetworkMetadata(Transformation):
         using `NetworkMetadata.load_from_model(...)`.
     """
 
-    COMMUNICATION_KERNEL_METADATA_MAP: Final[dict[MFCommunicationKernel, type[NetworkMetadata]]] = {
-        MFCommunicationKernel.AURORA: AuroraNetworkMetadata
-    }
-
     def __init__(self, partitioning_configuration: PartitioningConfiguration) -> None:
         """Create a metadata object for the communication kernel given in the partitioning
         configuration. The metadata class reads any further settings it needs from the
@@ -47,16 +39,9 @@ class CreateNetworkMetadata(Transformation):
         """
         super().__init__()
         self.verbosity = partitioning_configuration.verbosity
-        communication_kernel = partitioning_configuration.communication_kernel
-        try:
-            self.metadata_type: type[NetworkMetadata] = self.COMMUNICATION_KERNEL_METADATA_MAP[
-                communication_kernel
-            ]
-        except KeyError as e:
-            raise FINNMultiFPGAError(
-                f"Communication kernel type {communication_kernel.name} "
-                f"does not yet have an associated metadata class."
-            ) from e
+        self.metadata_type: type[NetworkMetadata] = get_backend(
+            partitioning_configuration.communication_kernel
+        ).metadata_type
 
         # Create the empty metadata object
         self.metadata: NetworkMetadata = self.metadata_type.create_from_partitioning_configuration(

@@ -53,7 +53,7 @@ Since different communication methods may work slightly differently, each commun
 At this point, depending on which communication methodology is used, custom preparation steps can be done. For example, the _AuroraFlow_ kernel needs to be configured and packaged into an XO file to be used at the linking stage. Such preparations can be done in this step (but are not required).
 
 #### Technical Details
-`PrepareCommunicationKernels` checks which communication kernel is used and runs the matching preparation transformations.
+Everything that depends on the communication kernel is bundled in a `CommunicationBackend` (`backend.py`): the partitioner, the metadata class, the preparation transformation and the transformation that modifies the linker configuration. The steps of the flow look up the backend of the configured kernel with `get_backend(...)`. To add a new communication kernel, implement these four parts and register them with `register_backend(...)` at the end of `backend.py`.
 
 ### (Synthesis)
 After everything is done, the SDPs are packaged into XOs as well (Vitis flow only) and the linker configuration is created. For Multi-FPGA, an additional transformation will be executed. This additional transformation modifies the linker configuration to, for example, instantiate the communication kernel and connect its stream interface with the compute kernel.

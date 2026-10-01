@@ -38,7 +38,7 @@ from finn.builder.build_dataflow_config import (
 )
 from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
 from finn.transformation.fpgadataflow.multifpga.aurora.partitioner import AuroraPartitioner
-from finn.transformation.fpgadataflow.multifpga.communication_kernels import PrepareAuroraFlow
+from finn.transformation.fpgadataflow.multifpga.aurora.prepare_aurora import PrepareAuroraFlow
 from finn.transformation.fpgadataflow.multifpga.create_multi_sdp import (
     CreateMultiFPGAStreamingDataflowPartition,
 )
