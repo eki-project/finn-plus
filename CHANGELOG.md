@@ -9,10 +9,10 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 
 ### Changed
-- Pin `onnx-passes` to 0.4.1
+- Pin `onnx-passes` to 0.4.1 (eki-project#288)
 
 ### Fixed
-- Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus`
+- Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
 
 ## 1.6.1 - 01.10.2026
 
