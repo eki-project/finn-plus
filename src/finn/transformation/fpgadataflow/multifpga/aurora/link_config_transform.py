@@ -104,6 +104,10 @@ class AddAuroraToLinkConfig(Transformation):
         rx_dummy, tx_dummy = self.package_dummy_kernels()
         dummy_per_device: dict[int, int] = {}
 
+        # An Aurora kernel can be shared by two SDPs on the same device (one using TX, the other
+        # RX), so track which (device, index) kernels were already instantiated
+        instantiated_kernels: set[tuple[int, int]] = set()
+
         # Loop through SDPs to determine which are connected to Aurora kernels
         for node in model.graph.node:
             device = cast("int", get_device_id(node))
@@ -130,10 +134,12 @@ class AddAuroraToLinkConfig(Transformation):
                 # Name for the current CU
                 aurora_cu = f"aurora_flow_{index}"
 
-                # These have to be done regardless of direction
-                if (tx_kernel_pair is not None and tx_kernel_pair[0] == node.name) or (
-                    rx_kernel_pair is not None and rx_kernel_pair[0] == node.name
+                # These have to be done regardless of direction, but only once per kernel
+                if (device, index) not in instantiated_kernels and (
+                    (tx_kernel_pair is not None and tx_kernel_pair[0] == node.name)
+                    or (rx_kernel_pair is not None and rx_kernel_pair[0] == node.name)
                 ):
+                    instantiated_kernels.add((device, index))
                     if self.platform.qsfp_slr is None:
                         raise FINNUserError(
                             f"Cannot place AuroraFlow kernels on device with platform"
