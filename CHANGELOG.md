@@ -6,10 +6,14 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
-## Unreleased
+## 1.6.1 - 01.10.2026
+
+### Changed
+- The `finn-plus-tests` package is removed: the test suite is no longer packaged, `finn test` runs it from the `tests/` directory of a repository checkout (`--tests-path`, default `./tests`) and its tooling is available as the `test` extra (`pip install finn-plus[test]`) (eki-project#284)
 
 ### Fixed
-- The cycle estimate of the RTL sliding window generator in 1D depthwise mode ignored that the buffered window is replayed once per channel fold and that the next frame cannot enter the buffer meanwhile, so a global pooling window over a whole sequence was estimated at half its real period (963 instead of 1971 cycles for the RadioML transformer); `SetFolding` additionally kept the window generator at the parallelism of the pooling layer it feeds without checking the generator's own cycles, which left it as the unnoticed throughput bottleneck. The estimate now matches XSI within 1 % for overlapping, non-overlapping and full-map windows, and the folding raises the shared parallelism of window generator and pooling/depthwise layer until both meet the target (eki-project#280)
+- A plain `pip install finn-plus` could not start the CLI because it imported `junitparser`, a dependency of the optional test suite, on start-up (eki-project#284)
+- The cycle estimate of the RTL sliding window generator in 1D depthwise mode was about 2x too low for windows spanning a whole sequence, and `SetFolding` now folds the window generator together with the pooling/depthwise layer it feeds so that it no longer becomes the throughput bottleneck (eki-project#280)
 
 ## 1.6.0 - 28.09.2026
 

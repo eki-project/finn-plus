@@ -16,31 +16,16 @@ jobs:
         run: pip install poetry poetry-dynamic-versioning
       - name: Config
         run: poetry config repositories.pypi https://upload.pypi.org/legacy/
-      - name: Build subpackages
+      - name: Build driver subpackage
         run: |
-          # Build tests subpackage
-          cd tests
-          poetry build
-          export VERSION=$(poetry version -s)
-          cd ..
-
-          # Build driver subpackage
           cd driver
           poetry build
           cd ..
-
-          # Update main pyproject.toml with the correct version
-          sed -i "s/finn-plus-tests = { version = \"\*\", optional = true }/finn-plus-tests = { version = \"$VERSION\", optional = true }/" pyproject.toml
       - name: Build main package
         run: |
           poetry build
       - name: Publish all packages
         run: |
-          # Publish tests subpackage
-          cd tests
-          poetry publish -r pypi -u __token__ -p ${{ secrets.PYPI_TOKEN }}
-          cd ..
-
           # Publish driver subpackage
           # Note: this is the runtime driver installed on PYNQ boards. It is deliberately not
           # a dependency of the main package, which runs on the build host.
@@ -60,5 +45,12 @@ jobs:
           python-version: '3.14'
       - name: Setup
         run: pip install poetry poetry-dynamic-versioning
-      - name: Install
-        run: pip install finn-plus[all]==$(poetry version -s)
+      # A plain install must be usable on its own: the test suite and its dependencies are
+      # optional, so nothing on the CLI's import path may depend on them.
+      - name: Install plain package and run the CLI
+        run: |
+          pip install finn-plus==$(poetry version -s)
+          finn --version
+          finn --help
+      - name: Install with the test tooling
+        run: pip install finn-plus[test]==$(poetry version -s)

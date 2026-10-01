@@ -31,7 +31,7 @@ from finn.interface.interface_utils import (
     warning,
 )
 from finn.interface.manage_deps import DependencyUpdater
-from finn.interface.manage_tests import run_test
+from finn.interface.manage_tests import resolve_tests_dir, run_test
 from finn.interface.settings import FINNSettings
 from finn.util.exception import FINNUserError, FINNValidationError
 from finn.util.multiprocessing import configure_start_method
@@ -160,6 +160,22 @@ def accept_defaults(f: Callable) -> Callable[..., Any]:
         "--accept-defaults",
         is_flag=True,
         help="If set, skip the setup wizard in case that no settings files were found.",
+    )(f)
+
+
+def tests_path(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter called --tests-path (tests_path) that defaults to None if the
+    param is empty, and a path otherwise."""
+    return click.option(
+        "--tests-path",
+        "tests_path",
+        help=(
+            "Directory of the FINN+ test suite, i.e. the tests/ directory of a repository "
+            "checkout (the suite is not part of the pip package). Defaults to ./tests of the "
+            "current directory."
+        ),
+        default="",
+        type=NullablePath(),
     )(f)
 
 
@@ -377,7 +393,6 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     )
     console.print(f"[bold]FINN_CUSTOM_HLS[/bold]: {settings.finn_custom_hls}")
     console.print(f"[bold]FINN_RTLLIB[/bold]: {settings.finn_rtllib}")
-    console.print(f"[bold]FINN_TESTS[/bold]: {settings.finn_tests}")
     console.print(
         "\n\n[bold green]Please check your edited settings and confirm them "
         "(Relative paths will be displayed as the absolute paths they would be "
@@ -593,7 +608,6 @@ def prepare_finn(
     # e.g., still used in templates.py
     os.environ["FINN_RTLLIB"] = resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
-    os.environ["FINN_TESTS"] = resolve_module_path("tests")
 
 
 @click.group(
@@ -605,9 +619,9 @@ def prepare_finn(
 def main_group(version: bool) -> None:
     """Main click group."""  # noqa
     if version:
-        import importlib_metadata
+        from importlib.metadata import version as package_version
 
-        print("FINN+ " + importlib_metadata.version("finn-plus") + "\n")
+        print("FINN+ " + package_version("finn-plus") + "\n")
         sys.exit()
     else:
         ctx = click.get_current_context()
@@ -1029,13 +1043,18 @@ def bench(
 
 
 @click.command(
-    help="Run a given test. Uses /tmp/FINN_TEST_BUILD_DIR as the temporary file location"
+    help=(
+        "Run the FINN+ test suite from a repository checkout (see --tests-path). Uses "
+        "/tmp/FINN_TEST_BUILD_DIR as the temporary file location. Requires the test tooling: "
+        "part of 'poetry install' in a checkout, or pip install finn-plus[test]."
+    )
 )
 @finn_deps
 @finn_deps_definitions
 @finn_build_dir
 @num_default_workers
 @skip_dep_update
+@tests_path
 @click.option(
     "--variant",
     "-v",
@@ -1062,11 +1081,14 @@ def test(
     finn_deps_definitions: Path | None,
     num_default_workers: int,
     skip_dep_update: bool,
+    tests_path: Path | None,
     num_test_workers: str,
     finn_build_dir: Path | None,
     batch: bool,
 ) -> None:
     """Run a selected subset of the FINN(+) testsuite."""
+    # Fail early, before dependencies are prepared, if the suite or its tooling is missing
+    tests_dir = resolve_tests_dir(tests_path)
     if finn_build_dir is None:
         finn_build_dir = Path("/tmp/FINN_TEST_BUILD_DIR")
     finn_build_dir = finn_build_dir.expanduser().absolute()
@@ -1100,7 +1122,7 @@ def test(
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
-    run_test(variant, num_test_workers, args)
+    run_test(variant, num_test_workers, tests_dir, args)
 
 
 @click.group(help="Dependency management")
