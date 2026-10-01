@@ -171,8 +171,8 @@ def tests_path(f: Callable) -> Callable[..., Any]:
         "tests_path",
         help=(
             "Directory of the FINN+ test suite, i.e. the tests/ directory of a repository "
-            "checkout (the suite is not part of the pip package). Defaults to $FINN_TESTS, "
-            "then ./tests of the current directory."
+            "checkout (the suite is not part of the pip package). Defaults to ./tests of the "
+            "current directory."
         ),
         default="",
         type=NullablePath(),
@@ -1045,8 +1045,8 @@ def bench(
 @click.command(
     help=(
         "Run the FINN+ test suite from a repository checkout (see --tests-path). Uses "
-        "/tmp/FINN_TEST_BUILD_DIR as the temporary file location. Requires the test tooling "
-        "of the 'test' extra: pip install finn-plus[test], or poetry install --all-extras."
+        "/tmp/FINN_TEST_BUILD_DIR as the temporary file location. Requires the test tooling: "
+        "part of 'poetry install' in a checkout, or pip install finn-plus[test]."
     )
 )
 @finn_deps

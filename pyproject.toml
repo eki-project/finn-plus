@@ -70,7 +70,7 @@ pydantic = ">2.0"
 mashumaro = { extras = ["yaml"], version = "^3.15" }
 
 # Tooling for the test suite (extra "test"). The suite itself is the tests/ directory of the
-# repository and is not packaged, see "finn test --help".
+# repository and is not packaged, see "finn test --help". Keep in sync with the dev group.
 pytest = { version = "~9.1.1", optional = true }
 pytest-xdist = { version = "~3.8.0", extras = ["setproctitle"], optional = true }
 pytest-html = { version = "~4.2.0", optional = true }
@@ -86,6 +86,16 @@ torch = "~2.12.1"
 torchvision = "~0.27.0"                            # required by CI
 dvc = { version = " ~3.67.0", extras = ["webdav"] }   # required by CI
 dvclive = { version = "~3.49.0", extras = ["image"] } # required by CI
+# Test tooling, so that a plain "poetry install" can run "finn test". Extras are not
+# installed by default, so these repeat the optional dependencies of the "test" extra,
+# which the pip-installed wheel (CI, users) relies on. Keep both in sync.
+pytest = "~9.1.1"
+pytest-xdist = { version = "~3.8.0", extras = ["setproctitle"] }
+pytest-html = "~4.2.0"
+pytest-html-merger = "~0.1.0"
+pytest-rerunfailures = "~16.6"
+pytest-timeout = "~2.4.0"
+junitparser = "~5.0.1"
 
 [tool.poetry.extras]
 test = [

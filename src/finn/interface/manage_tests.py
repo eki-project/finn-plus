@@ -26,12 +26,13 @@ def resolve_tests_dir(tests_dir: Path | None) -> Path:
     """Locate the test suite and check that its tooling is installed.
 
     The suite is the tests/ directory of a repository checkout and is not part of the pip
-    package. It is taken from the argument, then from $FINN_TESTS, then from ./tests of the
-    current directory. Raises a FINNUserError explaining what is missing otherwise.
+    package. It is taken from the argument, or else from ./tests of the current directory.
+    The environment is deliberately not consulted: a FINN_TESTS variable exported by a shell
+    profile would silently point every other checkout or worktree at the wrong suite.
+    Raises a FINNUserError explaining what is missing otherwise.
     """
     if tests_dir is None:
-        env_dir = os.environ.get("FINN_TESTS", "")
-        tests_dir = Path(env_dir) if env_dir != "" else Path.cwd() / "tests"
+        tests_dir = Path.cwd() / "tests"
     tests_dir = tests_dir.expanduser().absolute()
     problems = []
     if not (tests_dir / "conftest.py").is_file():
@@ -44,7 +45,7 @@ def resolve_tests_dir(tests_dir: Path | None) -> Path:
     if missing:
         problems.append(
             "missing Python modules: " + ", ".join(missing) + ". Install the test tooling "
-            "with 'pip install finn-plus[test]' or 'poetry install --all-extras' in a checkout"
+            "with 'poetry install' in a checkout or with 'pip install finn-plus[test]'"
         )
     if problems:
         raise FINNUserError("Cannot run the FINN+ test suite: " + "; ".join(problems))
@@ -120,7 +121,7 @@ def run_test(variant: str, num_workers: str, tests_dir: Path, args: str = "") ->
         ci_project_dir = str(get_settings().finn_build_dir)
     status(f"Putting test reports into {ci_project_dir}")
 
-    # Some tests locate data relative to the suite through this variable
+    # Export the suite that is actually run, replacing any stale value from the shell
     os.environ["FINN_TESTS"] = str(tests_dir)
     os.chdir(tests_dir)
     match variant:
