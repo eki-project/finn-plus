@@ -146,9 +146,7 @@ from finn.transformation.fpgadataflow.make_driver import (
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
-from finn.transformation.fpgadataflow.multifpga.communication_kernels import (
-    PrepareCommunicationKernels,
-)
+from finn.transformation.fpgadataflow.multifpga.backend import get_backend
 from finn.transformation.fpgadataflow.multifpga.create_multi_sdp import (
     CreateMultiFPGAStreamingDataflowPartition,
 )
@@ -2001,9 +1999,6 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
         )
     # Commonly used config variables
     part = cfg._resolve_fpga_part()
-    platform = (
-        cfg._resolve_vitis_platform() if cfg.shell_flow_type is ShellFlowType.VITIS_ALVEO else None
-    )
     clk_ns = cfg.synth_clk_period_ns
 
     # Differentiate preparation by flow type
@@ -2055,10 +2050,9 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                                 ", but a forking node was found after "
                                 "StreamingDataflowPartition creation!"
                             )
-                model = model.transform(
-                    CreateNetworkMetadata(pc.communication_kernel, pc.verbosity)
-                )
-                model = model.transform(PrepareCommunicationKernels(platform, part, pc))
+                model = model.transform(CreateNetworkMetadata(pc))
+                backend = get_backend(pc.communication_kernel)
+                model = model.transform(backend.prepare_kernels(cfg))
 
             # Create / package XOs for all SDPs
             model = model.transform(BuildAllXOs(part, clk_ns))

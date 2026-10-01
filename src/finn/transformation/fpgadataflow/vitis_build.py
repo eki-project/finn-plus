@@ -38,19 +38,18 @@ from pathlib import Path
 from qonnx.transformation.base import Transformation
 from typing import TYPE_CHECKING, cast
 
-from finn.builder.build_dataflow_config import DataflowBuildConfig, MFCommunicationKernel
-from finn.transformation.fpgadataflow.multifpga.aurora.link_config_transform import (
-    AddAuroraToLinkConfig,
-)
+from finn.transformation.fpgadataflow.multifpga.backend import get_backend
 from finn.transformation.fpgadataflow.vitis_linking_configuration import (
     BuildBasicVitisLinkConfig,
     VitisLinkConfiguration,
 )
-from finn.util.exception import FINNInternalError, FINNSynthesisError, FINNUserError
+from finn.util.exception import FINNSynthesisError, FINNUserError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
+
+    from finn.builder.build_dataflow_config import DataflowBuildConfig
 
 
 class ParallelVitisSynthesis(Transformation):
@@ -176,20 +175,8 @@ class VitisBuild(Transformation):
         # Multi-FPGA specific config changes
         if self.cfg.partitioning_configuration is not None:
             log.info("Modifying linking configuration for Multi-FPGA...")
-            match self.cfg.partitioning_configuration.communication_kernel:
-                case MFCommunicationKernel.AURORA:
-                    model = model.transform(
-                        AddAuroraToLinkConfig(
-                            board=self.cfg.board,
-                            fpga_part=self.cfg._resolve_fpga_part(),
-                        )
-                    )
-                case _:
-                    raise FINNInternalError(
-                        f"Vitis linking confíguration modifications for kernel type "
-                        f"{self.cfg.partitioning_configuration.communication_kernel} "
-                        f"are not yet implemented."
-                    )
+            backend = get_backend(self.cfg.partitioning_configuration.communication_kernel)
+            model = model.transform(backend.modify_link_config(self.cfg))
 
         # Check for errors and warnings
         configs: dict[int, VitisLinkConfiguration] = VitisLinkConfiguration.load_from_model(model)
