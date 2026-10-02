@@ -310,21 +310,50 @@ QoR Model Fitting:
   script:
     # Isolated venv: the runner's system packages are outdated (e.g. jinja2) and the
     # scikit-learn version must match pyproject.toml so the pickled models load in builds.
-    # torch (CPU wheel) enables the tabular transformer; symbolic regression (PySR/Julia)
-    # runs in the separate manual job below because of its runtime.
+    # The tabular transformer and symbolic regression run in the separate manual jobs below
+    # because of their runtime (CPU hours per target), so neither torch nor PySR is needed.
+    - python3.10 -m venv qor-venv
+    - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'sympy~=1.14'
+    - |
+      export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
+      export FINN_QOR_MODEL_DIR=$LOCAL_QOR_MODEL_DIR_STORE
+      qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_fit_artifacts --skip-regressors SymbolicRegressor,TabTransformerRegressor
+  artifacts:
+    name: "qor_fit_artifacts"
+    when: always
+    paths:
+      - qor_fit_artifacts/
+
+# Tabular transformer for the QoR targets: evaluated for the model comparison, not stored as
+# a model. Manual because of the runtime: one fit takes minutes on a CPU core and the grid
+# search needs 80 of them per target (about 10 CPU hours per target for ~8000 samples).
+QoR Transformer:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: qor
+  tags:
+    - image_build
+  rules:
+    - if: $BENCH_CFG =~ /^microbenchmark/ || $MANUAL_CFG_PATH =~ /microbenchmark/
+      when: manual
+      allow_failure: true
+  needs:
+    - job: Result Collection
+  timeout: 8h
+  script:
     - python3.10 -m venv qor-venv
     - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'sympy~=1.14'
     # extra index (not --index-url): torch's own dependencies must still come from PyPI
     - qor-venv/bin/pip install --quiet 'torch==2.12.0+cpu' --extra-index-url https://download.pytorch.org/whl/cpu
     - |
       export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
-      export FINN_QOR_MODEL_DIR=$LOCAL_QOR_MODEL_DIR_STORE
-      qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_fit_artifacts --skip-regressors SymbolicRegressor
+      qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_transformer_artifacts --regressors TabTransformerRegressor --no-store
   artifacts:
-    name: "qor_fit_artifacts"
+    name: "qor_transformer_artifacts"
     when: always
     paths:
-      - qor_fit_artifacts/
+      - qor_transformer_artifacts/
 
 # Symbolic regression (PySR) of the QoR targets: interpretable formulas for the paper, not
 # stored as models. Manual because of the runtime (hours) and the Julia dependency; the Julia

@@ -120,8 +120,11 @@ shows what is available, `--set REGRESSOR.param=JSON` overrides a grid list.
 
 Symbolic regression runs in the separate manual CI job `QoR Symbolic Regression` (hours;
 Julia depot cached on the runner in `LOCAL_QOR_JULIA_DEPOT`), overall and per backend
-(`--subset params.backend=hls`), without storing models. The regular `QoR Model Fitting` job
-installs torch (CPU) and skips the symbolic regressor.
+(`--subset params.backend=hls`), without storing models. The tabular transformer runs in the
+manual job `QoR Transformer`, also without storing models: a single fit on ~6000 MVAU samples
+takes 3 to 9 minutes on one CPU core, and its grid needs 80 fits per target. The regular
+`QoR Model Fitting` job therefore skips both and needs neither torch nor PySR; all jobs use
+the same cross-validation splits, so their `*_selection.csv` tables are comparable.
 
 Future work: a graph neural network over the whole dataflow graph (cross-layer effects,
 shell overhead) needs graph-level ground truth beyond the handful of end2end builds and is
