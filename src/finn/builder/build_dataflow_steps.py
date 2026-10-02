@@ -1523,6 +1523,22 @@ def generate_empirical_estimate_reports(
         json.dump(power, f, indent=2)
 
 
+def _estimated_throughput_fps(clock_cycles_per_sec: float, max_cycles: object) -> float | None:
+    """Throughput estimate from the cycles per frame of the slowest node (dataflow_performance).
+
+    Returns None if no node of the model reports an expected cycle count (e.g. a model that
+    only consists of FIFOs or data width converters), as there is nothing to derive it from.
+    """
+    max_cycles = cast("int", max_cycles)
+    if max_cycles <= 0:
+        log.warning(
+            "No node of the model reports its expected cycles per frame, "
+            "skipping the throughput estimate."
+        )
+        return None
+    return clock_cycles_per_sec / max_cycles
+
+
 @register_build_dataflow_step()
 def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Generate per-layer resource and cycle estimates using analytical models."""
@@ -1583,10 +1599,11 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
             )
             # add some more metrics to estimated performance
             n_clock_cycles_per_sec = (10**9) / cfg.synth_clk_period_ns
-            est_fps = n_clock_cycles_per_sec / cast(
-                "int", estimate_network_performance["max_cycles"]
+            est_fps = _estimated_throughput_fps(
+                n_clock_cycles_per_sec, estimate_network_performance["max_cycles"]
             )
-            estimate_network_performance["estimated_throughput_fps"] = est_fps
+            if est_fps is not None:
+                estimate_network_performance["estimated_throughput_fps"] = est_fps
             est_latency_ns = (
                 cast("int", estimate_network_performance["critical_path_cycles"])
                 * cfg.synth_clk_period_ns
@@ -1962,8 +1979,11 @@ def step_out_of_context_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig)
         estimate_network_performance = model.analysis(dataflow_performance)
         # add some more metrics to estimated performance
         n_clock_cycles_per_sec = float(ooc_res_dict["fmax_mhz"]) * (10**6)
-        est_fps = n_clock_cycles_per_sec / cast("int", estimate_network_performance["max_cycles"])
-        ooc_res_dict["estimated_throughput_fps"] = est_fps
+        est_fps = _estimated_throughput_fps(
+            n_clock_cycles_per_sec, estimate_network_performance["max_cycles"]
+        )
+        if est_fps is not None:
+            ooc_res_dict["estimated_throughput_fps"] = est_fps
         with (report_dir / "ooc_synth_and_timing.json").open("w") as f:
             json.dump(ooc_res_dict, f, indent=2)
 

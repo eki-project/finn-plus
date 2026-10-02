@@ -29,17 +29,34 @@
 
         "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
+    # Parameters that only exist for one backend are null (strings) or 0 (numbers) for the
+    # other one, so HLS and RTL variants get separate entries instead of a mixed grid.
     {
         "dut": ["thresholding"],
-        "backend": ["hls", "rtl"],
+        "backend": ["hls"],
         "idt": ["INT8"],
         "odt": ["UINT4"],
         "ch": [64],
         "pe": [8],
         "nhw": [[1,8,8]],
-        # hls only (null for rtl): mem_mode/ram_style; rtl only (0 for hls): depth triggers
-        "mem_mode": ["internal_embedded", null],
-        "ram_style": ["distributed", null],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["distributed"],
+        "depth_trigger_bram": [0],
+        "depth_trigger_uram": [0],
+        "instrumentation_no_dma": [true],
+        "store_results_in_dvc_data": [true],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["thresholding"],
+        "backend": ["rtl"],
+        "idt": ["INT8"],
+        "odt": ["UINT4"],
+        "ch": [64],
+        "pe": [8],
+        "nhw": [[1,8,8]],
+        "mem_mode": [null],
+        "ram_style": [null],
         "depth_trigger_bram": [0],
         "depth_trigger_uram": [0],
         "instrumentation_no_dma": [true],
@@ -56,7 +73,25 @@
         "dilation": [[1,1]],
         "simd": [4, 16],
         "depthwise": [0],
-        "parallel_window": [0, 1],
+        "parallel_window": [0],
+        "m": [1],
+        "ram_style": ["distributed"],
+        "instrumentation_no_dma": [true],
+        "store_results_in_dvc_data": [true],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    # the parallel window variant of a non-depthwise SWG needs simd == ifm_ch
+    {
+        "dut": ["swg"],
+        "idt": ["UINT4"],
+        "ifm_ch": [16],
+        "ifm_dim": [[16,16]],
+        "k": [[3,3]],
+        "stride": [[1,1]],
+        "dilation": [[1,1]],
+        "simd": [16],
+        "depthwise": [0],
+        "parallel_window": [1],
         "m": [1],
         "ram_style": ["distributed"],
         "instrumentation_no_dma": [true],

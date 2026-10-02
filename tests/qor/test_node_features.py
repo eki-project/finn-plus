@@ -372,3 +372,38 @@ def test_expand_config_with_real_duts(monkeypatch):
         assert params["instrumentation_no_dma"] is True
         assert params["store_results_in_dvc_data"] is True
         assert "bitfile" in params["generate_outputs"]
+
+
+def test_smoke_config_runs_are_valid():
+    """Every run of the CI smoke config must be buildable (an invalid combination is only
+    skipped at build time and would silently reduce the coverage) and cover every DUT."""
+    import yaml
+    from pathlib import Path
+
+    cfg_path = Path(__file__).resolve().parents[2] / "ci" / "cfg" / "microbenchmark_basic.yml"
+    config = yaml.safe_load(cfg_path.read_text())
+    expanded, _ = expand_config(config, MICROBENCH_DUTS, None)
+    reasons = {
+        i: MICROBENCH_DUTS[params["dut"]].validate(params) for i, params in enumerate(expanded)
+    }
+    assert {i: r for i, r in reasons.items() if r is not None} == {}
+    assert {params["dut"] for params in expanded} == set(MICROBENCH_DUTS)
+
+
+@pytest.mark.parametrize("dut,params", [("fifo", "_FIFO"), ("dwc", "_DWC")])
+def test_throughput_estimate_without_cycle_model(dut, params):
+    """FIFOs and data width converters report no expected cycles per frame, the builder must
+    then skip the throughput estimate instead of dividing by zero."""
+    from qonnx.transformation.general import GiveUniqueNodeNames as _Names
+
+    from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
+    from finn.builder.build_dataflow_steps import _estimated_throughput_fps
+    from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
+
+    params = dict(globals()[params])
+    model, _ = MICROBENCH_DUTS[dut].make_model(params, RFSOC)
+    model = model.transform(_Names()).transform(AnnotateCycles())
+    perf = model.analysis(dataflow_performance)
+    assert perf["max_cycles"] == 0
+    assert _estimated_throughput_fps(1e8, perf["max_cycles"]) is None
+    assert _estimated_throughput_fps(1e8, 50) == 2e6
