@@ -1,4 +1,4 @@
-# End-to-end benchmarks of the distributed-arithmetic MVU on two MLPs.
+# End-to-end benchmarks of the distributed-arithmetic MVU on three MLPs and a 1D CNN.
 #
 # The cybsec MLP (600 -> 64 -> 64 -> 64 -> 1, 2-bit weights) across the MVAU and
 # threshold implementation options, as a benchmark for the distributed-arithmetic
@@ -61,9 +61,8 @@
     # weight, 260 k weights), so the HLS vs. DA comparison unrolls the output layer
     # only (256x12, ~7 k LUTs as a DA core): with enable_da_mvau exactly that layer
     # becomes a DA core while the folded layers keep their HLS implementation. The
-    # last variant unrolls every layer as a DA core anyway to get the real size (or
-    # the over-utilization reported by Vivado); there is no HLS counterpart, its
-    # synthesis time would be extreme.
+    # last variant unrolled every layer as a DA core anyway to get the real size;
+    # there is no HLS counterpart, its synthesis time would be extreme.
     {
         # 7. reference: current folding, HLS MVAUs with streamed weights, fused thresholds
         "dut": ["kws"],
@@ -101,12 +100,96 @@
         "enable_da_mvau": [true],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
+    # 13. every layer fully unrolled as a distributed-arithmetic RTL MVAU, standalone RTL
+    #     thresholds. Disabled: the design needs 699 k LUTs (xczu28dr: 425 k) and the build
+    #     takes 8 h until Vivado reports that (pipeline 152373).
+    # {
+    #     "dut": ["kws"],
+    #     "standalone_thresholds": [true],
+    #     "folding_config_file": ["models/kws/kws_unrolled_hls_embedded_folding_config.json"],
+    #     "enable_da_mvau": [true],
+    #     "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    # },
+    # ------------------------------------------------------------------------------
+    # TFC-w1a2 MLP (784 -> 64 -> 64 -> 64 -> 10, dense +-1 weights, 2-bit activations):
+    # small enough to unroll completely and without the sparsity of cybsec. The input
+    # Reshape passes at most 28 elements per cycle, so the unrolled designs are limited
+    # to one frame per 28 cycles.
     {
-        # 13. every layer fully unrolled as a distributed-arithmetic RTL MVAU, standalone
-        #     RTL thresholds
-        "dut": ["kws"],
+        # 14. reference: current folding, HLS MVAUs with streamed weights, fused thresholds
+        "dut": ["bnn-pynq"],
+        "model_path": ["models/bnn-pynq/tfc-w1a2_qonnx.onnx"],
+        "folding_config_file": ["models/bnn-pynq/tfc-w1a2_folding_config.json"],
+        "specialize_layers_config_file": ["models/bnn-pynq/tfc-w1a2_specialize_layers.json"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        "validation_dataset": ["mnist"]
+    },
+    {
+        # 15. fully unrolled, HLS MVAUs with embedded weights, standalone RTL thresholds
+        "dut": ["bnn-pynq"],
+        "model_path": ["models/bnn-pynq/tfc-w1a2_qonnx.onnx"],
         "standalone_thresholds": [true],
-        "folding_config_file": ["models/kws/kws_unrolled_hls_embedded_folding_config.json"],
+        "folding_config_file": ["models/bnn-pynq/tfc-w1a2_unrolled_hls_embedded_folding_config.json"],
+        "specialize_layers_config_file": ["models/bnn-pynq/tfc-w1a2_specialize_layers.json"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        "validation_dataset": ["mnist"]
+    },
+    {
+        # 16. as 15, but the unrolled MVAUs become distributed-arithmetic RTL MVAUs
+        "dut": ["bnn-pynq"],
+        "model_path": ["models/bnn-pynq/tfc-w1a2_qonnx.onnx"],
+        "standalone_thresholds": [true],
+        "folding_config_file": ["models/bnn-pynq/tfc-w1a2_unrolled_hls_embedded_folding_config.json"],
+        "specialize_layers_config_file": ["models/bnn-pynq/tfc-w1a2_specialize_layers.json"],
+        "enable_da_mvau": [true],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        "validation_dataset": ["mnist"]
+    },
+    # ------------------------------------------------------------------------------
+    # RadioML VGG-10 (1D CNN, dense 4-bit weights and activations, standalone RTL
+    # thresholds in every variant). The regular folding runs at the maximum rate of
+    # one input sample per cycle: the first convolution (6x32) is fully unrolled and
+    # every pooling stage halves the parallelism of the next one (96x32 at WMEM 2, 4,
+    # 8, ...). An unrolled DA core is expected to be smaller than the folded MVAU for
+    # the first of these, so the last variants also unroll convolutions 1 to 3.
+    {
+        # 17. reference: RTL MVAUs (DSP), streamed weights
+        "dut": ["vgg10"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        # 18. HLS MVAUs with LUT multipliers, streamed weights
+        "dut": ["vgg10"],
+        "specialize_layers_config_file": ["models/vgg10/hls_specialize_layers.json"],
+        "folding_config_file": ["models/vgg10/hls_lut_decoupled_folding_config.json"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        # 19. HLS MVAUs with LUT multipliers, embedded weights
+        "dut": ["vgg10"],
+        "specialize_layers_config_file": ["models/vgg10/hls_specialize_layers.json"],
+        "folding_config_file": ["models/vgg10/hls_lut_embedded_folding_config.json"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        # 20. as 17, the (already unrolled) first convolution becomes a DA core
+        "dut": ["vgg10"],
+        "enable_da_mvau": [true],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        # 21. as 17, convolutions 0 to 3 fully unrolled as DA cores, the rest RTL (DSP)
+        "dut": ["vgg10"],
+        "folding_config_file": ["models/vgg10/unrolled_0to3_folding_config.json"],
+        "enable_da_mvau": [true],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        # 22. as 19, convolutions 0 to 3 fully unrolled as DA cores, the rest HLS (LUT,
+        #     embedded weights): no DSPs in the design
+        "dut": ["vgg10"],
+        "specialize_layers_config_file": ["models/vgg10/hls_specialize_layers.json"],
+        "folding_config_file": ["models/vgg10/hls_lut_embedded_unrolled_0to3_folding_config.json"],
         "enable_da_mvau": [true],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },

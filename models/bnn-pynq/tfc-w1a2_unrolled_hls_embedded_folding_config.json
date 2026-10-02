@@ -1,0 +1,50 @@
+{
+  "Defaults": {
+    "mem_mode": [
+      "internal_embedded",
+      [
+        "MVAU_hls"
+      ]
+    ],
+    "resType": [
+      "lut",
+      [
+        "MVAU_hls"
+      ]
+    ]
+  },
+  "Reshape_rtl_0": {
+    "PE": 28
+  },
+  "Thresholding_rtl_0": {
+    "PE": 784
+  },
+  "MVAU_hls_0": {
+    "SIMD": 784,
+    "PE": 64
+  },
+  "Thresholding_rtl_1": {
+    "PE": 64
+  },
+  "MVAU_hls_1": {
+    "SIMD": 64,
+    "PE": 64
+  },
+  "Thresholding_rtl_2": {
+    "PE": 64
+  },
+  "MVAU_hls_2": {
+    "SIMD": 64,
+    "PE": 64
+  },
+  "Thresholding_rtl_3": {
+    "PE": 64
+  },
+  "MVAU_hls_3": {
+    "SIMD": 64,
+    "PE": 10
+  },
+  "LabelSelect_hls_0": {
+    "PE": 10
+  }
+}
