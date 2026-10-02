@@ -14,6 +14,11 @@
 # layer by the weight-stream width of the still streamed HLS weights. The RTL
 # thresholds come from auto specialization.
 #
+#
+# The fully unrolled MLP variants (RUN 4, 5, 13, 14) skip the simulation-based FIFO
+# sizing and use minimal FIFOs (force_minimal_fifos): its final validation times out
+# sporadically for designs that take one frame per cycle (issue #291), and these
+# feed-forward chains at one beat per frame need no FIFO depth anyway.
 # The RUN numbers in the comments are the indices the CI uses (list position, from 0).
 [
     {
@@ -46,6 +51,7 @@
         "target_fps": [null],
         "standalone_thresholds": [true],
         "folding_config_file": ["models/cybsec/unrolled_hls_embedded_folding_config.json"],
+        "auto_fifo_strategy": ["force_minimal_fifos"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
@@ -55,6 +61,7 @@
         "standalone_thresholds": [true],
         "folding_config_file": ["models/cybsec/unrolled_hls_embedded_folding_config.json"],
         "enable_da_mvau": [true],
+        "auto_fifo_strategy": ["force_minimal_fifos"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
     # ------------------------------------------------------------------------------
@@ -157,6 +164,7 @@
         "standalone_thresholds": [true],
         "folding_config_file": ["models/bnn-pynq/tfc-w1a2_unrolled_hls_embedded_folding_config.json"],
         "specialize_layers_config_file": ["models/bnn-pynq/tfc-w1a2_specialize_layers.json"],
+        "auto_fifo_strategy": ["force_minimal_fifos"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "validation_dataset": ["mnist"]
     },
@@ -169,6 +177,7 @@
         "folding_config_file": ["models/bnn-pynq/tfc-w1a2_unrolled_hls_embedded_folding_config.json"],
         "specialize_layers_config_file": ["models/bnn-pynq/tfc-w1a2_specialize_layers.json"],
         "enable_da_mvau": [true],
+        "auto_fifo_strategy": ["force_minimal_fifos"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "validation_dataset": ["mnist"]
     },
