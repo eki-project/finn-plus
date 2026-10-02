@@ -407,3 +407,16 @@ def test_throughput_estimate_without_cycle_model(dut, params):
     assert perf["max_cycles"] == 0
     assert _estimated_throughput_fps(1e8, perf["max_cycles"]) is None
     assert _estimated_throughput_fps(1e8, 50) == 2e6
+
+
+@pytest.mark.parametrize("in_elems,out_elems", [(4, 8), (8, 4)])
+def test_dwc_dut_floorplan(in_elems, out_elems):
+    """A standalone data width converter has no neighbour on its narrow side, which the
+    floorplanning of the bitfile flow must tolerate (up- and downsizing)."""
+    from finn.transformation.fpgadataflow.floorplan import Floorplan
+
+    params = {**_DWC, "in_elems": in_elems, "out_elems": out_elems, "ch": 32}
+    assert MICROBENCH_DUTS["dwc"].validate(params) is None
+    model, _ = MICROBENCH_DUTS["dwc"].make_model(params, RFSOC)
+    model = model.transform(GiveUniqueNodeNames()).transform(Floorplan())
+    assert getHWCustomOp(model.graph.node[0]).get_nodeattr("slr") == -1

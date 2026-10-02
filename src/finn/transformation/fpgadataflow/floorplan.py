@@ -97,8 +97,12 @@ class Floorplan(Transformation):
                     narrow_neighbour = model.find_consumer(node.output[0])
                 else:
                     narrow_neighbour = model.find_producer(node.input[0])
-                node_slr = getCustomOp(narrow_neighbour).get_nodeattr("slr")
-                node_inst.set_nodeattr("slr", node_slr)
+                # a DWC at the graph input/output has no neighbour on that side
+                if narrow_neighbour is not None:
+                    node_slr = getCustomOp(narrow_neighbour).get_nodeattr("slr")
+                    node_inst.set_nodeattr("slr", node_slr)
+                else:
+                    node_inst.set_nodeattr("slr", default_slr)
             if node.op_type.startswith("StreamingFIFO"):
                 # if we have SLR assignment already. use that
                 if node_slr != -1:
