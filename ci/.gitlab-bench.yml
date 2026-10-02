@@ -20,6 +20,11 @@ variables:
   BENCH_CFG:
     description: "Select config, usually provided by parent pipeline"
     value: ""
+  # Subdirectory of the QoR model store this code reads and writes. Stored models are pickles
+  # that reference classes of finn.qor, so code that predates a class cannot load them. Bump
+  # this whenever newly stored models would be unloadable by older checkouts, which keep
+  # using their own directory (models without a subdirectory belong to the first version).
+  QOR_MODEL_SUBDIR: "v2"
 
 workflow:
   name: "bench_$BENCH_CFG"
@@ -48,7 +53,7 @@ FINN Build:
       dvc config cache.dir $CI_DVC_CACHE_DIR
       bash ci/retry.sh -n 4 -d 15 -- dvc pull
       # Fitted QoR models (see ci/qor/) for empirical estimate reports, path as seen from this runner
-      export FINN_QOR_MODEL_DIR=$OTUS_QOR_MODEL_DIR_STORE
+      export FINN_QOR_MODEL_DIR=$OTUS_QOR_MODEL_DIR_STORE/$QOR_MODEL_SUBDIR
       # Exchange directory for per-run artifacts and the microbenchmark database (for the
       # novelty check of randomly sampled configurations), paths as seen from this runner
       export FINN_BENCH_EXCHANGE_DIR=$OTUS_EXCHANGE_DIR
@@ -190,7 +195,7 @@ FINN Build (Follow-up):
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
       bash ci/retry.sh -n 4 -d 15 -- dvc pull
-      export FINN_QOR_MODEL_DIR=$OTUS_QOR_MODEL_DIR_STORE
+      export FINN_QOR_MODEL_DIR=$OTUS_QOR_MODEL_DIR_STORE/$QOR_MODEL_SUBDIR
       export FINN_BENCH_EXCHANGE_DIR=$OTUS_EXCHANGE_DIR
       export FINN_MICROBENCHMARK_DATABASE=$OTUS_BENCHMARK_DIR_STORE
       finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config followup
@@ -316,7 +321,7 @@ QoR Model Fitting:
     - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'sympy~=1.14'
     - |
       export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
-      export FINN_QOR_MODEL_DIR=$LOCAL_QOR_MODEL_DIR_STORE
+      export FINN_QOR_MODEL_DIR=$LOCAL_QOR_MODEL_DIR_STORE/$QOR_MODEL_SUBDIR
       qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_fit_artifacts --skip-regressors SymbolicRegressor,TabTransformerRegressor
   artifacts:
     name: "qor_fit_artifacts"

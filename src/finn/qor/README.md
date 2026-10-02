@@ -20,7 +20,7 @@ finn build ──step_generate_estimate_reports──▶  estimate_layer_resourc
 | Environment variable          | Used by                                   | Meaning                                                      |
 |-------------------------------|-------------------------------------------|--------------------------------------------------------------|
 | `FINN_MICROBENCHMARK_DATABASE` | `fit_estimators.py`, `finn.qor.database`  | Directory with one subfolder per operator holding the JSON files written by `ci/collect/collect.py` |
-| `FINN_QOR_MODEL_DIR`          | `fit_estimators.py`, `step_generate_estimate_reports` | Directory with fitted models (`<operator>__<target>.pkl` + `.json` sidecar). If unset or empty, no empirical reports are generated. |
+| `FINN_QOR_MODEL_DIR`          | `fit_estimators.py`, `step_generate_estimate_reports` | Directory with fitted models (`<operator>__<target>.pkl` + `.json` sidecar). If unset or empty, no empirical reports are generated. In CI this is the `QOR_MODEL_SUBDIR` subdirectory (see `ci/.gitlab-bench.yml`) of the model store: the pickles reference `finn.qor` classes, so every incompatible model generation gets its own directory and older checkouts keep loading theirs. |
 
 ## Package layout
 
