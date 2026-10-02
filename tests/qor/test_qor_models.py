@@ -75,6 +75,20 @@ def test_grid_discovery_and_filtering():
     assert "KNeighborsRegressor" not in [regressor_name(cls) for cls, _ in without]
     with pytest.raises(ValueError):
         available_regressor_grid(include=["Nope"])
+    with pytest.raises(ValueError):
+        available_regressor_grid(exclude=["Nope"])
+
+
+def test_grid_filtering_with_missing_optional_dependency(monkeypatch):
+    """The CI fitting job excludes the symbolic regressor without having PySR installed."""
+    import finn.qor.models as models
+
+    monkeypatch.setitem(models.OPTIONAL_DEPENDENCIES, "SymbolicRegressor", ("no_such_module_x",))
+    assert dependency_status()["SymbolicRegressor"] is not None
+    grid = available_regressor_grid(quick=True, exclude=["SymbolicRegressor"])
+    assert "SymbolicRegressor" not in [regressor_name(cls) for cls, _ in grid]
+    with pytest.raises(ValueError, match="not available"):
+        available_regressor_grid(quick=True, include=["SymbolicRegressor"])
 
 
 def test_signed_log_round_trip():

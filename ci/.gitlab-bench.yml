@@ -314,7 +314,8 @@ QoR Model Fitting:
     # runs in the separate manual job below because of its runtime.
     - python3.10 -m venv qor-venv
     - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'sympy~=1.14'
-    - qor-venv/bin/pip install --quiet 'torch==2.12.0' --index-url https://download.pytorch.org/whl/cpu
+    # extra index (not --index-url): torch's own dependencies must still come from PyPI
+    - qor-venv/bin/pip install --quiet 'torch==2.12.0+cpu' --extra-index-url https://download.pytorch.org/whl/cpu
     - |
       export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
       export FINN_QOR_MODEL_DIR=$LOCAL_QOR_MODEL_DIR_STORE

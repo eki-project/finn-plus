@@ -516,6 +516,8 @@ class ExperimentComparator:
     _IGNORED_PARAM_KEYS = {
         "store_results_in_dvc_experiment",
         "store_results_in_dvc_data",
+        # legacy key of old microbenchmark configs that never had an effect
+        "dut_duplication",
     }
 
     # Additional params ignored when matching a live FIFO-sizing run (or its follow-up) against
@@ -891,10 +893,14 @@ if __name__ == "__main__":
         metadata_bench = open_json_report(id, "metadata_bench.json", args.followup)
         params = {"params": metadata_bench["params"]}
         run_kind = "live_fifo_followup" if args.followup else classify_run(metadata_bench["params"])
-        # Only standard builds are held against the regression tolerances of the compare tag
-        enforce_comparison = run_kind == "standard"
+        # Only standard builds are held against the regression tolerances of the compare tag.
+        # Randomly sampled microbenchmark configurations are new by construction, so there is
+        # no reference experiment they could be compared against.
+        is_sampled = "sampling" in metadata_bench
+        enforce_comparison = run_kind == "standard" and not is_sampled
         print(
-            "Run %d classified as '%s' (enforce_comparison=%s)" % (id, run_kind, enforce_comparison)
+            "Run %d classified as '%s'%s (enforce_comparison=%s)"
+            % (id, run_kind, ", randomly sampled" if is_sampled else "", enforce_comparison)
         )
         with DVCLoggerHelper(
             experiment_name, experiment_msg, id, params, is_followup=args.followup

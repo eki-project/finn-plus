@@ -76,8 +76,9 @@ DSP/BRAM/URAM are zero for most configurations, so their models are selected by 
 absolute error (a relative error is undefined for zero targets; MAPE is reported over the
 nonzero samples only) and are only fitted if the target has enough signal
 (`has_enough_signal`: at least 10 nonzero and 3 distinct values); otherwise the analytical
-estimate (and a previously stored model) is kept. Resource predictions are clipped at zero
-and rounded.
+estimate (and a previously stored model) is kept. Any target with fewer than `--min-samples`
+datapoints (default 20) is skipped as well, e.g. an operator that only has its smoke-test runs
+in the database. Resource predictions are clipped at zero and rounded.
 
 Resource types and nodes without a fitted model fall back to the analytical
 `node_res_estimation`; nodes without a power model are reported as 0. A node whose
@@ -150,7 +151,9 @@ The expansion is deterministic per seed; on the cluster the first SLURM array ta
 its expansion in the exchange directory and the others follow it. `sampling_stats.json`
 (build artifact) reports attempts and rejection reasons. Locally: `finn bench --sample mvau:20`.
 In CI, launch the manual bench pipeline with `MANUAL_CFG_PATH=microbenchmark_sample_<dut>`;
-`SAMPLE_COUNT` / `SAMPLE_SEED` override the config.
+`SAMPLE_COUNT` / `SAMPLE_SEED` override the config. Sampled runs are new by construction, so
+the result collection does not require a reference experiment for them (runs of grid configs
+such as `microbenchmark_basic` are still compared against the `ci_known_good` experiments).
 
 **Artifact exchange.** Per-run artifacts (reports, `deploy.zip` bitstream packages) are
 exchanged between the build (cluster), measurement (board) and collection runners through a
@@ -169,8 +172,8 @@ reads the database via `OTUS_BENCHMARK_DIR_STORE`. Layout:
 `run_index.json`. If the variable is unset, everything falls back to `build_artifacts/` in the
 working directory as before. The `Exchange Cleanup` job deletes the pipeline's bitstreams
 (unless `KEEP_EXCHANGE_DEPLOY=1`) and pipeline directories older than
-`EXCHANGE_RETENTION_DAYS` (default 14). Prerequisite on the share: a common group with the
-setgid bit on the exchange root, and write access for root on the board (NFS root_squash).
+`EXCHANGE_RETENTION_DAYS` (default 14). Prerequisite on the share: the exchange root must be
+writable from all three runners.
 `ci/exchange_cleanup.py --dry-run` previews what would be removed.
 
 ## Adding an operator

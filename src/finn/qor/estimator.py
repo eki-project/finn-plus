@@ -152,16 +152,24 @@ def available_regressor_grid(
     exclude: Optional[list[str]] = None,
 ) -> list[GridEntry]:
     """The base grid plus the additional models of :mod:`finn.qor.models` whose runtime
-    dependencies are importable, optionally filtered by regressor name (unknown names in
-    ``include``/``exclude`` raise ValueError listing the known ones)."""
-    from finn.qor.models import optional_regressor_grid  # lazy: models import this module
+    dependencies are importable, optionally filtered by regressor name.
+
+    Unknown names in ``include``/``exclude`` raise ValueError listing the known ones. An
+    optional model whose dependencies are missing may be excluded (it is not in the grid
+    anyway), but including it raises ValueError naming what is missing."""
+    # lazy: models import this module
+    from finn.qor.models import dependency_status, optional_regressor_grid
 
     grid = list(REGRESSOR_GRID_QUICK if quick else REGRESSOR_GRID) + optional_regressor_grid(quick)
     known = [regressor_name(cls) for cls, _ in grid]
+    unavailable = {name: why for name, why in dependency_status().items() if why is not None}
     for names in (include, exclude):
-        unknown = [n for n in (names or []) if n not in known]
+        unknown = [n for n in (names or []) if n not in known and n not in unavailable]
         if unknown:
             raise ValueError(f"Unknown regressor(s) {unknown}, known: {known}")
+    missing = {n: unavailable[n] for n in (include or []) if n in unavailable}
+    if missing:
+        raise ValueError(f"Regressor(s) not available in this environment: {missing}")
     if include:
         grid = [entry for entry in grid if regressor_name(entry[0]) in include]
     if exclude:

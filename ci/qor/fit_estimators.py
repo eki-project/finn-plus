@@ -99,6 +99,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exclude-commit", nargs="*", default=None, help="commit hash prefixes")
     parser.add_argument("--exclude-pipeline-id", nargs="*", type=int, default=None)
     parser.add_argument("--cv", type=int, default=5, help="number of CV folds")
+    parser.add_argument(
+        "--min-samples",
+        type=int,
+        default=20,
+        help="skip targets with fewer datapoints than this (default: %(default)s)",
+    )
     parser.add_argument("--n-repeats", type=int, default=1, help="CV repetitions")
     parser.add_argument("--n-jobs", type=int, default=-1)
     parser.add_argument(
@@ -256,6 +262,13 @@ def main() -> int:
                 summary[name] = {"status": "skipped", "reason": "target column missing"}
                 continue
             signal = target_signal(df[target].values)
+            if signal["n"] < args.min_samples:
+                # e.g. an operator that only has its few smoke-test runs in the database
+                logger.warning(
+                    "%s: only %d samples (< %d), skipping", name, signal["n"], args.min_samples
+                )
+                summary[name] = {"status": "skipped", "reason": "not enough samples", **signal}
+                continue
             if target.startswith(RESOURCE_TARGET_PREFIX) and not has_enough_signal(
                 df[target].values
             ):

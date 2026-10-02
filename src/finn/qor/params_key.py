@@ -15,6 +15,8 @@ IRRELEVANT_PARAMS: tuple[str, ...] = (
     "generate_outputs",
     "store_results_in_dvc_experiment",
     "store_results_in_dvc_data",
+    # legacy key of old microbenchmark configs that never had an effect
+    "dut_duplication",
 )
 
 
