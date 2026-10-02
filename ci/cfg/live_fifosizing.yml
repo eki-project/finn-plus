@@ -119,7 +119,11 @@
         "auto_fifo_depths": [True],
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [65536],
+        # A budget of 1052 cycles: the window generator of the global pooling folds to 962
+        # instead of 1474 cycles and MVAU_rtl_7 to 768 instead of 1152, while the attention
+        # stays at 1024. The input window generator (1026 cycles) then limits the estimate
+        # to 97466 fps.
+        "target_fps": [95000],
         "validation_dataset" : ["radioml_transformer"],
     },
 
