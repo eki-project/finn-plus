@@ -17,6 +17,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ### Fixed
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
+- RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate at the cost of a slightly larger buffer (eki-project#290)
 
 ## 1.6.1 - 01.10.2026
 
