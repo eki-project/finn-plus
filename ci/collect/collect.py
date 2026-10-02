@@ -770,7 +770,12 @@ class ExperimentComparator:
             compare_val = compare.get(key)
 
             if current_val is None or compare_val is None:
-                if is_required:
+                # A required metric that the current run lacks is a failure. One that only the
+                # reference lacks (e.g. the accuracy of a model whose validation dataset was
+                # added later) has nothing to be compared with and must not fail the run.
+                if is_required and current_val is not None:
+                    print("Required metric %s has no reference value, not compared" % key)
+                elif is_required:
                     results[key] = {
                         "current": current_val,
                         "compare": compare_val,
