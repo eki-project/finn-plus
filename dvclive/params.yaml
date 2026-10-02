@@ -1,0 +1,38 @@
+params:
+  dut: thresholding
+  backend: hls
+  idt: INT8
+  odt: UINT4
+  ch: 64
+  pe: 8
+  nhw:
+  - 1
+  - 8
+  - 8
+  mem_mode: internal_embedded
+  ram_style: distributed
+  depth_trigger_bram: 0
+  depth_trigger_uram: 0
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: true
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - rtlsim_performance
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  pe: 8
+  num_steps: 15
+  tdt: INT8
+  tmem: 8
+  dut_node_name: Thresholding_hls_0
+  dut_op_type: Thresholding_hls
+  dut_backend: hls
