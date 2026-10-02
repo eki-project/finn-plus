@@ -114,9 +114,9 @@
     # },
     # ------------------------------------------------------------------------------
     # TFC-w1a2 MLP (784 -> 64 -> 64 -> 64 -> 10, dense +-1 weights, 2-bit activations):
-    # small enough to unroll completely and without the sparsity of cybsec. The input
-    # Reshape passes at most 28 elements per cycle, so the unrolled designs are limited
-    # to one frame per 28 cycles.
+    # small enough to unroll completely and without the sparsity of cybsec. The hardware
+    # Reshape at the input passes at most 28 elements per cycle, so the unrolled designs
+    # take a flat [1, 784] input instead (flatten_global_input after streamlining).
     {
         # RUN 12: reference: current folding, HLS MVAUs with streamed weights, fused thresholds
         "dut": ["bnn-pynq"],
@@ -127,9 +127,33 @@
         "validation_dataset": ["mnist"]
     },
     {
-        # RUN 13: fully unrolled, HLS MVAUs with embedded weights, standalone RTL thresholds
+        # RUN 13: fully unrolled, HLS MVAUs with embedded weights, standalone RTL thresholds,
+        #     flat input (the steps of the bnn-pynq DUT plus flatten_global_input)
         "dut": ["bnn-pynq"],
         "model_path": ["models/bnn-pynq/tfc-w1a2_qonnx.onnx"],
+        "steps": [&tfc_flat_input_steps [
+            "finn.builder.custom_step_library.general.add_preproc_divide_by_255",
+            "finn.builder.custom_step_library.general.add_postproc_top1",
+            "step_qonnx_to_finn",
+            "step_tidy_up",
+            "step_streamline",
+            "finn.builder.custom_step_library.general.flatten_global_input",
+            "step_convert_to_hw",
+            "step_minimize_bit_width_initial",
+            "step_create_dataflow_partition",
+            "step_specialize_layers",
+            "step_target_fps_parallelization",
+            "step_apply_folding_config",
+            "step_minimize_bit_width",
+            "step_generate_estimate_reports",
+            "step_generate_hardware",
+            "step_create_stitched_ip",
+            "step_measure_rtlsim_performance",
+            "step_out_of_context_synthesis",
+            "step_synthesize_bitfile",
+            "step_make_driver",
+            "step_deployment_package"
+        ]],
         "standalone_thresholds": [true],
         "folding_config_file": ["models/bnn-pynq/tfc-w1a2_unrolled_hls_embedded_folding_config.json"],
         "specialize_layers_config_file": ["models/bnn-pynq/tfc-w1a2_specialize_layers.json"],
@@ -140,6 +164,7 @@
         # RUN 14: as RUN 13, but the unrolled MVAUs become distributed-arithmetic RTL MVAUs
         "dut": ["bnn-pynq"],
         "model_path": ["models/bnn-pynq/tfc-w1a2_qonnx.onnx"],
+        "steps": [*tfc_flat_input_steps],
         "standalone_thresholds": [true],
         "folding_config_file": ["models/bnn-pynq/tfc-w1a2_unrolled_hls_embedded_folding_config.json"],
         "specialize_layers_config_file": ["models/bnn-pynq/tfc-w1a2_specialize_layers.json"],

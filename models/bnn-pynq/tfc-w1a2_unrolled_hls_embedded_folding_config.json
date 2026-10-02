@@ -13,9 +13,6 @@
       ]
     ]
   },
-  "Reshape_rtl_0": {
-    "PE": 28
-  },
   "Thresholding_rtl_0": {
     "PE": 784
   },
