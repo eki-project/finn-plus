@@ -29,9 +29,11 @@
 
 import pytest
 
+import xml.etree.ElementTree as ET
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
@@ -134,3 +136,40 @@ def test_fpgadataflow_labelselect(idt, labels, fold, k, exec_mode, impl_style):
     y = oxe.execute_onnx(model, input_dict)["outp"]
 
     assert soft_verify_topk(x, y, k), exec_mode + " failed"
+
+
+@pytest.mark.fpgadataflow
+@pytest.mark.vivado
+def test_fpgadataflow_labelselect_single_beat_top_pipeline():
+    """With all labels in one beat and K=1 (the end of a fully unrolled classifier) the
+    HLS LabelSelect must take one frame per clock cycle. Its pipelined input loop has a
+    single iteration then, so the top function itself is pipelined."""
+    labels, idt = 10, DataType["INT8"]
+    pragma = "#pragma HLS pipeline II=1 style=flp"
+    part = "xc7z020clg400-1"
+    # several beats per frame or several output labels keep the loops of the library
+    for pe, k in [(labels // 2, 1), (labels, 5)]:
+        model = make_labelselect_modelwrapper(labels, pe, k, idt, "hls")
+        model = model.transform(SpecializeLayers(part))
+        inst = getCustomOp(model.graph.node[0])
+        inst.pragmas()
+        assert pragma not in inst.code_gen_dict["$PRAGMAS$"]
+
+    x = gen_finn_dt_tensor(idt, (1, labels))
+    model = make_labelselect_modelwrapper(labels, labels, 1, idt, "hls")
+    model = model.transform(SpecializeLayers(part))
+    model = model.transform(SetExecMode("rtlsim"))
+    model = model.transform(GiveUniqueNodeNames())
+    model = model.transform(PrepareIP(part, 5))
+    model = model.transform(HLSSynthIP())
+    model = model.transform(PrepareRTLSim())
+    y = oxe.execute_onnx(model, prepare_inputs(x, idt))["outp"]
+    assert soft_verify_topk(x, y, 1), "rtlsim failed"
+
+    node = model.graph.node[0]
+    code_gen_dir = getCustomOp(node).get_nodeattr("code_gen_dir_ipgen")
+    with open(f"{code_gen_dir}/top_{node.name}.cpp") as f:
+        assert pragma in f.read()
+    report = f"{code_gen_dir}/project_{node.name}/sol1/syn/report/{node.name}_csynth.xml"
+    latency = ET.parse(report).getroot().find("PerformanceEstimates/SummaryOfOverallLatency")
+    assert int(latency.find("PipelineInitiationInterval").text) == 1
