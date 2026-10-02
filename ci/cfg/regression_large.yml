@@ -35,7 +35,7 @@
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         # 1000 fps is a budget of 100000 cycles, which lets the MVAUs fold to 98304 cycles
         # (1017 fps). At 1024 fps they just miss that step, end up at 49152 cycles and the
-        # design exceeds the DSPs and LUTs of the RFSoC2x2.
+        # design exceeds the DSPs of the RFSoC2x2.
         "target_fps": [1000],
         "auto_fifo_depths": [True],
         "validation_dataset" : ["tinystories"],
