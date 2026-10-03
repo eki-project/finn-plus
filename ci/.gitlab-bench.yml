@@ -386,7 +386,15 @@ QoR Symbolic Regression:
     - |
       export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
       export JULIA_DEPOT_PATH=$LOCAL_QOR_JULIA_DEPOT
-      export PYTHON_JULIAPKG_PROJECT=$LOCAL_QOR_JULIA_DEPOT/pyjuliapkg
+      # juliapkg resolves PySR's Julia requirements into a project (Manifest.toml) under
+      # PYTHON_JULIAPKG_PROJECT. The requirements depend on the interpreter (the OpenSSL_jll
+      # compat follows the Python's OpenSSL) and on the PySR version, and a manifest written
+      # for another combination cannot be re-resolved ("empty intersection"), so the project
+      # is keyed by both. Downloaded packages and compile caches live in the shared depot.
+      PYSR_VERSION=$(qor-venv/bin/python -c "from importlib.metadata import version; print(version('pysr'))")
+      PY_TAG=$(qor-venv/bin/python -c "import hashlib, ssl, sys; print(hashlib.sha1((sys.base_prefix + ssl.OPENSSL_VERSION).encode()).hexdigest()[:8])")
+      export PYTHON_JULIAPKG_PROJECT=$LOCAL_QOR_JULIA_DEPOT/pyjuliapkg-pysr$PYSR_VERSION-py$PY_TAG
+      echo "PySR $PYSR_VERSION, Julia project $PYTHON_JULIAPKG_PROJECT"
       export PYTHON_JULIACALL_THREADS=auto
       # tell Julia's PythonCall where the interpreter's shared library is instead of
       # relying on its search (fails e.g. for a libpython outside the system paths)
