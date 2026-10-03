@@ -315,9 +315,12 @@ QoR Model Fitting:
   script:
     # Isolated venv: the runner's system packages are outdated (e.g. jinja2) and the
     # scikit-learn version must match pyproject.toml so the pickled models load in builds.
+    # LOCAL_QOR_PYTHON (project variable) selects the interpreter of the QoR jobs; the
+    # symbolic regression job needs one with a shared libpython (PySR embeds Julia, which
+    # loads it), e.g. a standalone build installed with `uv python install 3.10`.
     # The tabular transformer and symbolic regression run in the separate manual jobs below
     # because of their runtime (CPU hours per target), so neither torch nor PySR is needed.
-    - python3.10 -m venv qor-venv
+    - ${LOCAL_QOR_PYTHON:-python3.10} -m venv qor-venv
     - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'sympy~=1.14'
     - |
       export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
@@ -347,7 +350,7 @@ QoR Transformer:
     - job: Result Collection
   timeout: 8h
   script:
-    - python3.10 -m venv qor-venv
+    - ${LOCAL_QOR_PYTHON:-python3.10} -m venv qor-venv
     - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'sympy~=1.14'
     # extra index (not --index-url): torch's own dependencies must still come from PyPI
     - qor-venv/bin/pip install --quiet 'torch==2.12.0+cpu' --extra-index-url https://download.pytorch.org/whl/cpu
@@ -378,7 +381,7 @@ QoR Symbolic Regression:
     - job: Result Collection
   timeout: 8h
   script:
-    - python3.10 -m venv qor-venv
+    - ${LOCAL_QOR_PYTHON:-python3.10} -m venv qor-venv
     - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'sympy~=1.14' 'pysr~=2.4'
     - |
       export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
@@ -413,7 +416,7 @@ QoR End2End Report:
   needs:
     - job: Result Collection
   script:
-    - python3.10 -m venv qor-venv
+    - ${LOCAL_QOR_PYTHON:-python3.10} -m venv qor-venv
     - qor-venv/bin/pip install --quiet 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'jinja2>=3.1.2'
     - |
       export FINN_BENCH_EXCHANGE_DIR=$LOCAL_EXCHANGE_DIR

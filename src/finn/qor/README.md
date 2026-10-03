@@ -119,7 +119,8 @@ shows what is available, `--set REGRESSOR.param=JSON` overrides a grid list.
 | `SymbolicRegressor` | pysr + Julia (fit), sympy (predict) | PySR 2.x with `deterministic=True` (serial); numeric inputs are fed raw so the formula is in feature units, one-hot columns as 0/1 variables; `relative_weights` approximates a relative-error objective. Only the selected expression (sympy `srepr`) and the Pareto front are kept, so inference needs no Julia. The model sidecar gets an `equation` entry (variables, sympy, LaTeX, PySR form, Pareto front) and the fitting job writes `*_equation.md/.tex` and `*_pareto.png`. |
 
 Symbolic regression runs in the separate manual CI job `QoR Symbolic Regression` (hours;
-Julia depot cached on the runner in `LOCAL_QOR_JULIA_DEPOT`), overall and per backend
+Julia depot cached on the runner in `LOCAL_QOR_JULIA_DEPOT`; the interpreter selected by
+`LOCAL_QOR_PYTHON` must have a shared `libpython`, which PySR's embedded Julia loads), overall and per backend
 (`--subset params.backend=hls`), without storing models. The tabular transformer runs in the
 manual job `QoR Transformer`, also without storing models: a single fit on ~6000 MVAU samples
 takes 3 to 9 minutes on one CPU core, and its grid needs 80 fits per target. The regular
