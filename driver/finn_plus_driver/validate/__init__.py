@@ -6,14 +6,19 @@ from typing import Any
 #: Supported validation datasets, mapped to the module implementing their ``validate``
 #: function. Modules are imported lazily so that a missing optional dataset dependency only
 #: affects the dataset that needs it. ``cifar`` selects CIFAR-10, ``cifar100`` selects CIFAR-100;
-#: both are served by the same module, which switches on the selected dataset name.
+#: both are served by the same module, which switches on the selected dataset name. The same
+#: goes for ``radioml`` and ``radioml_transformer``, which select different test samples.
 VALIDATION_DATASETS: dict[str, str] = {
     "mnist": "finn_plus_driver.validate.mnist",
     "cifar": "finn_plus_driver.validate.cifar",
     "cifar100": "finn_plus_driver.validate.cifar",
     "imagenet": "finn_plus_driver.validate.imagenet",
     "radioml": "finn_plus_driver.validate.radioml",
+    "radioml_transformer": "finn_plus_driver.validate.radioml",
     "unswnb15": "finn_plus_driver.validate.unswnb15",
+    "speechcommands": "finn_plus_driver.validate.speechcommands",
+    "gtsrb": "finn_plus_driver.validate.gtsrb",
+    "tinystories": "finn_plus_driver.validate.tinystories",
 }
 
 __all__ = ["VALIDATION_DATASETS", "run_validate"]
