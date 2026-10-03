@@ -388,6 +388,10 @@ QoR Symbolic Regression:
       export JULIA_DEPOT_PATH=$LOCAL_QOR_JULIA_DEPOT
       export PYTHON_JULIAPKG_PROJECT=$LOCAL_QOR_JULIA_DEPOT/pyjuliapkg
       export PYTHON_JULIACALL_THREADS=auto
+      # tell Julia's PythonCall where the interpreter's shared library is instead of
+      # relying on its search (fails e.g. for a libpython outside the system paths)
+      export JULIA_PYTHONCALL_LIB=$(qor-venv/bin/python -c "import os, sysconfig; print(os.path.join(sysconfig.get_config_var('LIBDIR'), sysconfig.get_config_var('INSTSONAME')))")
+      test -f "$JULIA_PYTHONCALL_LIB" || { echo "ERROR: shared libpython not found at $JULIA_PYTHONCALL_LIB (set LOCAL_QOR_PYTHON to an interpreter with a shared library)"; exit 1; }
       mkdir -p $LOCAL_QOR_JULIA_DEPOT
       # the first import installs Julia and SymbolicRegression.jl into the depot
       qor-venv/bin/python -c "import pysr; print(pysr.__version__)"
