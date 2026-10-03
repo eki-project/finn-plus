@@ -56,8 +56,8 @@
     - python3 -m venv finn-plus-venv
     - finn-plus-venv/bin/pip install 'torch~=2.12.1' 'torchvision~=0.27.0' --extra-index-url https://download.pytorch.org/whl/cu121
     - finn-plus-venv/bin/pip install 'dvc[webdav]~=3.67.0' 'dvclive[image]~=3.49.0'
-    - finn-plus-venv/bin/pip install tests/dist/*.whl
-    - finn-plus-venv/bin/pip install dist/*.whl
+    # The "test" extra adds the tooling for the test suite (pytest and plugins, junitparser)
+    - finn-plus-venv/bin/pip install "finn-plus[test] @ file://$(pwd)/$(ls dist/*.whl)"
     # Install dataset loading for some end to end tests. Usually only needed to run pynq driver.
     - finn-plus-venv/bin/pip install finn-dataset-loading
 

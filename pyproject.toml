@@ -53,9 +53,10 @@ onnx = "1.21.0"
 onnxruntime = "1.25.1"
 onnxscript = ">=0.7.0"
 onnx-ir = ">=0.1.15"
-onnx-passes = ">=0.4.0"
+onnx-passes = "0.4.1"
 protobuf = "5.29.6"
 pyyaml = "~6.0.2"
+psutil = "^7.2.2"                              # free memory for parallel simulation sizing
 mip = "1.17.0"
 cmake = "~4.0.3"
 brevitas = "0.13.0"
@@ -70,20 +71,53 @@ onnxoptimizer = "^0.4.2"
 pydantic = ">2.0"
 mashumaro = { extras = ["yaml"], version = "^3.15" }
 
-finn-plus-tests = { version = "*", optional = true }
+# Tooling for the test suite (extra "test"). The suite itself is the tests/ directory of the
+# repository and is not packaged, see "finn test --help". Keep in sync with the dev group.
+pytest = { version = "~9.1.1", optional = true }
+pytest-xdist = { version = "~3.8.0", extras = ["setproctitle"], optional = true }
+pytest-html = { version = "~4.2.0", optional = true }
+pytest-html-merger = { version = "~0.1.0", optional = true }
+pytest-rerunfailures = { version = "~16.6", optional = true }
+pytest-timeout = { version = "~2.4.0", optional = true }
+junitparser = { version = "~5.0.1", optional = true }
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "~4.2.0"
-finn-plus-tests = { path = "./tests", develop = true }
 pygments = "~2.19.2"
 torch = "~2.12.1"
 torchvision = "~0.27.0"                            # required by CI
 dvc = { version = " ~3.67.0", extras = ["webdav"] }   # required by CI
 dvclive = { version = "~3.49.0", extras = ["image"] } # required by CI
+# Test tooling, so that a plain "poetry install" can run "finn test". Extras are not
+# installed by default, so these repeat the optional dependencies of the "test" extra,
+# which the pip-installed wheel (CI, users) relies on. Keep both in sync.
+pytest = "~9.1.1"
+pytest-xdist = { version = "~3.8.0", extras = ["setproctitle"] }
+pytest-html = "~4.2.0"
+pytest-html-merger = "~0.1.0"
+pytest-rerunfailures = "~16.6"
+pytest-timeout = "~2.4.0"
+junitparser = "~5.0.1"
 
 [tool.poetry.extras]
-tests = ["finn-plus-tests"]
-all = ["finn-plus-tests"]
+test = [
+    "pytest",
+    "pytest-xdist",
+    "pytest-html",
+    "pytest-html-merger",
+    "pytest-rerunfailures",
+    "pytest-timeout",
+    "junitparser",
+]
+all = [
+    "pytest",
+    "pytest-xdist",
+    "pytest-html",
+    "pytest-html-merger",
+    "pytest-rerunfailures",
+    "pytest-timeout",
+    "junitparser",
+]
 
 
 [build-system]
@@ -97,6 +131,7 @@ markers = [
     "xslow: marks tests that take hours each and are not run by the CI test variants",
     "infrastructure: marks tests that refer to infrastructure functionality",
     "vivado: mark tests that require Vivado or Vivado HLS",
+    "fifo_model: mark tests of the TEG-based FIFO sizing (model validation against RTL)",
     "vitis: mark tests that require Vitis",
     "board: mark tests that require a PYNQ board",
     "brevitas_export : mark tests that test brevitas export functionality",
@@ -111,7 +146,8 @@ markers = [
     "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
     "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
     "analysis: mark tests that run analysis tests",
-    "multifpga: mark tests that run multifpga tests"
+    "multifpga: mark tests that run multifpga tests",
+    "auroraflow: mark tests that check AuroraFlow related functionality"
 ]
 norecursedirs = ["dist", "build", ".tox"]
 testpaths = "tests"

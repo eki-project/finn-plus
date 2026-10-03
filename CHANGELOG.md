@@ -18,6 +18,21 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
     - Every model of the CI regression suite builds a complete model: Squeeze/Unsqueeze/Requant/Lookup HLS (1:1 loops), StreamingSplit/StreamingConcat HLS (one token per top-level interval: the generated top function is not pipelined, 5 cycles per token) and `ScaledDotProductAttention_hls` (the dataflow region as nine processes with its internal FIFOs and the per-frame restart; validated up to a few cycles per query row, see the xfail note of its test) were added for the transformers. The new pipeline variable `BENCH_PARAM_OVERRIDES` (JSON object applied to every run of a bench job, e.g. `{"auto_fifo_depths": true, "auto_fifo_strategy": "abstract_sim"}`) runs an existing bench config such as `regression_small`/`regression_large` with the new sizing method; the result collection compares such runs against the standard `ci_known_good` reference of the same DUT (only the two FIFO-sizing parameters may differ) and enforces the comparison like a standard build
     - Differential tests (`tests/fpgadataflow/teg`, marker `fifo_model`) drive every operator template and the real RTL in XSI with identical randomised stall patterns and require identical handshake traces; end-to-end tests compare against recorded `distributed_sim` reports of the CI regression models (tfc, cnv, MobileNet-v1, ResNet-18). The CI test suite variant `fifo_model_ci` (`TEST_SUITE` pipeline variable, `finn test --variant fifo_model_ci`) runs only these tests and skips the benchmark jobs
 
+### Changed
+- Pin `onnx-passes` to 0.4.1 (eki-project#288)
+
+### Fixed
+- Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
+
+## 1.6.1 - 01.10.2026
+
+### Changed
+- The `finn-plus-tests` package is removed: the test suite is no longer packaged, `finn test` runs it from the `tests/` directory of a repository checkout (`--tests-path`, default `./tests`) and its tooling is available as the `test` extra (`pip install finn-plus[test]`) (eki-project#284)
+
+### Fixed
+- A plain `pip install finn-plus` could not start the CLI because it imported `junitparser`, a dependency of the optional test suite, on start-up (eki-project#284)
+- The cycle estimate of the RTL sliding window generator in 1D depthwise mode was about 2x too low for windows spanning a whole sequence, and `SetFolding` now folds the window generator together with the pooling/depthwise layer it feeds so that it no longer becomes the throughput bottleneck (eki-project#280)
+
 ## 1.6.0 - 28.09.2026
 
 ### Added
