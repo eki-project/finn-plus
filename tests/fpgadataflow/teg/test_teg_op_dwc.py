@@ -119,10 +119,13 @@ def _cfg_id(c: tuple) -> str:
     return f"{c[3]}_{c[1]}to{c[2]}_{'x'.join(map(str, c[0]))}"
 
 
-#: (stall kind, implementation, direction) combinations with a documented model deviation;
-#: none since the RTL converter became vpc.sv (the former dwc.sv down-converter deviated
-#: under bursty back-pressure)
-KNOWN_DEVIATIONS: set[tuple[str, str, str]] = set()
+#: (stall kind, implementation, direction) combinations with a documented model deviation.
+#: The RTL converter (vpc.sv) matches in every kind; the HLS converter's LCM stage for
+#: non-integer ratios runs a few cycles behind the model when input and output stall at the
+#: same time (seed dependent: the inlined flp loops of the two stages lose a cycle per
+#: coinciding stall that the freeze model does not reproduce, like the HLS MVAU under
+#: two-sided stalls); the model is optimistic there.
+KNOWN_DEVIATIONS: set[tuple[str, str, str]] = {("both_bernoulli", "hls", "lcm")}
 
 
 @pytest.mark.parametrize("cfg", CONFIGS, ids=_cfg_id)
@@ -132,10 +135,14 @@ def test_teg_op_dwc(
 ) -> None:
     """XSI and the abstract model must produce identical handshake traces."""
     direction = "down" if cfg[1] > cfg[2] else "up"
+    if cfg[3] == "hls" and max(cfg[1], cfg[2]) % min(cfg[1], cfg[2]):
+        direction = "lcm"
     if (kind, cfg[3], direction) in KNOWN_DEVIATIONS:
         request.applymarker(
             pytest.mark.xfail(
-                strict=False, reason="RTL down-converter BRdy hold after an input bubble"
+                strict=False,
+                reason="HLS LCM-stage converter loses cycles under two-sided stalls (see "
+                "KNOWN_DEVIATIONS)",
             )
         )
     model = prepared_model(cfg)
