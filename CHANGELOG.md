@@ -8,11 +8,18 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ## Unreleased
 
+### Added
+- The PYNQ driver validates accelerators on more datasets, so that the CI measures the accuracy of all trained regression models on the board: Google Speech Commands v2 (`speechcommands`, KWS), GTSRB (`gtsrb`), the evaluation split of the RadioML transformer (`radioml_transformer`) and masked token prediction on TinyStories (`tinystories`, language transformer); `scripts/prepare_validation_datasets.py` fetches the new datasets into the dataset directory (eki-project#290)
+
 ### Changed
 - Pin `onnx-passes` to 0.4.1 (eki-project#288)
+- The transformer regression models are the current `main` of finn-transformers (`3a21c22`: radioml, vision and language reach 71 %, 66 % and 67 % top-1 instead of 39 %, 26 % and 39 %), with their build configuration adjusted to the wider models: throughput targets of 95000 fps for radioml and 1000 fps for language, and threshold stage memories of at least 8192 entries in BRAM for all transformer models (eki-project#290)
+- The CIFAR validation of the PYNQ driver normalizes the images for every accelerator with a float input, not only for CIFAR-100 (override with the `normalize` kwarg of `validate`) (eki-project#290)
 
 ### Fixed
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
+- (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)
+- RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate at the cost of a slightly larger buffer (eki-project#290)
 
 ## 1.6.1 - 01.10.2026
 

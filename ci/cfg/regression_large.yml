@@ -33,7 +33,8 @@
         "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [1024],
+        "target_fps": [1000],
         "auto_fifo_depths": [True],
+        "validation_dataset" : ["tinystories"],
     },
 ]

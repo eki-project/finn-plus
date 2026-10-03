@@ -523,9 +523,14 @@ class ExperimentComparator:
 
     # Params that are allowed to differ between the current run and its comparison reference
     # (they affect only how/where results are stored, not the DUT configuration itself).
+    # validation_dataset is one of them: it does not influence the build, only which data the
+    # accuracy is measured on. A run that gains a dataset is still compared in everything else
+    # (the reference has no accuracy to compare with), and a run whose dataset changes shows up
+    # as a deviation of the required accuracy metric.
     _IGNORED_PARAM_KEYS = {
         "store_results_in_dvc_experiment",
         "store_results_in_dvc_data",
+        "validation_dataset",
     }
 
     # Additional params ignored when matching a live FIFO-sizing run (or its follow-up) against
@@ -533,7 +538,7 @@ class ExperimentComparator:
     # the same DUT in exactly these: it selects the sizing flow, derives its own folding/FIFO
     # config (the follow-up build even points at generated files that no reference can match),
     # drops target_fps and estimate reports, and skips verification. Everything that identifies
-    # the DUT itself (dut, model_path, specialize_layers_config_file, validation_dataset, board,
+    # the DUT itself (dut, model_path, specialize_layers_config_file, board,
     # synth_clk_period_ns, microbenchmark params, ...) must still match.
     _LIVE_FIFO_IGNORED_PARAM_KEYS = {
         "auto_fifo_depths",
@@ -765,7 +770,12 @@ class ExperimentComparator:
             compare_val = compare.get(key)
 
             if current_val is None or compare_val is None:
-                if is_required:
+                # A required metric that the current run lacks is a failure. One that only the
+                # reference lacks (e.g. the accuracy of a model whose validation dataset was
+                # added later) has nothing to be compared with and must not fail the run.
+                if is_required and current_val is not None:
+                    print("Required metric %s has no reference value, not compared" % key)
+                elif is_required:
                     results[key] = {
                         "current": current_val,
                         "compare": compare_val,

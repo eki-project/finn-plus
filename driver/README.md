@@ -51,5 +51,33 @@ output = accel.execute(input_array)
 | `finn_plus_driver.overlays.live_fifo` | `FINNLiveFIFOOverlay`, live FIFO sizing experiments |
 | `finn_plus_driver.overlays.dma_instrumentation` | `FINNDMAInstrumentationOverlay`, combined DMA + instrumentation |
 | `finn_plus_driver.packing` | Data packing/unpacking between numpy and the accelerator's bit-level format |
-| `finn_plus_driver.validate` | Dataset-specific accuracy validation (MNIST, CIFAR-10/100, ImageNet, RadioML, UNSW-NB15) |
+| `finn_plus_driver.validate` | Dataset-specific accuracy validation, see [Validation datasets](#validation-datasets) |
 | `finn_plus_driver.cli` | Command line interface |
+
+## Validation datasets
+
+The `validate` function of the DMA-based drivers runs the accelerator on the validation data of
+the dataset named by `validation_dataset` in `settings.json` and writes the top-1 accuracy to
+`report_dma_validate.json`. MNIST and CIFAR are downloaded on first use, all other datasets are
+read from the directory that the `DATASET_DIR` environment variable points to (or from the path
+given as `dataset_path`):
+
+| `validation_dataset` | Dataset | Expected in `$DATASET_DIR` |
+| --- | --- | --- |
+| `mnist` | MNIST test set | downloaded |
+| `cifar`, `cifar100` | CIFAR-10 / CIFAR-100 test set | downloaded |
+| `imagenet` | ILSVRC2012 validation set | `ImageNet2012/ILSVRC2012_img_val/`, `ImageNet2012/val.txt` |
+| `radioml` | RadioML 2018.01A, highest-SNR test samples (VGG10 model) | `GOLD_XYZ_OSC.0001_1024.hdf5` |
+| `radioml_transformer` | RadioML 2018.01A, evaluation split of the finn-transformers model | `GOLD_XYZ_OSC.0001_1024.hdf5` |
+| `unswnb15` | UNSW-NB15 (binarized) test set | `unsw_nb15_binarized.npz` |
+| `speechcommands` | Google Speech Commands v2 validation split, as MFCC features | `python_speech_preprocessing_all_validation_KWS_data.npz` |
+| `gtsrb` | GTSRB test set, scaled to 32x32 pixels | `gtsrb_test_32x32.npz` |
+| `tinystories` | TinyStories validation split as masked token sequences | `tinystories_validation_mlm.npz` |
+
+The files for `speechcommands`, `gtsrb` and `tinystories` are fetched and converted by
+`scripts/prepare_validation_datasets.py` of the finn-plus repository.
+
+The inputs are converted to what the accelerator expects: the CIFAR images are normalized and
+the RadioML and Speech Commands samples are left unquantized for accelerators with a float
+input, whose input quantizer is part of the hardware. For `tinystories` the reported top-1
+accuracy is the share of masked tokens that were predicted correctly.
