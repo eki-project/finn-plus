@@ -132,17 +132,19 @@ def dwc_down(prefix: str, n_in: int, k: int, in_edge: str, out_edge: str) -> OpM
 def dwc_generic(
     prefix: str, n_in: int, n_out: int, pi0: int, po0: int, in_edge: str, out_edge: str
 ) -> OpModel:
-    """Generic converter (``vpc.sv:genGeneric``): element FIFO of ``pi0 + po0`` elements.
+    """Generic converter (``vpc.sv:genGeneric``): element FIFO of ``CAP`` elements.
 
     Widths are normalised by their gcd: an input beat deposits ``pi0`` elements, an output beat
-    takes ``po0``. ``ovld`` and ``irdy`` are derived from the registered capacity counter
-    ``ICap``, so an output beat may follow the input beat that completed its elements one
-    cycle later and an input beat may follow the output beat that freed the slots of its
-    elements one cycle later (simultaneous handshakes are allowed). The counter is never
-    reset (``genSimple``: FINN instantiates the converter with ``N = IBITS * OBITS`` so no
-    padding beats exist), i.e. element indices run on across frames.
+    takes ``po0``. ``ovld`` (``F >= po0``) and ``irdy`` (``F <= CAP - pi0``) are derived from
+    the registered capacity counter ``ICap``, so an output beat may follow the input beat that
+    completed its elements one cycle later and an input beat may follow the output beat that
+    freed the slots of its elements one cycle later (simultaneous handshakes are allowed).
+    ``CAP = pi0 + po0 + SLACK`` with ``SLACK = min(pi0, po0) - 1`` (eki-project#290: the slack
+    lets the narrower interface sustain full rate for non-integer ratios). The counter is
+    never reset (``genSimple``: FINN instantiates the converter with ``N = IBITS * OBITS`` so
+    no padding beats exist), i.e. element indices run on across frames.
     """
-    cap = pi0 + po0
+    cap = pi0 + po0 + min(pi0, po0) - 1
     r = Chain(f"{prefix}.R")
     r.events(n_in, 1, reads=[in_edge])
     w = Chain(f"{prefix}.W")
