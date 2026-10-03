@@ -403,6 +403,11 @@ QoR Symbolic Regression:
       mkdir -p $LOCAL_QOR_JULIA_DEPOT
       # the first import installs Julia and SymbolicRegression.jl into the depot
       qor-venv/bin/python -c "import pysr; print(pysr.__version__)"
+      # Julia embedded in Python ends up with the libstdc++ the process loaded first (the
+      # system's, via numpy & co.), which on an old runner is too old for Julia's own
+      # libraries ("GLIBCXX_x.y.z not found"). Preload the libstdc++ bundled with Julia.
+      JULIA_LIBSTDCXX=$PYTHON_JULIAPKG_PROJECT/pyjuliapkg/install/lib/julia/libstdc++.so.6
+      if [ -f "$JULIA_LIBSTDCXX" ]; then export LD_PRELOAD=$JULIA_LIBSTDCXX${LD_PRELOAD:+:$LD_PRELOAD}; fi
       qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_symbolic_artifacts --regressors SymbolicRegressor --no-store
       for backend in hls rtl; do
         qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_symbolic_artifacts --regressors SymbolicRegressor --operators mvau --targets metrics.synth.resources.LUT --subset params.backend=$backend || true
