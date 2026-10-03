@@ -10,8 +10,11 @@ variables:
     description: "Optional name to better identify this pipeline"
     value: ""
   TEST_SUITE:
-    description: "Select test suite to run (fifo_model_ci runs only the TEG FIFO-sizing tests and skips all bench jobs)"
-    value: "full_ci"
+    description: "Select test suite to run (fifo_model_ci runs only the TEG FIFO-sizing tests)"
+    # TEMPORARY (feature/fifo_sizing_model): every pipeline of this branch runs the TEG FIFO-sizing
+    # test suite and the regression configs with the abstract simulation sizing (see
+    # BENCH_PARAM_OVERRIDES); restore "full_ci" and the empty override before merging into dev.
+    value: "fifo_model_ci"
     options:
       - "none"
       - "quicktest_ci"
@@ -55,7 +58,9 @@ variables:
     value: ""
   BENCH_PARAM_OVERRIDES:
     description: "Optional JSON object of build parameters applied to every run of every bench job, e.g. {\"auto_fifo_depths\": true, \"auto_fifo_strategy\": \"abstract_sim\"} to run the regression suite with the TEG-based FIFO sizing"
-    value: ""
+    # TEMPORARY (feature/fifo_sizing_model): the regression suite always builds with the TEG-based
+    # abstract simulation sizing on this branch; restore "" before merging into dev.
+    value: '{"auto_fifo_depths": true, "auto_fifo_strategy": "abstract_sim"}'
 
 workflow:
   name: '$PIPELINE_NAME'
@@ -193,9 +198,7 @@ Bench (Manual):
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
-    # The FIFO-model test suite is a targeted unit-test run; no regression builds
-    - if: $TEST_SUITE == "fifo_model_ci"
-      when: never
+    # TEMPORARY (feature/fifo_sizing_model): manual configs run with every test-suite selection
     - if: $MANUAL_CFG_PATH != ""
   trigger:
     include: ci/.gitlab-bench.yml
@@ -212,9 +215,8 @@ Bench (Basic):
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
-    # The FIFO-model test suite is a targeted unit-test run; no regression builds
-    - if: $TEST_SUITE == "fifo_model_ci"
-      when: never
+    # TEMPORARY (feature/fifo_sizing_model): the regression configs run with every test-suite
+    # selection (they build with the abstract simulation sizing, see BENCH_PARAM_OVERRIDES)
     - if: $MANUAL_CFG_PATH == ""
   trigger:
     include: ci/.gitlab-bench.yml
@@ -239,6 +241,9 @@ Bench (Basic):
 Bench (Extended):
   stage: test
   rules:
+    # TEMPORARY (feature/fifo_sizing_model): the microbenchmarks are not affected by the FIFO
+    # sizing work and are not run on this branch; remove this rule before merging into dev
+    - when: never
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
