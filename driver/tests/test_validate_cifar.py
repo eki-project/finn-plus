@@ -66,6 +66,7 @@ def cifar_images(monkeypatch):
     labels = np.zeros(8, dtype=np.int64)
 
     def load_cifar_data(path, download, one_hot, cifar10):
+        """Return the images as the test split, like dataset_loading.cifar.load_cifar_data."""
         return None, None, images, labels, None, None
 
     cifar = types.SimpleNamespace(load_cifar_data=load_cifar_data)
