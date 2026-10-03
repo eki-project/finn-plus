@@ -208,6 +208,10 @@ Bench (Manual):
   variables:
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
     BENCH_CFG: "manual"
+    BENCH_CFG_PARALLEL_JOBS: $PARALLEL_JOBS
+    BENCH_CFG_CPU_CORES: $BENCH_CPU_CORES
+    BENCH_CFG_FINN_WORKERS: $BENCH_FINN_WORKERS
+    BENCH_CFG_MEM: $MEM_BENCH
 
 Bench (Basic):
   stage: test
@@ -227,16 +231,21 @@ Bench (Basic):
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
   parallel:
     matrix:
-      # One Slurm array task per experiment of the config, so PARALLEL_JOBS has to be kept in
-      # sync with the number of experiments in ci/cfg/<BENCH_CFG>.yml. The large models need
-      # a bigger node than the rest, hence the split into two configs.
+      # One Slurm array task per experiment of the config, so the parallel job count has to be
+      # kept in sync with the number of experiments in ci/cfg/<BENCH_CFG>.yml. The large models
+      # need a bigger node than the rest, hence the split into two configs. The resources are
+      # passed under config-scoped names (see ci/.gitlab-bench.yml): the pipeline-level names
+      # are forwarded as pipeline variables and would override per-config values here.
       - BENCH_CFG: [regression_small]
-        PARALLEL_JOBS: "13"
+        BENCH_CFG_PARALLEL_JOBS: "13"
+        BENCH_CFG_CPU_CORES: $BENCH_CPU_CORES
+        BENCH_CFG_FINN_WORKERS: $BENCH_FINN_WORKERS
+        BENCH_CFG_MEM: $MEM_BENCH
       - BENCH_CFG: [regression_large]
-        PARALLEL_JOBS: "3"
-        BENCH_CPU_CORES: "128"
-        BENCH_FINN_WORKERS: "128"
-        MEM_BENCH: "512G"
+        BENCH_CFG_PARALLEL_JOBS: "3"
+        BENCH_CFG_CPU_CORES: "128"
+        BENCH_CFG_FINN_WORKERS: "128"
+        BENCH_CFG_MEM: "512G"
 
 Bench (Extended):
   stage: test
@@ -261,7 +270,10 @@ Bench (Extended):
       pipeline_variables: true
   variables:
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
-    PARALLEL_JOBS: "8"
+    BENCH_CFG_PARALLEL_JOBS: "8"
+    BENCH_CFG_CPU_CORES: $BENCH_CPU_CORES
+    BENCH_CFG_FINN_WORKERS: $BENCH_FINN_WORKERS
+    BENCH_CFG_MEM: $MEM_BENCH
   parallel:
     matrix:
       - BENCH_CFG: [microbenchmark_basic]
