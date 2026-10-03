@@ -239,6 +239,23 @@ CASES = [
 INVALID = [
     ("mvau", {**_MVAU, "sf": 7}),
     ("mvau", {**_MVAU, "backend": "rtl"}),  # activation not supported by rtl
+    # 128 x 8 x 8 bit weight tile = 8192 bits > AP_INT_MAX_W (pipeline 152593 run 7)
+    (
+        "mvau",
+        {
+            **_MVAU,
+            "idt": "INT8",
+            "wdt": "INT8",
+            "act": "INT8",
+            "mw": 1024,
+            "mh": 128,
+            "sf": 8,
+            "nf": 16,
+            "mem_mode": "internal_embedded",
+        },
+    ),
+    # URAM weights need runtime-writeable weights on the RFSoC (pipeline 152593 run 1)
+    ("mvau", {**_MVAU, "mem_mode": "internal_decoupled", "ram_style": "ultra"}),
     ("thresholding", {**_THR, "pe": 7}),
     ("thresholding", {**_THR, "backend": "rtl"}),  # mem_mode/ram_style must be unset for rtl
     ("swg", {**_SWG, "k": [17, 17]}),
@@ -346,7 +363,10 @@ def test_sampled_configs_build(dut):
         node = _single_hw_node(model.transform(GiveUniqueNodeNames()))
         if node.op_type not in cls.OP_TYPES:
             continue
-        node_features(model, node, getHWCustomOp(node))
+        inst = getHWCustomOp(node)
+        if is_hls_node(node):
+            inst.get_ap_int_max_w()  # raises if a width exceeds AP_INT_MAX_W
+        node_features(model, node, inst)
         built += 1
         if built == 3:
             break

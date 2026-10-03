@@ -33,7 +33,7 @@ from finn.benchmarking.dut.microbench_base import MicrobenchDUT, resolve_part, s
 from finn.benchmarking.param_space import Choice, Conditional, Divisor, Fixed, ParamSpace, Pow2Range
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
-from finn.util.basic import get_dsp_block, get_dsp_datapath_limits
+from finn.util.basic import MAX_ALLOWED_AP_INT_W, get_dsp_block, get_dsp_datapath_limits, is_versal
 
 SPARSITY_TYPES = (
     "none",
@@ -133,10 +133,14 @@ class bench_mvau(MicrobenchDUT):
                 return f"MVAU_rtl supports 2..{max_act} bit inputs on {dsp_block}"
             if not 2 <= wdt.bitwidth() <= max_weight:
                 return f"MVAU_rtl supports 2..{max_weight} bit weights on {dsp_block}"
-        if backend == "hls" and params["mem_mode"] == "internal_decoupled":
-            # weight stream width limitation of the HLS MVAU
-            if simd * pe * wdt.bitwidth() > 8191:
-                return "HLS MVAU weight stream too wide (> 8191)"
+        if backend == "hls" and simd * pe * wdt.bitwidth() > MAX_ALLOWED_AP_INT_W:
+            # the HLS MVAU packs all PE weights of a tile into one ap_uint in every mem_mode
+            # (MVAU_hls.get_ap_int_max_w), limited by AP_INT_MAX_W
+            return f"HLS MVAU weight tile too wide (> {MAX_ALLOWED_AP_INT_W} bits)"
+        if params["ram_style"] == "ultra" and not is_versal(resolve_part(params)):
+            # URAM weight memories need runtime-writeable weights outside Versal (asserted in
+            # MVAU.generate_hdl_memstream), which the microbenchmarks do not exercise
+            return "URAM weights need runtime_writeable_weights on non-Versal parts"
         if backend == "hls" and params["mem_mode"] == "internal_embedded":
             # ram_style has no effect for embedded weights (always LUTs), so only the
             # explicit value is benchmarked to avoid confusing microbenchmark results
@@ -205,10 +209,11 @@ class bench_mvau(MicrobenchDUT):
                 {"rtl": Fixed("internal_decoupled")},
                 Choice(["internal_embedded", "internal_decoupled"]),
             ),
+            # no "ultra": URAM weights need runtime-writeable weights on the CI boards
             "ram_style": Conditional(
                 "mem_mode",
                 {"internal_embedded": Fixed("distributed")},
-                Choice(["auto", "block", "distributed", "ultra"]),
+                Choice(["auto", "block", "distributed"]),
             ),
             "ram_style_thr": Conditional(
                 "act", {None: Fixed("auto")}, Choice(["auto", "distributed", "block"])

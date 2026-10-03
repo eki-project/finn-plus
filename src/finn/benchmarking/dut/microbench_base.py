@@ -27,7 +27,8 @@ import finn.builder.build_dataflow_config as build_cfg
 from finn.benchmarking.bench_base import bench
 from finn.benchmarking.param_space import ParamSpace
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
-from finn.util.basic import MAX_ALLOWED_AP_INT_W, part_map
+from finn.util.basic import MAX_ALLOWED_AP_INT_W, getHWCustomOp, part_map
+from finn.util.exception import FINNInternalError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
 #: Widest stream the instrumentation shell (and HLS ap_uint) can handle
@@ -155,6 +156,15 @@ class MicrobenchDUT(bench):
             # backend is not possible for this configuration
             print(f"Node specialized to {node.op_type} instead of {self.OP_TYPES}, skipping")
             return "skipped"
+
+        if is_hls_node(node):
+            # HLS modules are limited by AP_INT_MAX_W; the backends raise if a stream or
+            # weight tile exceeds it, which validate() should have caught (safety net)
+            try:
+                getHWCustomOp(node).get_ap_int_max_w()
+            except FINNInternalError as e:
+                print(f"Configuration exceeds the HLS integer width limit, skipping: {e}")
+                return "skipped"
 
         info["dut_node_name"] = node.name
         info["dut_op_type"] = node.op_type
