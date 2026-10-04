@@ -1,0 +1,139 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 539.0,
+            "DSP": 0.0,
+            "BRAM_18K": 4.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 75264,
+            "max_cycles": 75264,
+            "max_cycles_node_name": "VVAU_hls_0",
+            "estimated_throughput_fps": 1328.656462585034,
+            "estimated_latency_ns": 752640.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 748.0,
+            "FF": 242.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 2.0,
+            "URAM": 0.0
+        }
+    },
+    "empirical_estimate": {
+        "resources": {
+            "LUT": 539.0,
+            "DSP": 0.0,
+            "BRAM_18K": 4.0,
+            "URAM": 0.0
+        },
+        "power": {
+            "power": 0.0
+        }
+    },
+    "synth(ooc)": {
+        "resources": {
+            "LUT": 381,
+            "LUTRAM": 0,
+            "FF": 517,
+            "DSP": 0,
+            "BRAM": 1,
+            "BRAM_18K": 2,
+            "BRAM_36K": 0,
+            "URAM": 0
+        },
+        "timing": {
+            "WNS": 6.017,
+            "fmax_mhz": 251.06703489831787
+        }
+    },
+    "synth": {
+        "resources_extra": {
+            "LUT": 76,
+            "FF": 140,
+            "SRL": 0,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 0,
+            "URAM": 0,
+            "num_nodes": 1
+        },
+        "resources": {
+            "LUT": 277,
+            "FF": 351,
+            "SRL": 0,
+            "DSP": 0,
+            "BRAM_18K": 2,
+            "BRAM_36K": 0,
+            "URAM": 0
+        }
+    },
+    "vivado_estimate": {
+        "power": {
+            "power_sim_total": 1.094,
+            "power_sim_static": 1.085,
+            "power_sim_dynamic": 0.01,
+            "power_12.5_0.5_total": 1.09,
+            "power_12.5_0.5_static": 1.085,
+            "power_12.5_0.5_dynamic": 0.005,
+            "power_25_0.5_total": 1.092,
+            "power_25_0.5_static": 1.085,
+            "power_25_0.5_dynamic": 0.007,
+            "power_50_0.5_total": 1.096,
+            "power_50_0.5_static": 1.085,
+            "power_50_0.5_dynamic": 0.012,
+            "power_75_0.5_total": 1.1,
+            "power_75_0.5_static": 1.085,
+            "power_75_0.5_dynamic": 0.016,
+            "power_100_0.5_total": 1.105,
+            "power_100_0.5_static": 1.085,
+            "power_100_0.5_dynamic": 0.02
+        }
+    },
+    "measurement": {
+        "power": {
+            "avg_0V85_power": 1945.867894736842,
+            "avg_3V3_power": 983.8125,
+            "avg_total_power": 2929.680394736841,
+            "min_0V85_power": 1945.867894736842,
+            "min_3V3_power": 983.8125,
+            "min_total_power": 2929.680394736841,
+            "max_0V85_power": 1945.867894736842,
+            "max_3V3_power": 983.8125,
+            "max_total_power": 2929.680394736841
+        },
+        "report_experiment_instrumentation": {
+            "frequency_mhz": 100,
+            "pipeline_depth": 1.0,
+            "latency_cycles": 75279,
+            "throughput_fps": 1329,
+            "error": false,
+            "interval_cycles": 75270,
+            "checksum": 11011650,
+            "min_latency_ms": 0.75273,
+            "min_pipeline_depth": 1.0,
+            "latency_ms": 0.75279,
+            "min_latency_cycles": 75273
+        }
+    },
+    "time": {
+        "step_create_dataflow_partition": 0,
+        "step_minimize_bit_width": 0,
+        "step_generate_estimate_reports": 0,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 49,
+        "step_create_stitched_ip": 66,
+        "step_measure_rtlsim_performance": 172,
+        "step_out_of_context_synthesis": 151,
+        "step_vivado_power_estimation": 99,
+        "step_synthesize_bitfile": 307,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 844
+    }
+}
