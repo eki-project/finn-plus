@@ -1,0 +1,42 @@
+params:
+  dut: vvau
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: true
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - rtlsim_performance
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  backend: hls
+  idt: INT8
+  wdt: INT8
+  act: UINT4
+  ch: 256
+  dim:
+  - 7
+  - 7
+  k:
+  - 1
+  - 3
+  pe: 1
+  simd: 3
+  mem_mode: internal_decoupled
+  ram_style: ultra
+  resType: lut
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  pe: 1
+  simd: 3
+  zero_weights: 0.0
+  wmem: 256
+  tmem: 256
+  dut_node_name: VVAU_hls_0
+  dut_op_type: VVAU_hls
+  dut_backend: hls
