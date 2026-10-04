@@ -205,9 +205,11 @@ class SymbolicRegressor(BaseEstimator, RegressorMixin):
             random_state=self.random_state,
             verbosity=self.verbosity,
             progress=False,
+            # PySR creates its run directory below tempdir and asserts (2.6) that no
+            # output_directory is given together with temp_equation_file
             temp_equation_file=True,
             delete_tempfiles=True,
-            output_directory=out_dir,
+            tempdir=out_dir,
             run_id=f"qor_{uuid.uuid4().hex[:8]}",
         )
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
