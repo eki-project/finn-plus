@@ -264,6 +264,34 @@ def test_symbolic_predict_without_julia(tmp_path):
     assert (tmp_path / "pareto.png").is_file()
 
 
+def test_symbolic_plain_symbols_and_custom_operators():
+    """Regression tests for two failures seen in the CI symbolic regression job: PySR names
+    features with numpy strings (unparseable srepr) and log2_abs is not a Julia built-in."""
+    sympy = pytest.importorskip("sympy")
+    from finn.qor.models.symbolic import plain_srepr, translate_operators
+
+    x7 = sympy.Symbol(np.str_("x7_np"))
+    expr = 2.5 * x7 + sympy.ceiling(x7 / 3)
+    text = sympy.srepr(expr)
+    assert "np.str_" in text
+    with pytest.raises(Exception):
+        sympy.sympify(text)  # 'Symbol' object has no attribute 'str_'
+    plain = plain_srepr(text)
+    assert "np.str_" not in plain
+    # (sympy's symbol cache may still hand back the numpy-named instance in this process,
+    # so only the round trip through the text is asserted, not the symbol's name type)
+    assert sympy.sympify(plain) == expr
+    assert plain_srepr('Symbol(numpy.str_("a"))') == 'Symbol("a")'
+
+    ops, mappings = translate_operators(("square", "ceil", "log2_abs"))
+    assert ops == ["square", "ceil", "log2_abs(x) = log2(abs(x))"]
+    assert set(mappings) == {"log2_abs"}
+    x = sympy.Symbol("x")
+    fn = sympy.lambdify([x], mappings["log2_abs"](x), modules=["numpy"])
+    assert np.allclose(fn(np.array([-8.0, 1.0, 1024.0])), [3.0, 0.0, 10.0])
+    assert translate_operators(("+", "*")) == (["+", "*"], {})
+
+
 def test_symbolic_equation_metadata_via_estimator(tmp_path):
     sympy = pytest.importorskip("sympy")
     from finn.qor.features import OperatorFeatureSpec

@@ -36,6 +36,44 @@ def sympy_available() -> bool:
 _CACHE: dict[int, Any] = {}
 
 
+#: Unary operators that SymbolicRegression.jl does not provide itself: name -> (Julia
+#: definition handed to PySR, sympy construction for exporting the fitted expression).
+CUSTOM_UNARY_OPERATORS: dict[str, tuple[str, Any]] = {
+    "log2_abs": ("log2_abs(x) = log2(abs(x))", lambda x: _sympy().log(_sympy().Abs(x), 2)),
+}
+
+
+def _sympy():
+    import sympy
+
+    return sympy
+
+
+def translate_operators(names) -> tuple[list[str], dict[str, Any]]:
+    """Map operator names to what PySR expects: built-in names unchanged, custom ones as a
+    Julia definition plus their ``extra_sympy_mappings`` entry."""
+    operators, mappings = [], {}
+    for name in names:
+        if name in CUSTOM_UNARY_OPERATORS:
+            definition, to_sympy = CUSTOM_UNARY_OPERATORS[name]
+            operators.append(definition)
+            mappings[name] = to_sympy
+        else:
+            operators.append(name)
+    return operators, mappings
+
+
+_NUMPY_STR = re.compile(r"(?:np|numpy)\.str_\((['\"][^'\"]*['\"])\)")
+
+
+def plain_srepr(text: str) -> str:
+    """``srepr`` text with numpy string literals turned into plain ones. PySR names its
+    features with a numpy string array, so the symbols' ``srepr`` contains
+    ``Symbol(np.str_('x7'))``, which ``sympify`` cannot parse back (and sympy's symbol cache
+    keeps returning the numpy-named instance for ``Symbol('x7')``)."""
+    return _NUMPY_STR.sub(r"\1", text)
+
+
 def sanitize_feature_names(names) -> list[str]:
     """Turn pipeline feature names (``num__params.mw``, ``cat__params.backend_hls``) into
     unique python identifiers (``mw``, ``backend_hls``)."""
@@ -184,10 +222,13 @@ class SymbolicRegressor(BaseEstimator, RegressorMixin):
         if self.relative_weights:
             weights = 1.0 / np.maximum(np.abs(y), 1e-3) ** 2
         out_dir = self.output_directory or tempfile.mkdtemp(prefix="pysr_")
+        binary_operators, binary_mappings = translate_operators(self.binary_operators)
+        unary_operators, unary_mappings = translate_operators(self.unary_operators)
         kwargs = dict(
             niterations=self.niterations,
-            binary_operators=list(self.binary_operators),
-            unary_operators=list(self.unary_operators),
+            binary_operators=binary_operators,
+            unary_operators=unary_operators,
+            extra_sympy_mappings={**binary_mappings, **unary_mappings} or None,
             maxsize=self.maxsize,
             populations=self.populations,
             population_size=self.population_size,
@@ -218,7 +259,7 @@ class SymbolicRegressor(BaseEstimator, RegressorMixin):
         model.fit(X, y, weights=weights)
         best = model.get_best()
         expr = model.sympy()
-        self.expr_srepr_ = sympy.srepr(expr)
+        self.expr_srepr_ = plain_srepr(sympy.srepr(expr))
         self.equation_ = str(best["equation"])
         self.complexity_ = int(best["complexity"])
         self.loss_ = float(best["loss"])
