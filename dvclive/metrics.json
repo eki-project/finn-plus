@@ -1,0 +1,35 @@
+{
+    "status": "failed",
+    "estimate": {
+        "resources": {
+            "LUT": 1024.0,
+            "DSP": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 15.0
+        },
+        "performance": {
+            "critical_path_cycles": 512,
+            "max_cycles": 512,
+            "max_cycles_node_name": "Thresholding_hls_0",
+            "estimated_throughput_fps": 195312.5,
+            "estimated_latency_ns": 5120.0
+        }
+    },
+    "empirical_estimate": {
+        "resources": {
+            "LUT": 1024.0,
+            "DSP": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 15.0
+        },
+        "power": {
+            "power": 0.0
+        }
+    },
+    "time": {
+        "step_create_dataflow_partition": 0,
+        "step_minimize_bit_width": 0,
+        "step_generate_estimate_reports": 0,
+        "total_build_time": 0
+    }
+}
