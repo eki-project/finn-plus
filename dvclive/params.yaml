@@ -1,0 +1,38 @@
+params:
+  dut: eltwise
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: true
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - rtlsim_performance
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  backend: hls
+  op: Add
+  lhs_dtype: INT8
+  rhs_dtype: INT16
+  shape:
+  - 1
+  - 1
+  - 1
+  - 64
+  rhs_bcast: channel
+  pe: 4
+  mem_mode: internal_decoupled
+  ram_style: ultra
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  rhs_dtype: INT16
+  out_dtype: INT17
+  rhs_num_elems: 64
+  wmem: 16
+  dut_node_name: ElementwiseAdd_hls_0
+  dut_op_type: ElementwiseAdd_hls
+  dut_backend: hls
