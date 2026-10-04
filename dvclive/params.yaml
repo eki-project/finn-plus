@@ -1,0 +1,31 @@
+params:
+  dut: dwc
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: true
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - rtlsim_performance
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  backend: rtl
+  dtype: INT4
+  ch: 128
+  in_elems: 64
+  out_elems: 2
+  n: 16
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  in_width: 256
+  out_width: 8
+  ratio: 32.0
+  integer_ratio: true
+  dut_node_name: StreamingDataWidthConverter_rtl_0
+  dut_op_type: StreamingDataWidthConverter_rtl
+  dut_backend: rtl
