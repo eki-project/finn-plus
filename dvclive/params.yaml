@@ -1,0 +1,36 @@
+params:
+  dut: pool
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: true
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - rtlsim_performance
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  function: QuantAvgPool
+  idt: INT2
+  odt: INT2
+  ch: 512
+  pe: 4
+  k:
+  - 7
+  - 7
+  odim:
+  - 8
+  - 8
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  odt: INT2
+  in_width: 8
+  accum_bits: 8
+  size: 6
+  dut_node_name: Pool_hls_0
+  dut_op_type: Pool_hls
+  dut_backend: hls
