@@ -1,0 +1,38 @@
+params:
+  dut: thresholding
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: true
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - rtlsim_performance
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  backend: rtl
+  idt: INT24
+  odt: INT2
+  ch: 64
+  pe: 32
+  nhw:
+  - 1
+  - 8
+  - 8
+  mem_mode:
+  ram_style:
+  depth_trigger_bram: 256
+  depth_trigger_uram: 2048
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  pe: 32
+  num_steps: 3
+  tdt: INT24
+  tmem: 2
+  dut_node_name: Thresholding_rtl_0
+  dut_op_type: Thresholding_rtl
+  dut_backend: rtl
