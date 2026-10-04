@@ -1,0 +1,29 @@
+params:
+  dut: fifo
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: true
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - rtlsim_performance
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  dtype: INT32
+  elems: 16
+  n: 64
+  depth: 2048
+  ram_style: ultra
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  width_bits: 512
+  ram_style_eff: ultra
+  capacity_bits: 1048576
+  dut_node_name: StreamingFIFO_rtl_0
+  dut_op_type: StreamingFIFO_rtl
+  dut_backend: rtl
