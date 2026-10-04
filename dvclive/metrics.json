@@ -1,0 +1,139 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 0.0,
+            "DSP": 0.0,
+            "BRAM_18K": 8.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 4,
+            "max_cycles": 4,
+            "max_cycles_node_name": "ElementwiseMul_hls_0",
+            "estimated_throughput_fps": 25000000.0,
+            "estimated_latency_ns": 40.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 163.0,
+            "FF": 6.0,
+            "DSP": 16.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        }
+    },
+    "empirical_estimate": {
+        "resources": {
+            "LUT": 0.0,
+            "DSP": 0.0,
+            "BRAM_18K": 8.0,
+            "URAM": 0.0
+        },
+        "power": {
+            "power": 0.0
+        }
+    },
+    "synth(ooc)": {
+        "resources": {
+            "LUT": 1743,
+            "LUTRAM": 128,
+            "FF": 3287,
+            "DSP": 16,
+            "BRAM": 4,
+            "BRAM_18K": 0,
+            "BRAM_36K": 4,
+            "URAM": 0
+        },
+        "timing": {
+            "WNS": 6.548,
+            "fmax_mhz": 289.6871378910776
+        }
+    },
+    "synth": {
+        "resources_extra": {
+            "LUT": 789,
+            "FF": 1556,
+            "SRL": 0,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 0,
+            "URAM": 0,
+            "num_nodes": 1
+        },
+        "resources": {
+            "LUT": 934,
+            "FF": 1708,
+            "SRL": 128,
+            "DSP": 16,
+            "BRAM_18K": 0,
+            "BRAM_36K": 4,
+            "URAM": 0
+        }
+    },
+    "vivado_estimate": {
+        "power": {
+            "power_sim_total": 1.149,
+            "power_sim_static": 1.085,
+            "power_sim_dynamic": 0.064,
+            "power_12.5_0.5_total": 1.128,
+            "power_12.5_0.5_static": 1.085,
+            "power_12.5_0.5_dynamic": 0.043,
+            "power_25_0.5_total": 1.142,
+            "power_25_0.5_static": 1.085,
+            "power_25_0.5_dynamic": 0.057,
+            "power_50_0.5_total": 1.171,
+            "power_50_0.5_static": 1.085,
+            "power_50_0.5_dynamic": 0.086,
+            "power_75_0.5_total": 1.2,
+            "power_75_0.5_static": 1.086,
+            "power_75_0.5_dynamic": 0.115,
+            "power_100_0.5_total": 1.229,
+            "power_100_0.5_static": 1.086,
+            "power_100_0.5_dynamic": 0.143
+        }
+    },
+    "measurement": {
+        "power": {
+            "avg_0V85_power": 2089.773947368421,
+            "avg_3V3_power": 995.6677631578947,
+            "avg_total_power": 3085.4417105263146,
+            "min_0V85_power": 2089.773947368421,
+            "min_3V3_power": 995.6677631578947,
+            "min_total_power": 3085.4417105263146,
+            "max_0V85_power": 2089.773947368421,
+            "max_3V3_power": 995.6677631578947,
+            "max_total_power": 3085.4417105263146
+        },
+        "report_experiment_instrumentation": {
+            "frequency_mhz": 100,
+            "pipeline_depth": 2.75,
+            "latency_cycles": 11,
+            "throughput_fps": 25000000,
+            "error": false,
+            "interval_cycles": 4,
+            "checksum": 10925527,
+            "min_latency_ms": 0.00011,
+            "min_pipeline_depth": 2.75,
+            "latency_ms": 0.00011,
+            "min_latency_cycles": 11
+        }
+    },
+    "time": {
+        "step_create_dataflow_partition": 0,
+        "step_minimize_bit_width": 0,
+        "step_generate_estimate_reports": 0,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 43,
+        "step_create_stitched_ip": 69,
+        "step_measure_rtlsim_performance": 244,
+        "step_out_of_context_synthesis": 158,
+        "step_vivado_power_estimation": 95,
+        "step_synthesize_bitfile": 328,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 937
+    }
+}
