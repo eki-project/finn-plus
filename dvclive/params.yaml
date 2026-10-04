@@ -1,0 +1,36 @@
+params:
+  dut: fmpadding
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: true
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - rtlsim_performance
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  idt: UINT4
+  ch: 8
+  simd: 4
+  idim:
+  - 16
+  - 16
+  padding:
+  - 1
+  - 1
+  - 0
+  - 0
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  odim:
+  - 17
+  - 17
+  stream_width: 16
+  dut_node_name: FMPadding_rtl_0
+  dut_op_type: FMPadding_rtl
+  dut_backend: rtl
