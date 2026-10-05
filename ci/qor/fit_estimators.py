@@ -217,6 +217,13 @@ def main() -> int:
     if not args.database:
         logger.error("No database given (--database or $%s)", DATABASE_ENV_VAR)
         return 2
+    column_filters = {}
+    for item in args.subset:
+        key, _, value = item.partition("=")
+        column_filters[key] = _parse_value(value)
+    if column_filters:
+        logger.info("Fitting on the subset %s (models are not stored)", column_filters)
+        args.no_store = True
     if not args.model_dir and not args.no_store:
         logger.error("No model directory given (--model-dir or $%s)", MODEL_DIR_ENV_VAR)
         return 2
@@ -226,13 +233,6 @@ def main() -> int:
     exclude = args.skip_regressors.split(",") if args.skip_regressors else None
     grid = apply_grid_overrides(available_regressor_grid(args.quick, include, exclude), args.set)
     logger.info("Regressors: %s", [regressor_name(cls) for cls, _ in grid])
-    column_filters = {}
-    for item in args.subset:
-        key, _, value = item.partition("=")
-        column_filters[key] = _parse_value(value)
-    if column_filters:
-        logger.info("Fitting on the subset %s (models are not stored)", column_filters)
-        args.no_store = True
     subset_suffix = "".join(
         "__" + "".join(c if c.isalnum() else "_" for c in f"{k}_{v}")
         for k, v in column_filters.items()
