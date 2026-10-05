@@ -268,6 +268,51 @@ INVALID = [
     ("fmpadding", {**_FMP, "padding": [0, 0, 0, 0]}),
     ("eltwise", {**_ELT, "pe": 3}),
     ("eltwise", {**_ELT, "backend": "rtl"}),
+    # --- failure classes of the first sample_all pipeline (152661) ---
+    ("mvau", {**_MVAU, "wdt": "BINARY"}),  # MVAU_hls: true binary not supported
+    ("thresholding", {**_THR, "ram_style": "ultra"}),  # URAM init from bitfile: Versal only
+    ("thresholding", {**_THR, "mem_mode": "internal_decoupled", "ram_style": "ultra"}),
+    # 64 PEs x 255 steps x 4 bit = 65280 bit threshold stream > AP_INT_MAX_W
+    (
+        "thresholding",
+        {
+            **_THR,
+            "idt": "UINT4",
+            "odt": "INT8",
+            "ch": 512,
+            "pe": 64,
+            "mem_mode": "internal_decoupled",
+        },
+    ),
+    ("vvau", {**_VVAU, "mem_mode": "internal_decoupled", "ram_style": "ultra"}),
+    ("eltwise", {**_ELT, "ram_style": "ultra"}),
+    # 192 bit x 16384 deep shift register: Vivado refuses the array
+    ("fifo", {"dtype": "INT16", "elems": 12, "n": 64, "depth": 16384, "ram_style": "srl"}),
+    # 15 x 4 bit output elements: padded 64 bit word not sliceable into 15 subwords
+    (
+        "swg",
+        {
+            **_SWG,
+            "idt": "INT4",
+            "ifm_ch": 3,
+            "ifm_dim": [1, 256],
+            "k": [1, 5],
+            "depthwise": 1,
+            "parallel_window": 1,
+            "simd": 3,
+            "ram_style": "auto",
+        },
+    ),
+    # 224x224x512 depthwise with SIMD 2: 12.8 M cycles per frame (18 h build)
+    (
+        "swg",
+        {**_SWG, "ifm_ch": 512, "ifm_dim": [224, 224], "k": [5, 5], "depthwise": 1, "simd": 2},
+    ),
+    (
+        "dwc",
+        {"backend": "rtl", "dtype": "BINARY", "ch": 96, "in_elems": 32, "out_elems": 3, "n": 16},
+    ),
+    ("fmpadding", {"idt": "UINT2", "ch": 3, "simd": 3, "idim": [7, 7], "padding": [2, 2, 2, 2]}),
 ]
 
 
@@ -440,3 +485,21 @@ def test_dwc_dut_floorplan(in_elems, out_elems):
     model, _ = MICROBENCH_DUTS["dwc"].make_model(params, RFSOC)
     model = model.transform(GiveUniqueNodeNames()).transform(Floorplan())
     assert getHWCustomOp(model.graph.node[0]).get_nodeattr("slr") == -1
+
+
+def test_instrumentation_and_frame_helpers():
+    from finn.benchmarking.dut.microbench_base import (
+        MAX_FRAME_CYCLES,
+        frame_cycles_ok,
+        output_words_ok,
+    )
+
+    # padded word width (multiple of 8) must be a multiple of the elements per word
+    assert output_words_ok(8, 8) and output_words_ok(4, 2) and output_words_ok(2, 3)
+    assert not output_words_ok(15, 4)  # 60 -> 64 bits, 64 % 15 != 0 (SWG run 60)
+    assert not output_words_ok(3, 1)  # 3 -> 8 bits (DWC run 130)
+    assert not output_words_ok(3, 2)  # 6 -> 8 bits (FMPadding run 191)
+    assert not output_words_ok(5, 4)  # 20 -> 24 bits
+    assert not output_words_ok(0, 8)
+    assert frame_cycles_ok(1) and frame_cycles_ok(MAX_FRAME_CYCLES)
+    assert not frame_cycles_ok(MAX_FRAME_CYCLES + 1) and not frame_cycles_ok(0)

@@ -1,5 +1,6 @@
 """Thresholding (standalone activation) microbenchmark DUT (HLS and RTL backends)."""
 
+import math
 import numpy as np
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
@@ -11,11 +12,15 @@ from typing import Optional
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
     check_foreign,
+    frame_cycles_ok,
+    output_words_ok,
+    resolve_part,
     specialize_single_node,
     stream_width_ok,
 )
 from finn.benchmarking.param_space import Choice, Conditional, Divisor, Fixed, ParamSpace, Pow2Range
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
+from finn.util.basic import MAX_ALLOWED_AP_INT_W, is_versal
 
 
 def _is_int_type(name: str) -> bool:
@@ -56,11 +61,25 @@ class bench_thresholding(MicrobenchDUT):
             return "pe must divide ch"
         if not stream_width_ok(pe * idt.bitwidth()) or not stream_width_ok(pe * odt.bitwidth()):
             return "stream width exceeds the instrumentation limit"
+        if not output_words_ok(pe, odt.bitwidth()):
+            return "output word not sliceable by the instrumentation shell"
+        n_vectors = math.prod(int(x) for x in params["nhw"])
+        if not frame_cycles_ok(n_vectors * (ch // pe)):
+            return "too many cycles per frame"
         if backend == "hls":
             if params.get("mem_mode") not in ("internal_embedded", "internal_decoupled"):
                 return "hls mem_mode must be internal_embedded or internal_decoupled"
             if params.get("ram_style") not in ("distributed", "block", "ultra"):
                 return "hls ram_style must be distributed, block or ultra"
+            if params["ram_style"] == "ultra" and not is_versal(resolve_part(params)):
+                # Thresholding_hls: URAM cannot be initialized from the bitfile (embedded)
+                # and needs runtime-writeable thresholds (decoupled) outside Versal
+                return "URAM thresholds need a Versal part or runtime-writeable thresholds"
+            if params["mem_mode"] == "internal_decoupled":
+                # all thresholds of a PE's steps form one word of the threshold stream
+                steps = 2 ** odt.bitwidth() - 1
+                if pe * steps * idt.bitwidth() > MAX_ALLOWED_AP_INT_W:
+                    return f"HLS threshold stream too wide (> {MAX_ALLOWED_AP_INT_W} bits)"
             return check_foreign(
                 params, ["depth_trigger_bram", "depth_trigger_uram"], "hls has no depth triggers"
             )
@@ -92,8 +111,9 @@ class bench_thresholding(MicrobenchDUT):
             "mem_mode": Conditional(
                 "backend", {"rtl": Fixed(None)}, Choice(["internal_embedded", "internal_decoupled"])
             ),
+            # no "ultra": URAM thresholds need Versal or runtime-writeable thresholds
             "ram_style": Conditional(
-                "backend", {"rtl": Fixed(None)}, Choice(["distributed", "block", "ultra"])
+                "backend", {"rtl": Fixed(None)}, Choice(["distributed", "block"])
             ),
             "depth_trigger_bram": Conditional(
                 "backend", {"hls": Fixed(0)}, Choice([0, 32, 64, 128, 256, 512, 1024])

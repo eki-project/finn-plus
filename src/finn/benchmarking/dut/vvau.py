@@ -16,6 +16,8 @@ from typing import Optional
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
     check_foreign,
+    frame_cycles_ok,
+    output_words_ok,
     resolve_part,
     stream_width_ok,
 )
@@ -60,6 +62,14 @@ class bench_vvau(MicrobenchDUT):
             return "mem_mode must be internal_embedded or internal_decoupled"
         if params.get("ram_style") not in ("auto", "block", "distributed", "ultra"):
             return "invalid ram_style"
+        if params["ram_style"] == "ultra" and not is_versal(resolve_part(params)):
+            # same memstream assertion as the MVAU: URAM weights need runtime-writeable weights
+            return "URAM weights need runtime_writeable_weights on non-Versal parts"
+        dim_h, dim_w = (int(x) for x in params["dim"])
+        if not frame_cycles_ok(dim_h * dim_w * (ch // pe) * (k_h * k_w // simd)):
+            return "too many cycles per frame"
+        if act is not None and not output_words_ok(pe, DataType[act].bitwidth()):
+            return "output word not sliceable by the instrumentation shell"
         if backend == "hls":
             if params.get("resType") not in ("lut", "dsp"):
                 return "hls resType must be lut or dsp"
@@ -99,7 +109,8 @@ class bench_vvau(MicrobenchDUT):
             "pe": Divisor("ch", pow2=True, hi=64),
             "simd": Choice([1, 3, 9]),
             "mem_mode": Choice(["internal_embedded", "internal_decoupled"]),
-            "ram_style": Choice(["auto", "block", "distributed", "ultra"]),
+            # no "ultra": URAM weights need runtime-writeable weights on the CI boards
+            "ram_style": Choice(["auto", "block", "distributed"]),
             "resType": Conditional("backend", {"rtl": Fixed(None)}, Choice(["lut", "dsp"])),
         }
 

@@ -9,6 +9,8 @@ from typing import Optional
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
+    frame_cycles_ok,
+    output_words_ok,
     specialize_single_node,
     stream_width_ok,
 )
@@ -44,6 +46,12 @@ class bench_fmpadding(MicrobenchDUT):
             return "idim must be >= 1"
         if not stream_width_ok(simd * idt.bitwidth()):
             return "stream width exceeds the instrumentation limit"
+        if not output_words_ok(simd, idt.bitwidth()):
+            return "output word not sliceable by the instrumentation shell"
+        odim_h = idim_h + padding[0] + padding[2]
+        odim_w = idim_w + padding[1] + padding[3]
+        if not frame_cycles_ok(odim_h * odim_w * (ch // simd)):
+            return "too many cycles per frame"
         return None
 
     @classmethod

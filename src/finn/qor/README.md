@@ -100,7 +100,18 @@ Versal-only backends or two-stream elementwise operations.
   `OperatorFeatureSpec.dut_info_keys`). `collect.py` uses `dut_node_name` to pick the DUT's
   hierarchy level from `post_synth_resources.json` and logs the resources of any other
   (unexpectedly inserted) nodes under `synth/resources_extra/`.
-- Stream widths are limited to 1024 bits by the instrumentation shell.
+- Stream widths are limited to 1024 bits by the instrumentation shell, and the padded output
+  word must be a multiple of the number of elements it carries (its checksum slices words
+  into equal subwords), see `output_words_ok`.
+- Frames are limited to `MAX_FRAME_CYCLES` (2^22) expected cycles: the power estimation and
+  rtlsim simulate whole frames, and resources/power do not depend on the loop bound.
+- URAM memories (`ram_style: ultra`) of MVAU, VVAU, Thresholding_hls and the elementwise
+  operators need Versal parts or runtime-writeable weights, which the microbenchmarks do not
+  exercise; `validate()` rejects them on the CI boards. The FIFO (`ultra`) and the RTL
+  thresholding (`depth_trigger_uram`) provide the URAM datapoints instead.
+- `validate()` encodes every operator rule found so far; the DUT export step additionally
+  checks the generated node (HLS integer width, output word layout, frame length) and
+  marks a run as skipped instead of failing the build.
 
 ## Model zoo
 

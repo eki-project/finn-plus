@@ -29,7 +29,13 @@ from qonnx.util.basic import (
 )
 from typing import Optional
 
-from finn.benchmarking.dut.microbench_base import MicrobenchDUT, resolve_part, stream_width_ok
+from finn.benchmarking.dut.microbench_base import (
+    MicrobenchDUT,
+    frame_cycles_ok,
+    output_words_ok,
+    resolve_part,
+    stream_width_ok,
+)
 from finn.benchmarking.param_space import Choice, Conditional, Divisor, Fixed, ParamSpace, Pow2Range
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
@@ -133,6 +139,9 @@ class bench_mvau(MicrobenchDUT):
                 return f"MVAU_rtl supports 2..{max_act} bit inputs on {dsp_block}"
             if not 2 <= wdt.bitwidth() <= max_weight:
                 return f"MVAU_rtl supports 2..{max_weight} bit weights on {dsp_block}"
+        if backend == "hls" and (idt == DataType["BINARY"] or wdt == DataType["BINARY"]):
+            # MVAU_hls raises "True binary (non-bipolar) inputs not yet supported"
+            return "MVAU_hls does not support BINARY inputs or weights (use BIPOLAR)"
         if backend == "hls" and simd * pe * wdt.bitwidth() > MAX_ALLOWED_AP_INT_W:
             # the HLS MVAU packs all PE weights of a tile into one ap_uint in every mem_mode
             # (MVAU_hls.get_ap_int_max_w), limited by AP_INT_MAX_W
@@ -158,6 +167,11 @@ class bench_mvau(MicrobenchDUT):
         odt_bits = DataType[act].bitwidth() if act is not None else 32
         if not stream_width_ok(idt.bitwidth() * simd) or not stream_width_ok(odt_bits * pe):
             return "stream width exceeds the instrumentation limit"
+        if act is not None and not output_words_ok(pe, odt_bits):
+            return "output word not sliceable by the instrumentation shell"
+        n_vectors = math.prod(int(x) for x in params["nhw"])
+        if not frame_cycles_ok(n_vectors * (mw // simd) * (mh // pe)):
+            return "too many cycles per frame"
         return None
 
     @classmethod
@@ -169,7 +183,6 @@ class bench_mvau(MicrobenchDUT):
                 {"rtl": Choice(["INT4", "UINT4", "INT5", "INT6", "INT8", "UINT8"])},
                 Choice(
                     [
-                        "BINARY",
                         "BIPOLAR",
                         "INT2",
                         "UINT2",
@@ -185,7 +198,7 @@ class bench_mvau(MicrobenchDUT):
             "wdt": Conditional(
                 "backend",
                 {"rtl": Choice(["INT4", "INT5", "INT6", "INT8"])},
-                Choice(["BINARY", "BIPOLAR", "INT2", "INT3", "INT4", "INT6", "INT8"]),
+                Choice(["BIPOLAR", "INT2", "INT3", "INT4", "INT6", "INT8"]),
             ),
             "act": Conditional(
                 "backend",

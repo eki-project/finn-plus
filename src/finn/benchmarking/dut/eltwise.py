@@ -1,5 +1,6 @@
 """Elementwise binary operation (Add/Mul with a constant operand) microbenchmark DUT."""
 
+import math
 import numpy as np
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
@@ -11,6 +12,7 @@ from typing import Optional
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
+    frame_cycles_ok,
     resolve_part,
     specialize_single_node,
     stream_width_ok,
@@ -80,6 +82,11 @@ class bench_eltwise(MicrobenchDUT):
             return "mem_mode must be internal_embedded or internal_decoupled"
         if params.get("ram_style") not in ("auto", "block", "distributed", "ultra"):
             return "invalid ram_style"
+        if params["ram_style"] == "ultra" and not is_versal(resolve_part(params)):
+            # ElementwiseBinaryOperation_hls rejects URAM constants on non-Versal targets
+            return "URAM constants are not supported on non-Versal parts"
+        if not frame_cycles_ok(math.prod(shape) // pe):
+            return "too many cycles per frame"
         if backend == "rtl":
             if not is_versal(resolve_part(params)):
                 return "Elementwise_rtl requires a Versal part"
@@ -125,7 +132,8 @@ class bench_eltwise(MicrobenchDUT):
                 {"rtl": Fixed("internal_decoupled")},
                 Choice(["internal_embedded", "internal_decoupled"]),
             ),
-            "ram_style": Choice(["auto", "block", "distributed", "ultra"]),
+            # no "ultra": URAM constants are rejected on the CI boards
+            "ram_style": Choice(["auto", "block", "distributed"]),
         }
 
     @classmethod

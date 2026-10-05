@@ -72,6 +72,30 @@ def stream_width_ok(bits: int) -> bool:
     return 0 < bits <= MAX_STREAM_WIDTH
 
 
+#: Upper bound on the expected cycles per frame of a DUT. The post-implementation power
+#: simulation and the rtlsim run whole frames, so a 224x224x512 input (12.8 M cycles) kept
+#: a single build busy for 18 hours; resources and power do not depend on the loop bound.
+#: 2^22 still admits the fully folded 64x64 MVAU of the smoke config (1024 vectors).
+MAX_FRAME_CYCLES = 1 << 22
+
+
+def frame_cycles_ok(cycles: int) -> bool:
+    """Whether a frame of ``cycles`` (expected cycles per frame) is short enough to build."""
+    return 0 < cycles <= MAX_FRAME_CYCLES
+
+
+def output_words_ok(elems: int, bits: int) -> bool:
+    """The instrumentation shell's checksum slices every output word, padded to a byte
+    multiple as on the AXI stream, into ``elems`` equal subwords
+    (``static_assert(T::width % K == 0)`` in instrumentation.template.cpp). So the padded
+    width of the output stream must be a multiple of the number of elements it carries."""
+    width = elems * bits
+    if elems < 1 or width < 1:
+        return False
+    padded = -(-width // 8) * 8
+    return padded % elems == 0
+
+
 def check_foreign(params: dict, keys: list[str], reason: str) -> Optional[str]:
     """Reject parameter sets where inapplicable keys are set (not None/0)."""
     for key in keys:
@@ -157,14 +181,28 @@ class MicrobenchDUT(bench):
             print(f"Node specialized to {node.op_type} instead of {self.OP_TYPES}, skipping")
             return "skipped"
 
+        inst = getHWCustomOp(node)
         if is_hls_node(node):
             # HLS modules are limited by AP_INT_MAX_W; the backends raise if a stream or
             # weight tile exceeds it, which validate() should have caught (safety net)
             try:
-                getHWCustomOp(node).get_ap_int_max_w()
+                inst.get_ap_int_max_w()
             except FINNInternalError as e:
                 print(f"Configuration exceeds the HLS integer width limit, skipping: {e}")
                 return "skipped"
+        # Safety nets for what validate() approximates from the parameters: the exact
+        # output word layout the instrumentation shell will see and the frame length.
+        out_elems = int(inst.get_folded_output_shape()[-1])
+        if inst.get_outstream_width_padded() % out_elems != 0:
+            print(
+                f"Padded output width {inst.get_outstream_width_padded()} is no multiple of "
+                f"the {out_elems} output elements per word (instrumentation shell), skipping"
+            )
+            return "skipped"
+        cycles = int(inst.get_exp_cycles())
+        if cycles > MAX_FRAME_CYCLES:
+            print(f"Expected {cycles} cycles per frame (> {MAX_FRAME_CYCLES}), skipping")
+            return "skipped"
 
         info["dut_node_name"] = node.name
         info["dut_op_type"] = node.op_type

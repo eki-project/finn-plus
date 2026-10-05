@@ -8,6 +8,8 @@ from typing import Optional
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
+    frame_cycles_ok,
+    output_words_ok,
     specialize_single_node,
     stream_width_ok,
 )
@@ -43,6 +45,10 @@ class bench_dwc(MicrobenchDUT):
         in_width, out_width = in_elems * bits, out_elems * bits
         if not stream_width_ok(in_width) or not stream_width_ok(out_width):
             return "stream width exceeds the instrumentation limit"
+        if not output_words_ok(out_elems, bits):
+            return "output word not sliceable by the instrumentation shell"
+        if not frame_cycles_ok(n * (ch // min(in_elems, out_elems))):
+            return "too many cycles per frame"
         return None
 
     @classmethod

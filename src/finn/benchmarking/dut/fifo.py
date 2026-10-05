@@ -15,12 +15,17 @@ from typing import Optional
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
+    output_words_ok,
     specialize_single_node,
     stream_width_ok,
 )
 from finn.benchmarking.param_space import Choice, Fixed, ParamSpace
 
 RAM_STYLES = ("auto", "srl", "block", "distributed", "ultra")
+#: Largest shift-register / LUTRAM FIFO (bits) that is still synthesizable and sensible
+MAX_LUT_FIFO_BITS = 1 << 20
+#: Largest block/ultra RAM FIFO (bits); the RFSoC 2x2 has 38 Mbit BRAM and 22.5 Mbit URAM
+MAX_RAM_FIFO_BITS = 1 << 23
 
 
 class bench_fifo(MicrobenchDUT):
@@ -46,6 +51,20 @@ class bench_fifo(MicrobenchDUT):
             return "stream width exceeds the instrumentation limit"
         if params.get("ram_style") not in RAM_STYLES:
             return f"ram_style must be one of {RAM_STYLES}"
+        if not output_words_ok(elems, bits):
+            return "output word not sliceable by the instrumentation shell"
+        # capacity of the style fifo.sv will elaborate: shift registers and LUTRAM are
+        # register arrays (Vivado refuses to synthesize huge ones, "size of variable ... is
+        # too large", and they eat LUTs), block/ultra RAM is bounded by the device
+        from finn.util.resource_models import _resolve
+
+        padded = -(-elems * bits // 8) * 8
+        capacity = padded * depth
+        style = _resolve(depth, padded, params["ram_style"])
+        if style in ("srl", "distributed") and capacity > MAX_LUT_FIFO_BITS:
+            return f"{style} FIFO larger than {MAX_LUT_FIFO_BITS} bits"
+        if capacity > MAX_RAM_FIFO_BITS:
+            return f"FIFO larger than {MAX_RAM_FIFO_BITS} bits"
         return None
 
     @classmethod

@@ -7,7 +7,13 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
 from typing import Optional
 
-from finn.benchmarking.dut.microbench_base import MicrobenchDUT, check_foreign, stream_width_ok
+from finn.benchmarking.dut.microbench_base import (
+    MicrobenchDUT,
+    check_foreign,
+    frame_cycles_ok,
+    output_words_ok,
+    stream_width_ok,
+)
 from finn.benchmarking.param_space import Choice, Conditional, Divisor, Fixed, ParamSpace, Pow2Range
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 
@@ -66,6 +72,11 @@ class bench_pool(MicrobenchDUT):
                 return "QuantAvgPool requires a square kernel"
         if not stream_width_ok(pe * idt.bitwidth()) or not stream_width_ok(pe * odt.bitwidth()):
             return "stream width exceeds the instrumentation limit"
+        if not output_words_ok(pe, odt.bitwidth()):
+            return "output word not sliceable by the instrumentation shell"
+        odim_h, odim_w = (int(x) for x in params["odim"])
+        if not frame_cycles_ok(odim_h * odim_w * (ch // pe) * k_h * k_w):
+            return "too many cycles per frame"
         return None
 
     @classmethod

@@ -10,6 +10,8 @@ from typing import Optional
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
+    frame_cycles_ok,
+    output_words_ok,
     specialize_single_node,
     stream_width_ok,
 )
@@ -67,6 +69,15 @@ class bench_swg(MicrobenchDUT):
         out_width = in_width * k_h * k_w if parallel_window else in_width
         if not stream_width_ok(in_width) or not stream_width_ok(out_width):
             return "stream width exceeds the instrumentation limit"
+        out_elems = simd * k_h * k_w if parallel_window else simd
+        if not output_words_ok(out_elems, idt.bitwidth()):
+            return "output word not sliceable by the instrumentation shell"
+        ofm_h = (ifm_h - k_dil_h) // stride_h + 1
+        ofm_w = (ifm_w - k_dil_w) // stride_w + 1
+        in_beats = ifm_h * ifm_w * (ifm_ch // simd)
+        out_beats = ofm_h * ofm_w * (ifm_ch // simd) * (1 if parallel_window else k_h * k_w)
+        if not frame_cycles_ok(max(in_beats, out_beats)):
+            return "too many cycles per frame"
         return None
 
     @classmethod
