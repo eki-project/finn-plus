@@ -168,6 +168,10 @@ class _Simulator:
         ]
         self.freezer = [model.chains[n].freezer for n in chain_names]
         self.until_empty = [model.chains[n].freeze_until_empty for n in chain_names]
+        self.freeze_threshold = [model.chains[n].freeze_threshold for n in chain_names]
+        self.freeze_delay = [model.chains[n].freeze_delay for n in chain_names]
+        self.thaw_delay = [model.chains[n].thaw_delay for n in chain_names]
+        self.freeze_lead = [model.chains[n].freeze_lead for n in chain_names]
         self.ngroups = len(groups)
         self.start = [model.chains[n].start for n in chain_names]
         if not self.sinks:
@@ -227,11 +231,43 @@ class _Simulator:
         lf, lb, depth, gate = self.lf, self.lb, self.depth, self.gate
         src_direct = self.src_direct
         group, freezer, until_empty = self.group, self.freezer, self.until_empty
+        freeze_threshold, freeze_delay, thaw_delay, freeze_lead = (
+            self.freeze_threshold,
+            self.freeze_delay,
+            self.thaw_delay,
+            self.freeze_lead,
+        )
         # freeze bookkeeping: number of freezer chains currently blocking each group, the
-        # chains that count, and the pipeline chains waiting for the group to thaw
+        # chains that count, the pipeline chains waiting for the group to thaw, the cycle from
+        # which a freeze takes effect and the cycle until which a released group still rests
         freeze_count = [0] * self.ngroups
         freezing = [False] * nc
         group_waiters: list[list[int]] = [[] for _ in range(self.ngroups)]
+        inf = 1 << 62
+        freeze_from = [inf] * self.ngroups
+        thaw_until = [-inf] * self.ngroups
+
+        def arm_freezer(c: int, i: int, t: int, grp: int) -> int | None:
+            """Freeze the group of blocked freezer ``c`` once ``freeze_threshold`` tokens are
+            readable on its input edges; else return the cycle to come back at (the caller
+            queues exactly one wake-up per evaluation: duplicate heap entries of a chain
+            multiply when each of them queues two) or ``None`` to wait for the next token."""
+            th = freeze_threshold[c]
+            if th > 1:
+                for e in rd[c][i]:
+                    q = wq[e]
+                    if len(q) < th:
+                        dw[e] = c
+                        return None
+                    tr = q[th - 1] + lf[e] - freeze_lead[c]
+                    if tr > t:
+                        return tr
+            freezing[c] = True
+            freeze_count[grp] += 1
+            ff = t + freeze_delay[c]
+            if ff < freeze_from[grp]:
+                freeze_from[grp] = ff
+            return None
 
         # ---- mutable state
         idx = [0] * nc  # next event index within the frame
@@ -323,11 +359,16 @@ class _Simulator:
                 heappush(heap, (tmin, prio[c], c))
                 continue
             grp = group[c]
-            if grp >= 0 and freeze_count[grp] > 0 and not freezer[c]:
-                # the pipeline is frozen: retry when the last freezing port has handed on its
-                # token (the ports themselves sit outside the pipeline and are never frozen)
-                group_waiters[grp].append(c)
-                continue
+            if grp >= 0 and not freezer[c]:
+                if freeze_count[grp] > 0 and t >= freeze_from[grp]:
+                    # the pipeline is frozen: retry when the last freezing port has handed on
+                    # its token (the ports themselves sit outside the pipeline and are never
+                    # frozen)
+                    group_waiters[grp].append(c)
+                    continue
+                if t < thaw_until[grp]:
+                    heappush(heap, (thaw_until[grp], prio[c], c))
+                    continue
             tneed = t
             blocked = False
             # ---- data constraints
@@ -342,6 +383,7 @@ class _Simulator:
             if blocked:
                 continue
             data_ready = tneed == t
+            t_data = tneed
             # ---- space constraints
             for e in wr[c][i]:
                 d = depth[e]
@@ -356,9 +398,12 @@ class _Simulator:
                         if ts > tneed:
                             tneed = ts
             if blocked:
-                if data_ready and freezer[c] and not freezing[c]:
-                    freezing[c] = True
-                    freeze_count[grp] += 1
+                if freezer[c] and not freezing[c]:
+                    # a blocked port freezes once its data is ready: arm now or come back
+                    # when the token becomes readable
+                    wake = arm_freezer(c, i, t, grp) if data_ready else t_data
+                    if wake is not None and wake > t:
+                        heappush(heap, (wake, prio[c], c))
                 continue
             # ---- index-mapped arcs
             for s, si, q, dly in arcs[c][i]:
@@ -390,20 +435,35 @@ class _Simulator:
                 if g is not None:
                     tneed = g.next_true(tneed)
             if tneed > t:
-                if data_ready and freezer[c] and not freezing[c]:
-                    freezing[c] = True
-                    freeze_count[grp] += 1
-                heappush(heap, (tneed, prio[c], c))
+                wake = tneed
+                if freezer[c] and not freezing[c]:
+                    w = arm_freezer(c, i, t, grp) if data_ready else t_data
+                    if w is not None and w < wake:
+                        wake = w
+                heappush(heap, (wake, prio[c], c))
                 continue
             # a freeze-until-empty freezer keeps the group frozen while more than one token
-            # is still queued on its input edges (after this one is taken)
-            if freezing[c] and (not until_empty[c] or all(wc[e] - rc[e] <= 2 for e in rd[c][i])):
+            # that has reached its queue is left after this one: the queue is checked in the
+            # cycle after the handshake, so tokens reaching it by then count (within
+            # freeze_lead + 1 cycles of being readable); results still in the core pipeline
+            # do not
+            if freezing[c] and (
+                not until_empty[c]
+                or all(
+                    sum(1 for tw in wq[e] if tw + lf[e] - freeze_lead[c] - 1 <= t) <= 2
+                    for e in rd[c][i]
+                )
+            ):
                 freezing[c] = False
                 freeze_count[grp] -= 1
                 if freeze_count[grp] == 0:
+                    freeze_from[grp] = inf
+                    ta = t + thaw_delay[c]
+                    if ta > thaw_until[grp]:
+                        thaw_until[grp] = ta
                     gw = group_waiters[grp]
                     for w in gw:
-                        heappush(heap, (t, prio[w], w))
+                        heappush(heap, (ta, prio[w], w))
                     gw.clear()
             # ---- fire at t
             for e in rd[c][i]:

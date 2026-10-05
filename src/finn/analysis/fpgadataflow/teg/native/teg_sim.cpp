@@ -143,6 +143,10 @@ struct Model {
     const i64* group;
     const i64* freezer;
     const i64* until_empty;
+    const i64* freeze_threshold;
+    const i64* freeze_delay;
+    const i64* thaw_delay;
+    const i64* freeze_lead;
     const i64* start;
     i64 ngroups;
     // edges
@@ -180,7 +184,9 @@ i64 teg_sim_run(
     i64 nc, const i64* L, const i64* ev_off, const i64* gap, const i64* rd_off, const i64* rd_val,
     const i64* wr_off, const i64* wr_val, const i64* arc_off, const i64* arc_val, const i64* kind,
     const i64* pat, const i64* period, const i64* keep_hist, const i64* hist_window,
-    const i64* group, const i64* freezer, const i64* until_empty, const i64* start, i64 ngroups,
+    const i64* group, const i64* freezer, const i64* until_empty, const i64* freeze_threshold,
+    const i64* freeze_delay, const i64* thaw_delay, const i64* freeze_lead, const i64* start,
+    i64 ngroups,
     i64 ne, const i64* lf, const i64* lb, const i64* depth, const i64* init_tokens,
     const i64* sd_off, const i64* sd_val, const i64* gate,
     i64 npat, const i64* pat_kind, const double* pat_p, const i64* pat_i,
@@ -191,7 +197,10 @@ i64 teg_sim_run(
     m.wr_off = wr_off; m.wr_val = wr_val; m.arc_off = arc_off; m.arc_val = arc_val;
     m.kind = kind; m.pat = pat; m.period = period; m.keep_hist = keep_hist;
     m.hist_window = hist_window; m.group = group; m.freezer = freezer;
-    m.until_empty = until_empty; m.start = start; m.ngroups = ngroups;
+    m.until_empty = until_empty; m.freeze_threshold = freeze_threshold;
+    m.freeze_delay = freeze_delay; m.thaw_delay = thaw_delay; m.freeze_lead = freeze_lead;
+    m.start = start;
+    m.ngroups = ngroups;
     m.ne = ne; m.lf = lf; m.lb = lb; m.depth = depth; m.init_tokens = init_tokens;
     m.sd_off = sd_off; m.sd_val = sd_val; m.gate = gate;
     m.patterns.resize(npat);
@@ -211,6 +220,9 @@ i64 teg_sim_run(
     std::vector<i64> freeze_count(ngroups > 0 ? ngroups : 1, 0);
     std::vector<char> freezing(nc, 0);
     std::vector<std::vector<i64>> group_waiters(ngroups > 0 ? ngroups : 1);
+    const i64 INF = i64(1) << 62;
+    std::vector<i64> freeze_from(ngroups > 0 ? ngroups : 1, INF);
+    std::vector<i64> thaw_until(ngroups > 0 ? ngroups : 1, -INF);
     std::vector<i64> idx(nc, 0), frame(nc, 0), last_t(nc, 0), cnt(nc, 0), hist_base(nc, 0);
     for (i64 c = 0; c < nc; ++c) {
         last_t[c] = L[c] > 0 ? start[c] - gap[ev_off[c]] : 0;
@@ -297,10 +309,39 @@ i64 teg_sim_run(
             continue;
         }
         i64 grp = group[c];
-        if (grp >= 0 && freeze_count[grp] > 0 && !freezer[c]) {
-            group_waiters[grp].push_back(c);
-            continue;
+        if (grp >= 0 && !freezer[c]) {
+            if (freeze_count[grp] > 0 && t >= freeze_from[grp]) {
+                group_waiters[grp].push_back(c);
+                continue;
+            }
+            if (t < thaw_until[grp]) {
+                heap.push(Item{thaw_until[grp], prio[c], c});
+                continue;
+            }
         }
+        // a blocked freezer with its data ready freezes its group once freeze_threshold
+        // tokens are readable on its input edges; else it returns the cycle to come back at
+        // (the caller queues exactly one wake-up per evaluation: duplicate heap entries of a
+        // chain multiply when each of them queues two) or waits for the next token (-1)
+        auto arm_freezer = [&]() -> i64 {
+            i64 th = freeze_threshold[c];
+            if (th > 1) {
+                for (i64 s = rd_off[g]; s < rd_off[g + 1]; ++s) {
+                    i64 e = rd_val[s];
+                    if ((i64)wq[e].size() < th) {
+                        dw[e] = c;
+                        return -1;
+                    }
+                    i64 tr = wq[e][th - 1] + lf[e] - freeze_lead[c];
+                    if (tr > t) return tr;
+                }
+            }
+            freezing[c] = 1;
+            freeze_count[grp] += 1;
+            i64 ff = t + freeze_delay[c];
+            if (ff < freeze_from[grp]) freeze_from[grp] = ff;
+            return -1;
+        };
         i64 tneed = t;
         bool blocked = false;
         for (i64 s = rd_off[g]; s < rd_off[g + 1]; ++s) {
@@ -315,6 +356,7 @@ i64 teg_sim_run(
         }
         if (blocked) continue;
         bool data_ready = tneed == t;
+        i64 t_data = tneed;
         for (i64 s = wr_off[g]; s < wr_off[g + 1]; ++s) {
             i64 e = wr_val[s];
             i64 d = depth[e];
@@ -332,9 +374,9 @@ i64 teg_sim_run(
             }
         }
         if (blocked) {
-            if (data_ready && freezer[c] && !freezing[c]) {
-                freezing[c] = 1;
-                freeze_count[grp] += 1;
+            if (freezer[c] && !freezing[c]) {
+                i64 wake = data_ready ? arm_freezer() : t_data;
+                if (wake > t) heap.push(Item{wake, prio[c], c});
             }
             continue;
         }
@@ -364,19 +406,28 @@ i64 teg_sim_run(
             if (gate[e] >= 0) tneed = pat_next_true(m.patterns[gate[e]], tneed);
         }
         if (tneed > t) {
-            if (data_ready && freezer[c] && !freezing[c]) {
-                freezing[c] = 1;
-                freeze_count[grp] += 1;
+            i64 wake = tneed;
+            if (freezer[c] && !freezing[c]) {
+                i64 w = data_ready ? arm_freezer() : t_data;
+                if (w >= 0 && w < wake) wake = w;
             }
-            heap.push(Item{tneed, prio[c], c});
+            heap.push(Item{wake, prio[c], c});
             continue;
         }
         if (freezing[c]) {
             bool release = true;
             if (until_empty[c]) {
+                // tokens that have reached the queue by the cycle after the handshake
+                // (within freeze_lead + 1 cycles of being readable); results still in the
+                // core pipeline do not count
                 for (i64 s = rd_off[g]; s < rd_off[g + 1]; ++s) {
                     i64 e = rd_val[s];
-                    if (wc[e] - rc[e] > 2) {
+                    i64 queued = 0;
+                    for (i64 tw : wq[e]) {
+                        if (tw + lf[e] - freeze_lead[c] - 1 <= t) ++queued;
+                        if (queued > 2) break;
+                    }
+                    if (queued > 2) {
                         release = false;
                         break;
                     }
@@ -386,8 +437,11 @@ i64 teg_sim_run(
                 freezing[c] = 0;
                 freeze_count[grp] -= 1;
                 if (freeze_count[grp] == 0) {
+                    freeze_from[grp] = INF;
+                    i64 ta = t + thaw_delay[c];
+                    if (ta > thaw_until[grp]) thaw_until[grp] = ta;
                     std::vector<i64>& gw = group_waiters[grp];
-                    for (i64 w : gw) heap.push(Item{t, prio[w], w});
+                    for (i64 w : gw) heap.push(Item{ta, prio[w], w});
                     gw.clear();
                 }
             }

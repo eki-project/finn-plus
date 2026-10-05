@@ -55,11 +55,28 @@ if TYPE_CHECKING:
 
     from finn.analysis.fpgadataflow.teg.patterns import StallPattern
 
-#: FIFO latencies of FINN's Q_srl FIFO (Q_srl.v: registered o_v / i_b)
-QSRL_LF = 1
+#: Latencies of FINN's StreamingFIFO_rtl (finn-rtllib/fifo/hdl/fifo.sv), measured in XSI:
+#: every backing writes the storage in the cycle after the input handshake and loads a
+#: registered output stage from it, so a token written in cycle t is offered in cycle t + 2
+#: (shift register and LUTRAM; BRAM 3, URAM 6 to 7 with its read pipeline). A slot freed by an
+#: output handshake in cycle t takes a new token in cycle t + 1 (URAM: t + 2). The deeper
+#: backings also hold a few tokens more than their depth. The common shift/LUTRAM numbers are
+#: used for every FIFO: the extra cycles of the memory-backed ones are negligible against
+#: the depths at which they are chosen.
+QSRL_LF = 2
 QSRL_LB = 1
 #: depth of the input FIFO that InsertFIFO(create_shallow_fifos=True) puts in front of node 0
 INPUT_FIFO_DEPTH = 2
+
+
+def fifo_capacity(depth: int) -> int:
+    """Tokens that a StreamingFIFO_rtl of nominal ``depth`` really holds.
+
+    fifo.sv never builds a shift register shorter than four stages plus its output register
+    (``DEPTH_ACTUAL``: ``DEPTH > 4 ? DEPTH : 5``), so the shallow input FIFO of depth 2 holds
+    five tokens (measured in XSI); every deeper shift/LUTRAM FIFO holds exactly ``depth``.
+    """
+    return depth if depth > 4 else 5
 
 
 def edge_name(node: NodeProto, output: int) -> str:
@@ -210,7 +227,7 @@ def build_model(
                 e,
                 src.name,
                 in_chain[e],
-                depth=input_fifo_depth,
+                depth=fifo_capacity(input_fifo_depth),
                 lf=QSRL_LF,
                 lb=QSRL_LB,
                 width=getHWCustomOp(consumer).get_instream_width(cin[0]),

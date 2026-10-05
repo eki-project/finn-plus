@@ -56,7 +56,6 @@ from finn.transformation.fpgadataflow.fifo_depth_search import (
     MinimizationOrder,
     effective_capacity,
     minimize_fifo_depth,
-    needs_minimization,
     round_up_to_full_bram_block,
     safe_bram_starting_depth,
 )
@@ -238,6 +237,9 @@ def minimize_depths(
     max_cycles = math.ceil(sim_cycles * 1.05) + 10 * len(ext)
 
     def make_oracle(current: dict[str, int], edge: str) -> Callable[[int], tuple[bool, bool]]:
+        """Oracle for ``minimize_fifo_depth``: does ``edge`` at a given depth keep the target
+        interval (and does the simulation finish) with all other depths as in ``current``?"""
+
         def test_depth(depth: int) -> tuple[bool, bool]:
             nonlocal simulations
             trial = dict(current)
@@ -269,7 +271,15 @@ def minimize_depths(
         edge_order = order_edges(model, order, widths)
         log.info(f"abstract_sim: minimising in order {order.name}")
         for n, edge in enumerate(edge_order):
-            if not needs_minimization(current[edge], widths[edge], max_qsrl_depth):
+            # The distributed simulation skips FIFOs that already use the minimum number of
+            # BRAM blocks for their width (needs_minimization): its starting depths are the
+            # occupancies of a throttled run, so a deep start is a strong hint. Our starting
+            # depths are the peaks of phase 2, whose sources emit every frame as a burst at
+            # the bottleneck interval; a consumer slower than that burst piles up a whole
+            # frame behind a FIFO that runs fine at depth 32 once the real producer paces it.
+            # The LUTRAM depths (32 and 256, the first two tests of minimize_fifo_depth) must
+            # therefore always be tried; only trivially small FIFOs are skipped.
+            if current[edge] <= 32:
                 iterations[edge] = 0
                 times[edge] = 0.0
                 if progress is not None:

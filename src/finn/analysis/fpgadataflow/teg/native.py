@@ -76,10 +76,12 @@ _LIB_ERROR: str | None = None
 
 # ----------------------------------------------------------------------------- compilation
 def _compiler() -> str | None:
+    """The C++ compiler to build the simulator with, or None."""
     return shutil.which("g++") or shutil.which("clang++")
 
 
 def _cache_dir() -> Path:
+    """Directory of the compiled simulator library (under the FINN build directory)."""
     try:
         from finn.util.settings import get_settings
 
@@ -90,12 +92,14 @@ def _cache_dir() -> Path:
 
 
 def _library_path() -> Path:
+    """Path of the compiled library, keyed by the source and compiler."""
     cxx = _compiler()
     tag = hashlib.sha256(_SOURCE.read_bytes() + (cxx or "").encode()).hexdigest()[:16]
     return _cache_dir() / f"teg_sim_{tag}.so"
 
 
 def _compile(so: Path) -> None:
+    """Compile the simulator source into the shared library ``so``."""
     cxx = _compiler()
     if cxx is None:
         raise FINNUserError("No C++ compiler (g++/clang++) found for the native TEG simulator")
@@ -126,7 +130,7 @@ def library() -> ctypes.CDLL:
         lib.teg_sim_run.restype = c_int64
         lib.teg_sim_run.argtypes = (
             [c_int64]
-            + [p] * 18
+            + [p] * 22
             + [c_int64]  # chains
             + [c_int64]
             + [p] * 7  # edges
@@ -191,6 +195,7 @@ def _csr_from_tuples(seqs: list[tuple[str, ...]], eid: dict[str, int]) -> tuple[
 
 
 def _flatten(model: TEGModel) -> _Flat:
+    """Translate a model into the flat integer arrays the C++ simulator consumes."""
     chain_names = list(model.chains)
     edge_names = list(model.edges)
     cid = {n: i for i, n in enumerate(chain_names)}
@@ -227,6 +232,7 @@ def _flatten(model: TEGModel) -> _Flat:
     pat_index: dict[str, int] = {}
 
     def pat_id(p: StallPattern | None) -> int:
+        """Index of a pattern in the pattern table (-1 for None)."""
         if p is None:
             return -1
         key = repr(p)
@@ -249,6 +255,10 @@ def _flatten(model: TEGModel) -> _Flat:
     )
     freezer = np.array([c.freezer for c in chains], dtype=np.int64)
     until_empty = np.array([c.freeze_until_empty for c in chains], dtype=np.int64)
+    freeze_threshold = np.array([c.freeze_threshold for c in chains], dtype=np.int64)
+    freeze_delay = np.array([c.freeze_delay for c in chains], dtype=np.int64)
+    thaw_delay = np.array([c.thaw_delay for c in chains], dtype=np.int64)
+    freeze_lead = np.array([c.freeze_lead for c in chains], dtype=np.int64)
     start = np.array([c.start for c in chains], dtype=np.int64)
     # edges
     edges = [model.edges[n] for n in edge_names]
@@ -300,6 +310,10 @@ def _flatten(model: TEGModel) -> _Flat:
         "group": group,
         "freezer": freezer,
         "until_empty": until_empty,
+        "freeze_threshold": freeze_threshold,
+        "freeze_delay": freeze_delay,
+        "thaw_delay": thaw_delay,
+        "freeze_lead": freeze_lead,
         "start": start,
         "lf": lf,
         "lb": lb,
@@ -320,7 +334,18 @@ def _signature(model: TEGModel) -> tuple:
     and the per-chain environment parameters; depths are read per run)."""
     return (
         tuple(
-            (id(c), c.num_events, repr(c.pattern), c.period, c.start) for c in model.chains.values()
+            (
+                id(c),
+                c.num_events,
+                repr(c.pattern),
+                c.period,
+                c.start,
+                c.freeze_threshold,
+                c.freeze_delay,
+                c.thaw_delay,
+                c.freeze_lead,
+            )
+            for c in model.chains.values()
         ),
         tuple((id(e), e.initial_tokens, e.lf, e.lb, e.direct) for e in model.edges.values()),
     )
@@ -343,6 +368,7 @@ def flatten(model: TEGModel) -> _Flat:
 
 # ----------------------------------------------------------------------------- run
 def _ptr(a: np.ndarray) -> ctypes.POINTER:  # type: ignore[type-arg]
+    """ctypes pointer to a contiguous array (a dummy element for empty arrays)."""
     if a.size == 0:
         a = np.zeros(1, dtype=a.dtype)
     return a.ctypes.data_as(POINTER(c_double if a.dtype == np.float64 else c_int64))
@@ -395,6 +421,10 @@ def run(
         "group",
         "freezer",
         "until_empty",
+        "freeze_threshold",
+        "freeze_delay",
+        "thaw_delay",
+        "freeze_lead",
         "start",
     )
     rc = lib.teg_sim_run(

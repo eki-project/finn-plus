@@ -102,7 +102,10 @@ class Chain:
 
     __slots__ = (
         "arcs",
+        "freeze_delay",
         "freeze_group",
+        "freeze_lead",
+        "freeze_threshold",
         "freeze_until_empty",
         "freezer",
         "gaps",
@@ -113,6 +116,7 @@ class Chain:
         "period",
         "reads",
         "start",
+        "thaw_delay",
         "writes",
     )
 
@@ -127,6 +131,10 @@ class Chain:
         freezer: bool = False,
         start: int = 0,
         freeze_until_empty: bool = False,
+        freeze_threshold: int = 1,
+        freeze_delay: int = 0,
+        thaw_delay: int = 0,
+        freeze_lead: int = 0,
     ) -> None:
         """Create an empty chain.
 
@@ -145,11 +153,28 @@ class Chain:
                 pipeline stage that is reached only some cycles after reset); may be negative
                 for logic that already runs in the cycle in which the reset is released.
             freeze_until_empty: a freezer that keeps its group frozen until at most one token
-                is left on its input edges (the RTL MVU output lock, ``mvu_vvu_axi.sv:380-389``).
+                is left on its input edges (the RTL MVU output lock, ``mvu_vvu_axi.sv:380-389``);
+                the queue is judged in the cycle after the releasing handshake, so tokens that
+                reach it by then (``freeze_lead + 1`` cycles before they become readable) count.
+            freeze_threshold: number of tokens that must be readable on the freezer's input
+                edges while it is blocked before the group freezes (1: the token it holds; 2:
+                a second one queued behind it, like the MVU lock that engages only on the
+                second entry into its output queue).
+            freeze_delay: cycles between the freezing condition and the group actually
+                stopping (a registered lock signal lets the pipeline run on that long).
+            thaw_delay: cycles between the freezer's releasing handshake and the group
+                running again (registered empty flag and lock release).
+            freeze_lead: a token counts towards ``freeze_threshold`` this many cycles before
+                it becomes readable (the MVU lock sees a result entering its queue one cycle
+                before the output register offers it).
         """
         self.name = name
         self.start = start
         self.freeze_until_empty = freeze_until_empty
+        self.freeze_threshold = freeze_threshold
+        self.freeze_delay = freeze_delay
+        self.thaw_delay = thaw_delay
+        self.freeze_lead = freeze_lead
         self.freeze_group = freeze_group
         self.freezer = freezer
         self.kind: ChainKind = kind
@@ -437,6 +462,10 @@ class TEGModel:
                 "freeze_group": c.freeze_group,
                 "freezer": c.freezer,
                 "freeze_until_empty": c.freeze_until_empty,
+                "freeze_threshold": c.freeze_threshold,
+                "freeze_delay": c.freeze_delay,
+                "thaw_delay": c.thaw_delay,
+                "freeze_lead": c.freeze_lead,
                 "start": c.start,
                 "gaps": c.gaps,
                 "reads": [list(r) for r in c.reads],
@@ -467,6 +496,10 @@ class TEGModel:
                 freezer=bool(cd.get("freezer", False)),
                 start=int(cd.get("start", 0)),
                 freeze_until_empty=bool(cd.get("freeze_until_empty", False)),
+                freeze_threshold=int(cd.get("freeze_threshold", 1)),
+                freeze_delay=int(cd.get("freeze_delay", 0)),
+                thaw_delay=int(cd.get("thaw_delay", 0)),
+                freeze_lead=int(cd.get("freeze_lead", 0)),
             )
             c.gaps = list(cd["gaps"])
             c.reads = [tuple(r) for r in cd["reads"]]

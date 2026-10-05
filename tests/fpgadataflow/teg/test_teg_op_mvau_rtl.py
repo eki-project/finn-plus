@@ -120,6 +120,7 @@ CONFIGS = [
     (16, 8, 4, 2, (1,), "internal_decoupled"),  # SF = 4, NF = 4
     (12, 6, 6, 2, (1, 2, 2), "internal_decoupled"),  # SF = 2, NF = 3, four vectors
     (8, 4, 4, 4, (1, 4), "internal_decoupled"),  # SF = 2, NF = 1: replay buffer bypassed
+    (4, 8, 4, 2, (1, 4), "internal_decoupled"),  # SF = 1, NF = 4: one result per cycle
 ]
 
 
@@ -129,7 +130,6 @@ def _cfg_id(c: tuple) -> str:
 
 @pytest.mark.parametrize("cfg", CONFIGS, ids=_cfg_id)
 @pytest.mark.parametrize("kind", list(stall_kinds(0)))
-@pytest.mark.xfail(strict=False, reason="MVAU_rtl template constants under calibration")
 def test_teg_op_mvau_rtl(cfg: tuple, kind: str, finn_test_seed: int) -> None:
     """XSI and the abstract model must produce identical handshake traces."""
     model = prepared_model(cfg)

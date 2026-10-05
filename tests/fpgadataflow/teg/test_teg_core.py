@@ -470,9 +470,10 @@ def test_block_granular_search_on_synthetic_model() -> None:
     # e1 needs 33 entries; like the distributed search, the shared search keeps the raw start
     # depth (peak + 1) when depth 32 fails and the SRL search has no room between 33 and 64
     assert res.depths["e1"] == 33
-    # e0 buffers the source's in-frame burst; its paced peak exceeds the SRL range and the
-    # shared search keeps such FIFOs at one full BRAM block (needs_minimization heuristic)
-    assert res.depths["e0"] == 2048
+    # e0 buffers the source's in-frame burst (paced peak 320, beyond the SRL range); unlike
+    # the distributed search, which keeps such a start at one full BRAM block, the shared
+    # search tries 32 first: the source has slack and the interval does not suffer
+    assert res.depths["e0"] == 32
     assert res.simulations > 3 and dt < 60
     # the search result is a fixed point: no SRL-range FIFO can shrink by a block
     for e in m.external_edges:
@@ -576,6 +577,27 @@ def _freeze_model(ports: int = 1) -> TEGModel:
     return m
 
 
+def _mvu_lock_model(sf: int, nf: int, n_vectors: int = 6) -> TEGModel:
+    """The RTL MVU template (replay register, output lock with threshold, lead, freeze and
+    thaw delays) between a Bernoulli source and a bursty sink over direct edges."""
+    from finn.analysis.fpgadataflow.teg.templates.mvau_rtl import mvu_rtl
+
+    m = TEGModel()
+    src = Chain("src", kind="source", pattern=StallPattern.bernoulli(0.3, seed=5))
+    src.events(n_vectors * sf, 1, writes=["in"])
+    sink = Chain("sink", kind="sink", pattern=StallPattern.bursty(3, 5, phase=1))
+    sink.events(n_vectors * nf, 1, reads=["out"])
+    op = mvu_rtl("mvu", "in", "out", n_vectors, sf, nf, depth=6, queue=7)
+    for c in (src, *op.chains, sink):
+        m.add_chain(c)
+    for e in op.internal_edges:
+        m.add_edge(e)
+    m.new_edge("in", "src", op.inputs[0], depth=1, external=False, direct=True)
+    m.new_edge("out", op.outputs[0], "sink", depth=1, external=False, direct=True)
+    m.validate()
+    return m
+
+
 def _assert_same_result(a: object, b: object, what: str) -> None:
     for field_name in (
         "interval",
@@ -604,6 +626,9 @@ def test_native_backend_matches_python() -> None:
         *_backend_models(),
         ("freeze model", _freeze_model(), {}, {}),
         ("freeze model, three ports", _freeze_model(3), {}, {}),
+        ("MVU lock, SF 2 NF 3", _mvu_lock_model(2, 3), {}, {}),
+        ("MVU lock, SF 1 NF 4", _mvu_lock_model(1, 4), {}, {}),
+        ("MVU lock, SF 2 NF 1 (bypass)", _mvu_lock_model(2, 1), {}, {}),
     ]
     for what, m, depths, kw in cases:
         py = simulate(m, depths, backend="python", **kw)  # type: ignore[arg-type]
