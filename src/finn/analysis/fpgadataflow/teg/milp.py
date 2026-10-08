@@ -156,6 +156,7 @@ def default_cost(model: TEGModel) -> CostFn:
     """
 
     def cost(edge: str, depth: int) -> float:
+        """Storage bits of ``edge`` at nominal ``depth``."""
         return float(depth * model.edges[edge].width)
 
     return cost
@@ -180,7 +181,13 @@ def solve_milp(
         cost: ``cost(edge, nominal_depth)``; defaults to total bits.
         time_limit: solver time limit in seconds.
         verbose: let HiGHS print its log.
-        big_m: big-M constant; defaults to ``4 * period + 10``.
+        big_m: big-M constant for every edge; by default each edge gets its own bound
+            ``(ceil(max capacity / N_e) + 1) * P``: a deactivated space row for capacity
+            ``D`` is violated by at most ``t_w(k + D' - D) - t_w(k)`` under the active row of
+            the selected capacity ``D' > D`` (for ``D' <= D`` it is implied), and those
+            ``D' - D`` writes span at most ``ceil((D' - D) / N_e)`` periods plus the writes of
+            one frame, which take less than a period (frame-wrap gap row). The former global
+            ``4P`` was loose for small FIFOs and unsafe for capacities beyond three frames.
     """
     from scipy.optimize import Bounds, LinearConstraint, milp
     from scipy.sparse import coo_matrix
@@ -190,7 +197,14 @@ def solve_milp(
     wr, rd = _token_maps(model)
     size = estimate_size(model, candidates)
     per = period
-    big = big_m if big_m is not None else 4 * per + 10
+
+    def edge_big_m(name: str) -> float:
+        """Big-M of the space rows of external edge ``name`` (see the ``big_m`` argument)."""
+        if big_m is not None:
+            return float(big_m)
+        n_tok = len(wr[name])
+        max_cap = max(cap for _, cap in candidates[name])
+        return float((-(-max_cap // n_tok) + 1) * per)
 
     # ---- variable indexing
     sidx: dict[tuple[str, int], int] = {}
@@ -214,6 +228,7 @@ def solve_milp(
     nrow = 0
 
     def add(coefs: dict[int, float], lb: float, ub: float) -> None:
+        """Append the row ``lb <= sum(coefs) <= ub`` to the constraint matrix."""
         nonlocal nrow
         for j, cval in coefs.items():
             rows.append(nrow)
@@ -266,9 +281,12 @@ def solve_milp(
     # ---- space constraints: write j of frame n (token j + m) needs the read of token
     # j + m - D, i.e. read index r = j + m - D -> frame n - q with q = -(r // N), index r mod N
     def space_rows(name: str, cap: int, y: int | None) -> None:
+        """Space rows of edge ``name`` at capacity ``cap``, conditional on binary ``y``
+        (None: unconditional, for internal edges of fixed depth)."""
         e = model.edges[name]
         n_tok = len(wr[name])
         m = e.initial_tokens
+        big = edge_big_m(name) if y is not None else 0.0
         for j in range(n_tok):
             r = j + m - cap
             q = -(r // n_tok)
@@ -281,7 +299,7 @@ def solve_milp(
                 add({a: 1.0, b: -1.0}, e.lb - q * per, math.inf)
             else:
                 # s_a - s_b + qP >= lb - M(1 - y)  ->  s_a - s_b - M y >= lb - qP - M
-                add({a: 1.0, b: -1.0, y: -float(big)}, e.lb - q * per - big, math.inf)
+                add({a: 1.0, b: -1.0, y: -big}, e.lb - q * per - big, math.inf)
 
     for name, e in model.edges.items():
         if e.external:
