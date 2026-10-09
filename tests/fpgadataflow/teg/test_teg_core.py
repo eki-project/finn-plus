@@ -639,6 +639,44 @@ def test_native_backend_matches_python() -> None:
         _assert_same_result(py, again, what)
 
 
+def test_milp_gurobi_backend() -> None:
+    """The Gurobi backend solves the chain to the same objective as HiGHS and reports its
+    incumbents and progress through the callbacks (skipped without gurobipy or a license)."""
+    gp = pytest.importorskip("gurobipy")
+    from finn.analysis.fpgadataflow.teg.milp import gurobi_license_hint
+
+    gurobi_license_hint()
+    try:
+        env = gp.Env(empty=True)
+        env.setParam("OutputFlag", 0)
+        env.start()
+        env.dispose()
+    except gp.GurobiError as exc:
+        pytest.skip(f"no usable Gurobi license: {exc}")
+    m = chain_graph(n=32, burst=8)
+    target = m.bottleneck_interval()
+    cands = unit_candidates(m, [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128])
+    incumbents: list[float] = []
+    progress: list[dict] = []
+    highs = solve_milp(m, target, cands, solver="highs")
+    grb = solve_milp(
+        m,
+        target,
+        cands,
+        solver="gurobi",
+        on_incumbent=lambda d, c, obj, bnd, t: incumbents.append(obj),
+        on_progress=progress.append,
+        progress_interval=0.0,
+    )
+    assert highs.depths is not None and grb.depths is not None
+    assert grb.solver == "gurobi" and grb.status == 0
+    assert grb.objective == highs.objective
+    assert simulate(m, grb.capacities).interval == target
+    assert incumbents and incumbents[-1] == grb.objective
+    assert incumbents == sorted(incumbents, reverse=True)
+    assert progress and progress[0]["phase"] == "model_built"
+
+
 def test_native_backend_speed() -> None:
     """The native backend is at least 5x faster than the Python one on a synthetic graph."""
     from finn.analysis.fpgadataflow.teg import native

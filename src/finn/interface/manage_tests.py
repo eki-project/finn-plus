@@ -195,6 +195,21 @@ def run_test(variant: str, num_workers: str, tests_dir: Path, args: str = "") ->
             # pytest exit code 5 means "no tests collected", not a failure
             if fifo_model_rc not in (0, 5):
                 sys.exit(1)
+        case "milp_scaling":
+            # The MILP solver scaling experiments (marker milp_scaling): one long-running
+            # process (the solvers are multi-threaded themselves), configured through the
+            # MILP_SCALING_* environment variables, results under reports/milp_scaling
+            scaling_rc = subprocess.run(
+                shlex.split(
+                    f"{sys.executable} -m pytest -q -rf --tb=short -m 'milp_scaling' "
+                    f"--junitxml={ci_project_dir}/reports/milp_scaling.xml "
+                    f"--html={ci_project_dir}/reports/milp_scaling.html "
+                    f"-p no:xdist -s",
+                    posix=IS_POSIX,
+                )
+            ).returncode
+            if scaling_rc not in (0, 5):
+                sys.exit(1)
         case "full_ci":
             # Only this variant parses JUnit reports, keep the test-only dependency local
             from junitparser import JUnitXml, TestCase

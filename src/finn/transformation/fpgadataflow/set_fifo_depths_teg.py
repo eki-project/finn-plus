@@ -78,6 +78,7 @@ DEFAULT_MILP_CALIBRATION = (1.2e-7, 1.7)
 
 
 def _orders(cfg: DataflowBuildConfig) -> list[MinimizationOrder]:
+    """The minimisation orders named in the build configuration."""
     names = cast("list[str]", cfg.teg_minimization_orders)
     try:
         return [MinimizationOrder[n] for n in names]
@@ -99,6 +100,7 @@ def _backend(cfg: DataflowBuildConfig) -> Backend | None:
 
 
 def _write_fifo_data(model: ModelWrapper, teg: TEGModel, depths: dict[str, int]) -> Path:
+    """Write the depths as the FIFO configuration that ApplySimulatedFIFOSizes reads."""
     work_folder = cast("Path", make_build_dir("fifo_results_teg_", True))
     path = work_folder / "fifo_config.json"
     path.write_text(json.dumps(depths_to_fifo_config(teg, depths)))
@@ -107,6 +109,7 @@ def _write_fifo_data(model: ModelWrapper, teg: TEGModel, depths: dict[str, int])
 
 
 def _dump_model(cfg: DataflowBuildConfig, teg: TEGModel, name: str) -> None:
+    """Dump the TEG model as JSON when the build configuration asks for it."""
     if cfg.teg_dump_model:
         p = cfg.get_report_directory() / f"{name}.json"
         teg.dump_json(p)
@@ -241,6 +244,7 @@ class RunMILPFIFOSizing(Transformation):
         report_path = report_dir / "fifo_sizing_milp.json"
 
         def finish(extra: dict[str, object]) -> None:
+            """Complete and write the sizing report."""
             report.update(extra)
             report["sizing_time_s"] = time.time() - t0
             report_path.write_text(json.dumps(report, indent=2))
@@ -262,11 +266,72 @@ class RunMILPFIFOSizing(Transformation):
             finish({"error": msg})
             raise FINNUserError(msg + f"; report written to {report_path}")
 
+        incumbent_path = report_dir / "fifo_sizing_milp_incumbent.json"
+        progress_path = report_dir / "fifo_sizing_milp_progress.json"
+        n_incumbents = 0
+
+        def on_incumbent(
+            depths: dict[str, int],
+            caps: dict[str, int],
+            objective: float,
+            bound: float | None,
+            elapsed: float,
+        ) -> None:
+            """Keep every improved solution on disk: a solve may run for days and be cut
+            short, and the depths are what a follow-up hardware run needs."""
+            nonlocal n_incumbents
+            n_incumbents += 1
+            incumbent_path.write_text(
+                json.dumps(
+                    {
+                        "incumbent": n_incumbents,
+                        "elapsed_s": elapsed,
+                        "objective_bits": objective,
+                        "bound_bits": bound,
+                        "target_interval_cycles": target,
+                        "fifo_depths": depths,
+                        "fifo_capacities": caps,
+                        "fifo_config": depths_to_fifo_config(teg, depths),
+                    },
+                    indent=2,
+                )
+            )
+            log.info(
+                f"milp: incumbent {n_incumbents} after {elapsed:.0f} s, {objective:.0f} bits"
+                + (f" (bound {bound:.0f})" if bound is not None else "")
+            )
+
+        def on_progress(info: dict[str, object]) -> None:
+            """Heartbeat for long solves (job log and a JSON file next to the report)."""
+            progress_path.write_text(json.dumps({"time": time.time(), **info}, indent=2))
+            log.info("milp: " + ", ".join(f"{k} {v}" for k, v in info.items()))
+
         res: MILPResult = solve_milp(
-            teg, target, candidates, time_limit=float(cfg.teg_milp_time_limit)
+            teg,
+            target,
+            candidates,
+            time_limit=float(cfg.teg_milp_time_limit),
+            solver=str(cfg.teg_milp_solver),
+            threads=int(cfg.teg_milp_threads),
+            mip_gap=cfg.teg_milp_mip_gap,
+            log_file=report_dir / "fifo_sizing_milp_solver.log",
+            on_incumbent=on_incumbent,
+            on_progress=on_progress,
+            progress_interval=float(cfg.teg_milp_progress_interval_s),
+            mem_limit_gb=cfg.teg_milp_mem_limit_gb,
         )
+        solver_info = {
+            "solver": res.solver,
+            "solver_status": res.status,
+            "solver_message": res.message,
+            "solve_time_s": res.solve_time,
+            "mip_gap": res.gap,
+            "bound_bits": res.bound,
+            "nodes": res.nodes,
+            "incumbents": n_incumbents,
+        }
         if res.depths is None:
-            finish({"solver_status": res.status, "solver_message": res.message})
+            finish(solver_info)
             raise FINNUserError(f"MILP solver failed: {res.message} (report at {report_path})")
         check = simulate(
             teg,
@@ -278,9 +343,7 @@ class RunMILPFIFOSizing(Transformation):
         finish(
             {
                 "solved": True,
-                "solver_status": res.status,
-                "solver_message": res.message,
-                "solve_time_s": res.solve_time,
+                **solver_info,
                 "objective_bits": res.objective,
                 "verified_interval_cycles": check.interval,
                 "verified": verified,

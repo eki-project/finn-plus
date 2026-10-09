@@ -80,6 +80,9 @@ pytest-html-merger = { version = "~0.1.0", optional = true }
 pytest-rerunfailures = { version = "~16.6", optional = true }
 pytest-timeout = { version = "~2.4.0", optional = true }
 junitparser = { version = "~5.0.1", optional = true }
+# Gurobi backend of the MILP FIFO sizing (auto_fifo_strategy = milp, teg_milp_solver = gurobi);
+# the wheel bundles the solver library, a license (e.g. a token server) is still needed
+gurobipy = { version = "~13.0", optional = true }
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "~4.2.0"
@@ -109,6 +112,7 @@ test = [
     "pytest-timeout",
     "junitparser",
 ]
+gurobi = ["gurobipy"]
 all = [
     "pytest",
     "pytest-xdist",
@@ -132,6 +136,7 @@ markers = [
     "infrastructure: marks tests that refer to infrastructure functionality",
     "vivado: mark tests that require Vivado or Vivado HLS",
     "fifo_model: mark tests of the TEG-based FIFO sizing (model validation against RTL)",
+    "milp_scaling: MILP solver scaling experiments (long-running, dedicated CI test suite)",
     "vitis: mark tests that require Vitis",
     "board: mark tests that require a PYNQ board",
     "brevitas_export : mark tests that test brevitas export functionality",

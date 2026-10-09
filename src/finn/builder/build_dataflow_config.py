@@ -794,6 +794,28 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     teg_milp_time_limit: float = 600.0
 
     #: (Only relevant when auto_fifo_strategy == milp)
+    #: MILP solver: "highs" (bundled with SciPy, single-threaded) or "gurobi" (needs the
+    #: gurobipy package, extra "gurobi", and a Gurobi license; multi-threaded, writes every
+    #: improved solution to fifo_sizing_milp_incumbent.json and a progress heartbeat to
+    #: fifo_sizing_milp_progress.json while it runs).
+    teg_milp_solver: str = "highs"
+
+    #: (Only relevant when auto_fifo_strategy == milp) Solver threads (0: solver default).
+    teg_milp_threads: int = 0
+
+    #: (Only relevant when auto_fifo_strategy == milp)
+    #: Relative optimality gap at which the solver stops (None: solver default, 1e-4).
+    teg_milp_mip_gap: Optional[float] = None
+
+    #: (Only relevant when auto_fifo_strategy == milp)
+    #: Seconds between progress reports (log and heartbeat file) during the solve.
+    teg_milp_progress_interval_s: float = 60.0
+
+    #: (Only relevant when auto_fifo_strategy == milp)
+    #: Soft memory limit in GB after which Gurobi stops with its best solution (None: none).
+    teg_milp_mem_limit_gb: Optional[float] = None
+
+    #: (Only relevant when auto_fifo_strategy == milp)
     #: Also offer the depths 2, 4, 8 and 16 below the 32-entry floor of the block-granular
     #: search as candidates, so that the MILP reports the true minimum.
     teg_milp_fine_candidates: bool = True

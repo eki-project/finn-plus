@@ -20,6 +20,7 @@ variables:
       - "quicktest_ci"
       - "full_ci"
       - "fifo_model_ci"
+      - "milp_scaling"
   PYTEST_WORKERS:
     description: "Select number PyTest workers"
     value: "64"
@@ -56,6 +57,24 @@ variables:
   MANUAL_CFG_PATH:
     description: "Name (in ci/cfg/) or path (relative to LOCAL_CFG_DIR) of benchmarking config to run"
     value: ""
+  MILP_SCALING_PLAN:
+    description: "TEST_SUITE = milp_scaling: preset (smoke, cluster, cluster_full) or path of a plan file, see tests/fpgadataflow/teg/test_teg_milp_scaling.py"
+    value: "smoke"
+  MILP_SCALING_SOLVER:
+    description: "TEST_SUITE = milp_scaling: MILP solver (highs or gurobi)"
+    value: "gurobi"
+  MILP_SCALING_TIME_LIMIT:
+    description: "TEST_SUITE = milp_scaling: solver time limit per instance in seconds"
+    value: "3600"
+  MILP_SCALING_THREADS:
+    description: "TEST_SUITE = milp_scaling: solver threads (0: all cores of the node)"
+    value: "0"
+  MILP_SCALING_MEM_LIMIT_GB:
+    description: "TEST_SUITE = milp_scaling: soft memory limit of a solve in GB (Gurobi stops with its best solution)"
+    value: "600"
+  MILP_SCALING_MAX_CONSTRAINTS:
+    description: "TEST_SUITE = milp_scaling: instances with more constraint rows are only sized, not solved (0: no limit)"
+    value: "0"
   BENCH_PARAM_OVERRIDES:
     description: "Optional JSON object of build parameters applied to every run of every bench job, e.g. {\"auto_fifo_depths\": true, \"auto_fifo_strategy\": \"abstract_sim\"} to run the regression suite with the TEG-based FIFO sizing"
     # TEMPORARY (feature/fifo_sizing_model): the regression suite always builds with the TEG-based
@@ -198,6 +217,9 @@ Bench (Manual):
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
+    # The MILP scaling experiments are a single long test job; no regression builds
+    - if: $TEST_SUITE == "milp_scaling"
+      when: never
     # TEMPORARY (feature/fifo_sizing_model): manual configs run with every test-suite selection
     - if: $MANUAL_CFG_PATH != ""
   trigger:
@@ -218,6 +240,9 @@ Bench (Basic):
   rules:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    # The MILP scaling experiments are a single long test job; no regression builds
+    - if: $TEST_SUITE == "milp_scaling"
       when: never
     # TEMPORARY (feature/fifo_sizing_model): the regression configs run with every test-suite
     # selection (they build with the abstract simulation sizing, see BENCH_PARAM_OVERRIDES)
@@ -255,6 +280,9 @@ Bench (Extended):
     - when: never
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    # The MILP scaling experiments are a single long test job; no regression builds
+    - if: $TEST_SUITE == "milp_scaling"
       when: never
     # The FIFO-model test suite is a targeted unit-test run; no regression builds
     - if: $TEST_SUITE == "fifo_model_ci"

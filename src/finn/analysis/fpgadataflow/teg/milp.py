@@ -36,6 +36,10 @@ and ``Theta(sum_e N_e * |C_e|)`` big-M space constraints, which is why it is exa
 scale (Section 6.2). Stall patterns of environment chains are not representable and ignored.
 
 Every solution must be verified with the simulator before it is applied (``search`` does so).
+
+Solvers: HiGHS through ``scipy.optimize.milp`` (bundled, single-threaded, no callbacks) and
+Gurobi through ``gurobipy`` (optional extra ``gurobi``; multi-threaded branch and bound,
+every improved solution and periodic progress are reported through callbacks).
 """
 
 from __future__ import annotations
@@ -45,9 +49,10 @@ import numpy as np
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from finn.util.exception import FINNInternalError
+from finn.util.exception import FINNInternalError, FINNUserError
 
 if TYPE_CHECKING:
     from finn.analysis.fpgadataflow.teg.model import TEGModel
@@ -103,6 +108,11 @@ class MILPResult:
     size: MILPSize
     #: effective capacities of the chosen candidates (what the simulator has to verify)
     capacities: dict[str, int] = field(default_factory=dict)
+    #: relative optimality gap, best bound and explored nodes when the solver reports them
+    gap: float | None = None
+    bound: float | None = None
+    nodes: int | None = None
+    solver: str = "highs"
 
 
 def _token_maps(model: TEGModel) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
@@ -162,16 +172,39 @@ def default_cost(model: TEGModel) -> CostFn:
     return cost
 
 
-def solve_milp(
+@dataclass
+class MILPInstance:
+    """The built MILP ``lo <= A x <= hi``, ``min c x`` with the index maps to decode a solution."""
+
+    a_mat: object  # scipy.sparse.csr_matrix
+    lo: np.ndarray
+    hi: np.ndarray
+    cvec: np.ndarray
+    integrality: np.ndarray
+    lbv: np.ndarray
+    ubv: np.ndarray
+    yidx: dict[tuple[str, int], int]
+    size: MILPSize
+    candidates: dict[str, Sequence[Candidate]]
+    external_edges: list[str]
+    #: set when the instance is trivially infeasible (a chain gap exceeds the period)
+    infeasible_message: str | None = None
+
+
+#: incumbent callback: (depths, capacities, objective, best bound, elapsed seconds)
+IncumbentFn = Callable[[dict[str, int], dict[str, int], float, float | None, float], None]
+#: progress callback: a dict with elapsed, nodes, incumbent, bound, gap, rss_gb, cpu_percent
+ProgressFn = Callable[[dict[str, object]], None]
+
+
+def build_instance(
     model: TEGModel,
     period: int,
     candidates: dict[str, Sequence[Candidate]],
     cost: CostFn | None = None,
-    time_limit: float = 600.0,
-    verbose: bool = False,
     big_m: int | None = None,
-) -> MILPResult:
-    """Build and solve the periodic-schedule MILP with HiGHS (``scipy.optimize.milp``).
+) -> MILPInstance:
+    """Build the periodic-schedule MILP of ``model`` for frame interval ``period``.
 
     Args:
         model: validated TEG model.
@@ -179,8 +212,6 @@ def solve_milp(
         candidates: per external edge, the candidate ``(nominal depth, effective capacity)``
             pairs; nominal depths are what gets reported, capacities enter the constraints.
         cost: ``cost(edge, nominal_depth)``; defaults to total bits.
-        time_limit: solver time limit in seconds.
-        verbose: let HiGHS print its log.
         big_m: big-M constant for every edge; by default each edge gets its own bound
             ``(ceil(max capacity / N_e) + 1) * P``: a deactivated space row for capacity
             ``D`` is violated by at most ``t_w(k + D' - D) - t_w(k)`` under the active row of
@@ -189,7 +220,6 @@ def solve_milp(
             one frame, which take less than a period (frame-wrap gap row). The former global
             ``4P`` was loose for small FIFOs and unsafe for capacities beyond three frames.
     """
-    from scipy.optimize import Bounds, LinearConstraint, milp
     from scipy.sparse import coo_matrix
 
     if cost is None:
@@ -238,6 +268,34 @@ def solve_milp(
         hi.append(ub)
         nrow += 1
 
+    def finish(infeasible: str | None = None) -> MILPInstance:
+        """Assemble the sparse instance."""
+        a_mat = coo_matrix((vals, (rows, cols)), shape=(nrow, nvar)).tocsr()
+        cvec = np.zeros(nvar)
+        for (e, depth), j in yidx.items():
+            cvec[j] = cost(e, depth)
+        integrality = np.zeros(nvar)
+        lbv = np.full(nvar, -np.inf)
+        ubv = np.full(nvar, np.inf)
+        for j in yidx.values():
+            integrality[j] = 1
+            lbv[j] = 0.0
+            ubv[j] = 1.0
+        return MILPInstance(
+            a_mat,
+            np.array(lo),
+            np.array(hi),
+            cvec,
+            integrality,
+            lbv,
+            ubv,
+            yidx,
+            size,
+            candidates,
+            list(model.external_edges),
+            infeasible,
+        )
+
     # ---- chain constraints: s_{i+1} - s_i >= g_{i+1};  s_0 + P - s_{L-1} >= g_0
     for v, c in model.chains.items():
         n_ev = c.num_events
@@ -247,9 +305,7 @@ def solve_milp(
             g = c.gaps[(i + 1) % n_ev]
             if a == b:  # single-event chain: the wrap-around reduces to P >= g
                 if g > per:
-                    return MILPResult(
-                        None, 2, f"infeasible: gap of chain {v} exceeds period", 0.0, None, size
-                    )
+                    return finish(f"infeasible: gap of chain {v} exceeds period")
                 continue
             if i + 1 < n_ev:
                 add({b: 1.0, a: -1.0}, g, math.inf)
@@ -308,37 +364,307 @@ def solve_milp(
             add({yidx[(name, depth)]: 1.0 for depth, _ in candidates[name]}, 1.0, 1.0)
         elif e.depth is not None:
             space_rows(name, e.depth, None)
+    return finish()
 
-    a_mat = coo_matrix((vals, (rows, cols)), shape=(nrow, nvar)).tocsr()
-    cvec = np.zeros(nvar)
-    for (e, depth), j in yidx.items():
-        cvec[j] = cost(e, depth)
-    integrality = np.zeros(nvar)
-    lbv = np.full(nvar, -np.inf)
-    ubv = np.full(nvar, np.inf)
-    for j in yidx.values():
-        integrality[j] = 1
-        lbv[j] = 0.0
-        ubv[j] = 1.0
+
+def _decode(inst: MILPInstance, x: np.ndarray) -> tuple[dict[str, int], dict[str, int]]:
+    """Selected nominal depths and capacities of a solution vector."""
+    depths: dict[str, int] = {}
+    caps: dict[str, int] = {}
+    for name in inst.external_edges:
+        for depth, cap in inst.candidates[name]:
+            if x[inst.yidx[(name, depth)]] > 0.5:
+                depths[name] = depth
+                caps[name] = cap
+    return depths, caps
+
+
+def _process_usage() -> tuple[float, float]:
+    """Resident set size (GB) and CPU utilisation (%) of this process."""
+    try:
+        import psutil
+
+        proc = psutil.Process()
+        return proc.memory_info().rss / 2**30, proc.cpu_percent(interval=None)
+    except Exception:  # psutil missing or restricted
+        return float("nan"), float("nan")
+
+
+def solve_milp(
+    model: TEGModel,
+    period: int,
+    candidates: dict[str, Sequence[Candidate]],
+    cost: CostFn | None = None,
+    time_limit: float = 600.0,
+    verbose: bool = False,
+    big_m: int | None = None,
+    solver: str = "highs",
+    threads: int = 0,
+    mip_gap: float | None = None,
+    log_file: str | Path | None = None,
+    on_incumbent: IncumbentFn | None = None,
+    on_progress: ProgressFn | None = None,
+    progress_interval: float = 60.0,
+    mem_limit_gb: float | None = None,
+) -> MILPResult:
+    """Build and solve the periodic-schedule MILP.
+
+    Args:
+        model: validated TEG model.
+        period: target frame interval ``P`` (cycles).
+        candidates: per external edge, the candidate ``(nominal depth, effective capacity)``
+            pairs; nominal depths are what gets reported, capacities enter the constraints.
+        cost: ``cost(edge, nominal_depth)``; defaults to total bits.
+        time_limit: solver time limit in seconds.
+        verbose: let the solver print its log to the console.
+        big_m: big-M override, see :func:`build_instance`.
+        solver: ``highs`` (SciPy's bundled HiGHS, single-threaded, no callbacks) or
+            ``gurobi`` (``gurobipy``, multi-threaded, reports every improved solution).
+        threads: solver threads (0: the solver's default, all cores for Gurobi).
+        mip_gap: relative optimality gap at which the solver stops (None: solver default).
+        log_file: path of the solver's own log (Gurobi only).
+        on_incumbent: called with every improved solution (Gurobi: as soon as the solver
+            finds it; HiGHS: once with the final solution), so that a long solve leaves its
+            best depths behind even when it is cut short.
+        on_progress: called about every ``progress_interval`` seconds during the branch and
+            bound with node count, incumbent, bound, gap and this process's memory and CPU
+            (Gurobi only).
+        progress_interval: seconds between progress reports.
+        mem_limit_gb: soft memory limit in GB after which the solver stops with its best
+            solution (Gurobi ``SoftMemLimit``).
+    """
+    inst = build_instance(model, period, candidates, cost, big_m)
+    if inst.infeasible_message is not None:
+        return MILPResult(None, 2, inst.infeasible_message, 0.0, None, inst.size, solver=solver)
+    if solver == "highs":
+        return _solve_highs(inst, time_limit, verbose, on_incumbent)
+    if solver == "gurobi":
+        return _solve_gurobi(
+            inst,
+            time_limit,
+            verbose,
+            threads,
+            mip_gap,
+            log_file,
+            on_incumbent,
+            on_progress,
+            progress_interval,
+            mem_limit_gb,
+        )
+    raise FINNInternalError(f"Unknown MILP solver {solver!r} (highs or gurobi)")
+
+
+def _solve_highs(
+    inst: MILPInstance, time_limit: float, verbose: bool, on_incumbent: IncumbentFn | None
+) -> MILPResult:
+    """Solve with HiGHS through ``scipy.optimize.milp``."""
+    from scipy.optimize import Bounds, LinearConstraint, milp
+
     t0 = time.time()
     res = milp(
-        cvec,
-        constraints=LinearConstraint(a_mat, np.array(lo), np.array(hi)),
-        integrality=integrality,
-        bounds=Bounds(lbv, ubv),
+        inst.cvec,
+        constraints=LinearConstraint(inst.a_mat, inst.lo, inst.hi),
+        integrality=inst.integrality,
+        bounds=Bounds(inst.lbv, inst.ubv),
         options={"time_limit": time_limit, "disp": verbose},
     )
     dt = time.time() - t0
     if res.x is None:
-        return MILPResult(None, int(res.status), str(res.message), dt, None, size)
-    depths: dict[str, int] = {}
-    caps: dict[str, int] = {}
-    for name in model.external_edges:
-        for depth, cap in candidates[name]:
-            if res.x[yidx[(name, depth)]] > 0.5:
-                depths[name] = depth
-                caps[name] = cap
-    return MILPResult(depths, int(res.status), str(res.message), dt, float(res.fun), size, caps)
+        return MILPResult(None, int(res.status), str(res.message), dt, None, inst.size)
+    depths, caps = _decode(inst, res.x)
+    bound = float(res.mip_dual_bound) if getattr(res, "mip_dual_bound", None) is not None else None
+    gap = float(res.mip_gap) if getattr(res, "mip_gap", None) is not None else None
+    nodes = int(res.mip_node_count) if getattr(res, "mip_node_count", None) is not None else None
+    if on_incumbent is not None:
+        on_incumbent(depths, caps, float(res.fun), bound, dt)
+    return MILPResult(
+        depths,
+        int(res.status),
+        str(res.message),
+        dt,
+        float(res.fun),
+        inst.size,
+        caps,
+        gap=gap,
+        bound=bound,
+        nodes=nodes,
+        solver="highs",
+    )
+
+
+def gurobi_license_hint() -> None:
+    """Point gurobipy at the license of a Gurobi installation reachable through ``GUROBI_HOME``.
+
+    The CI loads Gurobi as an environment module that sets ``GUROBI_HOME`` (python-mip finds
+    its library there); gurobipy ships its own library and looks for ``gurobi.lic`` through
+    ``GRB_LICENSE_FILE`` or its default locations, so the module's token-server license is
+    made visible here when nothing else is configured.
+    """
+    import os
+
+    if os.environ.get("GRB_LICENSE_FILE"):
+        return
+    home = os.environ.get("GUROBI_HOME")
+    if home:
+        lic = Path(home) / "gurobi.lic"
+        if lic.is_file():
+            os.environ["GRB_LICENSE_FILE"] = str(lic)
+
+
+def _gurobi_env(
+    gp: object, attempts: int = 6, delay: float = 5.0, delay_max: float = 60.0
+) -> object:
+    """Start a Gurobi environment, retrying with backoff when the token server has no token
+    or does not answer in time (Gurobi's own recommendation, as in the multi-FPGA
+    partitioner)."""
+    last: Exception | None = None
+    for attempt in range(attempts):
+        env = gp.Env(empty=True)  # type: ignore[attr-defined]
+        try:
+            env.setParam("OutputFlag", 0)
+            env.start()
+            return env
+        except gp.GurobiError as e:  # type: ignore[attr-defined]
+            last = e
+            env.dispose()
+            if attempt + 1 < attempts:
+                time.sleep(delay)
+                delay = min(delay * 2, delay_max)
+    raise FINNUserError(f"Could not start a Gurobi environment: {last}")
+
+
+def _solve_gurobi(
+    inst: MILPInstance,
+    time_limit: float,
+    verbose: bool,
+    threads: int,
+    mip_gap: float | None,
+    log_file: str | Path | None,
+    on_incumbent: IncumbentFn | None,
+    on_progress: ProgressFn | None,
+    progress_interval: float,
+    mem_limit_gb: float | None,
+) -> MILPResult:
+    """Solve with Gurobi through ``gurobipy``'s matrix API."""
+    try:
+        import gurobipy as gp
+        from gurobipy import GRB
+    except ImportError as e:  # pragma: no cover - depends on the installation
+        raise FINNUserError(
+            "The MILP solver 'gurobi' needs the gurobipy package (pip install "
+            "'finn-plus[gurobi]') and a Gurobi license"
+        ) from e
+    gurobi_license_hint()
+    t0 = time.time()
+    env = _gurobi_env(gp)
+    m = gp.Model("teg_fifo_sizing", env=env)
+    try:
+        m.Params.OutputFlag = 1 if (verbose or log_file) else 0
+        m.Params.LogToConsole = 1 if verbose else 0
+        if log_file:
+            m.Params.LogFile = str(log_file)
+        m.Params.TimeLimit = time_limit
+        if threads:
+            m.Params.Threads = int(threads)
+        if mip_gap is not None:
+            m.Params.MIPGap = mip_gap
+        if mem_limit_gb:
+            m.Params.SoftMemLimit = float(mem_limit_gb)
+        nvar = len(inst.cvec)
+        vtype = np.where(inst.integrality > 0, GRB.BINARY, GRB.CONTINUOUS)
+        x = m.addMVar(nvar, lb=inst.lbv, ub=inst.ubv, obj=inst.cvec, vtype=vtype)
+        a = inst.a_mat
+        lo, hi = inst.lo, inst.hi
+        ge = np.isfinite(lo) & ~np.isfinite(hi)
+        le = ~np.isfinite(lo) & np.isfinite(hi)
+        eq = np.isfinite(lo) & np.isfinite(hi) & (lo == hi)
+        rng = np.isfinite(lo) & np.isfinite(hi) & (lo != hi)
+        if ge.any():
+            m.addMConstr(a[ge], x, ">", lo[ge])
+        if le.any():
+            m.addMConstr(a[le], x, "<", hi[le])
+        if eq.any():
+            m.addMConstr(a[eq], x, "=", lo[eq])
+        if rng.any():
+            m.addMConstr(a[rng], x, ">", lo[rng])
+            m.addMConstr(a[rng], x, "<", hi[rng])
+        m.ModelSense = GRB.MINIMIZE
+        state = {"last_progress": time.time(), "build_s": time.time() - t0}
+
+        def callback(model: object, where: int) -> None:
+            """Report improved solutions and periodic progress."""
+            if where == GRB.Callback.MIPSOL and on_incumbent is not None:
+                xs = np.asarray(model.cbGetSolution(x))  # type: ignore[attr-defined]
+                obj = float(model.cbGet(GRB.Callback.MIPSOL_OBJ))  # type: ignore[attr-defined]
+                bnd = float(model.cbGet(GRB.Callback.MIPSOL_OBJBND))  # type: ignore[attr-defined]
+                depths, caps = _decode(inst, xs)
+                on_incumbent(depths, caps, obj, bnd, time.time() - t0)
+            elif where == GRB.Callback.MIP and on_progress is not None:
+                now = time.time()
+                if now - state["last_progress"] >= progress_interval:
+                    state["last_progress"] = now
+                    best = float(model.cbGet(GRB.Callback.MIP_OBJBST))  # type: ignore[attr-defined]
+                    bnd = float(model.cbGet(GRB.Callback.MIP_OBJBND))  # type: ignore[attr-defined]
+                    rss, cpu = _process_usage()
+                    gap = abs(best - bnd) / max(abs(best), 1e-9) if best < GRB.INFINITY else None
+                    on_progress(
+                        {
+                            "phase": "branch_and_bound",
+                            "elapsed_s": now - t0,
+                            "nodes": int(model.cbGet(GRB.Callback.MIP_NODCNT)),  # type: ignore
+                            "open_nodes": int(model.cbGet(GRB.Callback.MIP_NODLFT)),  # type: ignore
+                            "incumbent": best if best < GRB.INFINITY else None,
+                            "bound": bnd,
+                            "gap": gap,
+                            "rss_gb": rss,
+                            "cpu_percent": cpu,
+                        }
+                    )
+
+        if on_progress is not None:
+            rss, cpu = _process_usage()
+            on_progress(
+                {
+                    "phase": "model_built",
+                    "elapsed_s": time.time() - t0,
+                    "rows": int(a.shape[0]),
+                    "columns": nvar,
+                    "rss_gb": rss,
+                    "cpu_percent": cpu,
+                }
+            )
+        m.optimize(callback)
+        dt = time.time() - t0
+        status_names = {
+            GRB.OPTIMAL: (0, "Optimal"),
+            GRB.TIME_LIMIT: (1, "Time limit reached"),
+            GRB.INFEASIBLE: (2, "Infeasible"),
+            GRB.INF_OR_UNBD: (2, "Infeasible or unbounded"),
+            GRB.UNBOUNDED: (3, "Unbounded"),
+            GRB.INTERRUPTED: (4, "Interrupted"),
+            GRB.MEM_LIMIT: (4, "Memory limit reached"),
+        }
+        status, message = status_names.get(m.Status, (4, f"Gurobi status {m.Status}"))
+        if m.SolCount == 0:
+            return MILPResult(None, status, message, dt, None, inst.size, solver="gurobi")
+        depths, caps = _decode(inst, np.asarray(x.X))
+        bound = float(m.ObjBound) if abs(m.ObjBound) < GRB.INFINITY else None
+        return MILPResult(
+            depths,
+            status,
+            message,
+            dt,
+            float(m.ObjVal),
+            inst.size,
+            caps,
+            gap=float(m.MIPGap) if m.MIPGap < GRB.INFINITY else None,
+            bound=bound,
+            nodes=int(m.NodeCount),
+            solver="gurobi",
+        )
+    finally:
+        m.dispose()
+        env.dispose()
 
 
 def fit_power_law(points: Sequence[tuple[float, float]]) -> tuple[float, float]:
