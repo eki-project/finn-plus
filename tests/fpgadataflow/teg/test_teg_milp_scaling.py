@@ -294,7 +294,10 @@ def dry_run_graph(name: str) -> ModelWrapper:
     model_path = MODELS.parent / cfg_params.pop("model_path")
     pulled = ensure_model(model_path)
     if not model_path.is_file():
-        pytest.skip(f"{model_path} not available: {describe_missing(model_path)}; {pulled}")
+        # an error, not a skip: a skip would end the whole plan, the plan loop records it
+        raise FileNotFoundError(
+            f"{model_path} not available: {describe_missing(model_path)}; {pulled}"
+        )
     for key in ("folding_config_file", "specialize_layers_config_file"):
         if cfg_params.get(key):
             cfg_params[key] = str(MODELS.parent / cfg_params[key])
@@ -418,6 +421,12 @@ def test_milp_scaling_plan() -> None:
             log.error(f"instance {spec} failed: {exc!r}")
             failures.append((spec, repr(exc)))
             (out / "failures.json").write_text(json.dumps(failures, indent=2))
+        except BaseException as exc:  # a skip or interrupt must still leave the summary behind
+            failures.append((spec, repr(exc)))
+            (out / "failures.json").write_text(json.dumps(failures, indent=2))
+            if (out / "results.jsonl").exists():
+                scaling.summarize(out)
+            raise
     summary = scaling.summarize(out)
     print((out / "table.md").read_text())
     assert summary["rows"], "no instance produced a result"

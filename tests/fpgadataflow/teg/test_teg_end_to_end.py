@@ -91,7 +91,16 @@ def ensure_model(path: Path) -> str:
     Returns the DVC output (empty when nothing was attempted). Concurrent test workers
     serialise on a lock file next to the model.
     """
-    dvc_file = path.with_name(path.name + ".dvc")
+    # the model file itself or, for a DVC directory import (models/transformer/
+    # finn-transformers.dvc), the nearest tracked ancestor directory
+    dvc_file = next(
+        (
+            p.with_name(p.name + ".dvc")
+            for p in (path, *path.parents)
+            if p.with_name(p.name + ".dvc").is_file()
+        ),
+        path.with_name(path.name + ".dvc"),
+    )
     dvc = shutil.which("dvc")
     if path.is_file() or not dvc_file.is_file() or dvc is None:
         return ""
