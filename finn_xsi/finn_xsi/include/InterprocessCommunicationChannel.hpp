@@ -170,6 +170,12 @@ class InterprocessCommunicationChannel {
     Response send_request(const Request& req, std::stop_token stoken = {})
         requires Sender<IsSender>
     {
+        // Once stopped, do not hand the peer another request: it would let a still running
+        // peer simulate one more cycle than it would have otherwise
+        if (stoken.stop_requested()) {
+            return Response{};
+        }
+
         // Write request
         int write_slot = channel->request_write_idx.load(std::memory_order_acquire) % 2;
         channel->requests[write_slot].data = req;

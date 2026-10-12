@@ -20,6 +20,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
 - (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)
 - RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate at the cost of a slightly larger buffer (eki-project#290)
+- The simulation-based FIFO sizing (`distributed_sim`) sporadically failed the final validation with a timeout for short simulations such as fully unrolled MLPs. When the simulation was stopped, the layers that were not the output layer kept simulating a few cycles, and how many depended on timing. Their cycle counts set the cycle limit and were checked against it, and those extra cycles were also counted in the measured FIFO occupancy. Now the simulation stops cleanly, the cycle limit comes from the output layer and only the output layer enforces it, so cycle counts and occupancies are the same in every run (eki-project#291)
 
 ## 1.6.1 - 01.10.2026
 
