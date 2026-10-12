@@ -61,6 +61,7 @@ from typing import Any, Literal, Optional, cast
 
 from finn.util.basic import alveo_default_platform, hbm_boards, part_map
 from finn.util.exception import FINNConfigurationError, FINNMultiFPGAConfigError
+from finn.util.resources import PLATFORM_RESOURCE_TYPES
 
 
 class LogLevel(str, Enum):
@@ -300,9 +301,7 @@ class MultiFPGAConfiguration:
     # The list of resource types that the partitioner should consider.
     # Only relevant if RESOURCE_UTILIZATION is chosen as a strategy
     # TODO: Add HBM / DDR
-    considered_resources: list[str] = field(
-        default_factory=lambda: ["LUT", "FF", "DSP", "BRAM_18K"]
-    )
+    considered_resources: list[str] = field(default_factory=lambda: PLATFORM_RESOURCE_TYPES)
 
     # Number of seconds before the solver doing the partitioning
     # times out.
