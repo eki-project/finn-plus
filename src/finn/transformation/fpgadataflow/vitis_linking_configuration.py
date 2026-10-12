@@ -51,7 +51,7 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
     gen_report_xml_path: Path = field(init=False, default_factory=lambda: Path())
     cu: list[str] = field(default_factory=list)
     nk: list[tuple[str, str]] = field(default_factory=list)
-    sc: dict[str, list[str]] = field(default_factory=dict)
+    sc: dict[str, str] = field(default_factory=dict)
     sp: dict[str, str] = field(default_factory=dict)
     xo: list[Path] = field(default_factory=list)
     slr: dict[str, str] = field(default_factory=dict)
@@ -175,7 +175,7 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
         >>> lc.add_cu("B", "b")
         >>> lc.add_sc("a.out", "b.in")
         >>> lc.sc["a.out"]
-        ['b.in']
+        'b.in'
         """  # noqa
         # Check formatting
         match = CU_PORT_REGEX.match(cu_sender)
@@ -207,10 +207,30 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
                 "swapped. Proceeding now."
             )
 
+        # AXI-Stream connections are point-to-point: Every port may only be part of a single
+        # streaming connection
+        for port in (cu_sender, cu_receiver):
+            if self.is_stream_port_connected(port):
+                raise FINNVitisLinkConfigError(
+                    f"Cannot add streaming connection {cu_sender}:{cu_receiver}, since port "
+                    f"{port} is already part of another streaming connection."
+                )
+
         # Add the connection
-        if cu_sender not in self.sc.keys():
-            self.sc[cu_sender] = []
-        self.sc[cu_sender].append(cu_receiver)
+        self.sc[cu_sender] = cu_receiver
+
+    def is_stream_port_connected(self, cu_port: str) -> bool:
+        """Return whether the given port (<compute_unit_name>.<port>) is already used as sender
+        or receiver of a streaming connection.
+
+        >>> lc = VitisLinkConfiguration(Path("conf.txt"), 100, "", "platform")
+        >>> lc.add_sc("a.out", "b.in")
+        >>> lc.is_stream_port_connected("a.out"), lc.is_stream_port_connected("b.in")
+        (True, True)
+        >>> lc.is_stream_port_connected("b.out")
+        False
+        """
+        return cu_port in self.sc or cu_port in self.sc.values()
 
     def add_slr(self, cu: str, slr: str) -> None:
         """Place the given CU on the given SLR."""
@@ -327,14 +347,13 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
         ['out']
         """
         ports = []
-        for send in self.sc.keys():
-            for recv in self.sc[send]:
-                send_name, send_port = send.split(".")
-                recv_name, recv_port = recv.split(".")
-                if send_name == cu:
-                    ports.append(send_port)
-                if recv_name == cu:
-                    ports.append(recv_port)
+        for send, recv in self.sc.items():
+            send_name, send_port = send.split(".")
+            recv_name, recv_port = recv.split(".")
+            if send_name == cu:
+                ports.append(send_port)
+            if recv_name == cu:
+                ports.append(recv_port)
 
         # Ports assigned to memory (implicitly used)
         ports += [name.split(".")[1] for name in self.sp.keys()]
@@ -359,50 +378,48 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
                     )
 
         # Check connections
-        for cu_sender, receivers in self.sc.items():
-            for cu_receiver in receivers:
-                # Check if the sender of a streaming connection is a known CU
-                sender_name, sender_port = cu_sender.split(".")
-                if sender_name not in self.cu:
-                    errors.append(
-                        FINNVitisLinkConfigError(
-                            f"Streaming connection {cu_sender}:"
-                            f"{cu_receiver} uses the unknown CU {sender_name}."
-                        )
+        for cu_sender, cu_receiver in self.sc.items():
+            # Check if the sender of a streaming connection is a known CU
+            sender_name, sender_port = cu_sender.split(".")
+            if sender_name not in self.cu:
+                errors.append(
+                    FINNVitisLinkConfigError(
+                        f"Streaming connection {cu_sender}:"
+                        f"{cu_receiver} uses the unknown CU {sender_name}."
                     )
+                )
 
-                # Check if the receiver of a streaming connection is a known CU
-                receiver_name, receiver_port = cu_receiver.split(".")
-                if receiver_name not in self.cu:
-                    errors.append(
-                        FINNVitisLinkConfigError(
-                            f"Streaming connection {cu_sender}:"
-                            f"{cu_receiver} uses the unknown "
-                            f"CU {receiver_name}."
-                        )
+            # Check if the receiver of a streaming connection is a known CU
+            receiver_name, receiver_port = cu_receiver.split(".")
+            if receiver_name not in self.cu:
+                errors.append(
+                    FINNVitisLinkConfigError(
+                        f"Streaming connection {cu_sender}:"
+                        f"{cu_receiver} uses the unknown "
+                        f"CU {receiver_name}."
                     )
+                )
 
-                # Check that the ports on the CUs exist
-                if not silent_warnings:
-                    sender_kernel = self._get_kernel_from_cu(sender_name)
-                    receiver_kernel = self._get_kernel_from_cu(receiver_name)
-                    if not any(
-                        port["name"] == sender_port for port in kerneldefs[sender_kernel]["ports"]
-                    ):
-                        log.warning(
-                            f"Port {sender_port} in streaming connection {cu_sender} "
-                            f"-> {cu_receiver} does not seem to exist on kernels of "
-                            f"type {sender_kernel}."
-                        )
-                    if not any(
-                        port["name"] == receiver_port
-                        for port in kerneldefs[receiver_kernel]["ports"]
-                    ):
-                        log.warning(
-                            f"Port {receiver_port} in streaming connection {cu_sender} "
-                            f"-> {cu_receiver} does not seem to exist on kernels of "
-                            f"type {receiver_kernel}."
-                        )
+            # Check that the ports on the CUs exist
+            if not silent_warnings:
+                sender_kernel = self._get_kernel_from_cu(sender_name)
+                receiver_kernel = self._get_kernel_from_cu(receiver_name)
+                if not any(
+                    port["name"] == sender_port for port in kerneldefs[sender_kernel]["ports"]
+                ):
+                    log.warning(
+                        f"Port {sender_port} in streaming connection {cu_sender} "
+                        f"-> {cu_receiver} does not seem to exist on kernels of "
+                        f"type {sender_kernel}."
+                    )
+                if not any(
+                    port["name"] == receiver_port for port in kerneldefs[receiver_kernel]["ports"]
+                ):
+                    log.warning(
+                        f"Port {receiver_port} in streaming connection {cu_sender} "
+                        f"-> {cu_receiver} does not seem to exist on kernels of "
+                        f"type {receiver_kernel}."
+                    )
 
         # Check for unused ports
         if not silent_warnings:

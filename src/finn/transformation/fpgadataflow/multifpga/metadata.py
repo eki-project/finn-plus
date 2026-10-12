@@ -8,9 +8,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from finn.util.basic import get_metadata_prop_path
+
 if TYPE_CHECKING:
     from pathlib import Path
     from qonnx.core.modelwrapper import ModelWrapper
+    from typing import Self
 
     from finn.builder.build_dataflow_config import MultiFPGAConfiguration
 
@@ -38,11 +41,24 @@ class NetworkMetadata(ABC):
         """
         return cls()
 
-    @staticmethod
-    @abstractmethod
-    def load_from_model(model: ModelWrapper) -> NetworkMetadata:
-        """Load the metadata from a modelwrapper."""
-        pass  # noqa
+    @classmethod
+    def load_from_model(cls, model: ModelWrapper) -> Self:
+        """Load the metadata from a modelwrapper. The `network_metadata` metadata prop of the
+        model points to the location the metadata was saved to (see `CreateNetworkMetadata`).
+        How the metadata is stored there is up to the subclass, which reads it in `load()`.
+        Must be called on the metadata class of the communication kernel that created the
+        metadata, e.g. `get_backend(kernel).metadata_type.load_from_model(model)`.
+        """
+        p = get_metadata_prop_path(
+            model,
+            "network_metadata",
+            must_exist=True,
+            custom_error=(
+                "Cannot load metadata from model, since no 'network_metadata' prop was set. "
+                "Did you forget to run the 'CreateNetworkMetadata' transformation before this?"
+            ),
+        )
+        return cls.load(p)
 
     @abstractmethod
     def __getitem__(self, key: Any) -> Any:
@@ -71,10 +87,10 @@ class NetworkMetadata(ABC):
         the metadata is stored at the location it was loaded from before.
         """
 
-    @staticmethod
+    @classmethod
     @abstractmethod
-    def load(p: Path) -> NetworkMetadata:
-        """Load the metadata from the given path."""
+    def load(cls, p: Path) -> Self:
+        """Load the metadata from the given path, as written by `save()`."""
 
     @abstractmethod
     def node_is_sender(self, node: str) -> bool:

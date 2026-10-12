@@ -81,6 +81,17 @@ def test_stops_invalid_config_generation() -> None:
     log.propagate = True
 
 
+@pytest.mark.parametrize(
+    "connection", [("a.out", "c.in"), ("c.out", "b.in")], ids=["sender", "receiver"]
+)
+def test_stream_port_used_only_once(connection: tuple[str, str]) -> None:
+    """Test that a port cannot be part of two streaming connections."""
+    lc = VitisLinkConfiguration(Path(make_build_dir("link_test_")) / "config.txt", 100, "", "")
+    lc.add_sc("a.out", "b.in")
+    with pytest.raises(FINNVitisLinkConfigError, match="already part of another"):
+        lc.add_sc(*connection)
+
+
 def test_script_generation() -> None:
     """Test that the script generation considers every parameter necessary in the
     v++ call.

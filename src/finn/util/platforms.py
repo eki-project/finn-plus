@@ -32,6 +32,8 @@ import numpy as np
 from abc import abstractmethod
 from numpy.typing import NDArray
 
+from finn.util.exception import FINNInternalError, FINNUserError
+
 # contains the amount of available FPGA resources for several
 # Xilinx platforms, as well as certain resource limit guidelines
 # for creating designs that can achieve timing closure
@@ -70,6 +72,13 @@ ETH_RESOURCE_REQUIREMENTS: dict[str, int] = {
     "DSP": 0,
 }
 
+# QSFP interface names of the Alveo XDMA platforms, as previously hard-coded in the AuroraFlow
+# linking configuration.
+# TODO: Verify for the other Alveo platforms / shell versions
+ALVEO_QSFP_GT_INTERFACE: str = "io_gt_qsfp{index}_00"
+ALVEO_QSFP_REFCLK_INTERFACE: str = "io_clk_qsfp{index}_refclkb_00"
+ALVEO_FREERUNNING_CLOCK: str = "ii_level0_wire/ulp_m_aclk_freerun_ref_00"
+
 
 class Platform:
     """Base class for platform resource and interconnect models."""
@@ -84,10 +93,21 @@ class Platform:
         eth_slr: int = 0,
         eth_gbps: int = 0,
         qsfp_slr: str | None = None,
+        qsfp_gt_interface: str | None = None,
+        qsfp_refclk_interface: str | None = None,
+        freerunning_clock: str | None = None,
         limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
         avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
     ) -> None:
-        """Initialize platform parameters and resource constraints."""
+        """Initialize platform parameters and resource constraints.
+
+        The QSFP interface names are templates in which `{index}` is replaced by the index of
+        the QSFP port. They are the names under which the Vitis platform (shell) exposes the
+        GT ports and reference clocks of its QSFPs. Use `get_qsfp_gt_interface` and
+        `get_qsfp_refclk_interface` to get the name for a specific QSFP port.
+        `freerunning_clock` is a free-running clock of the platform, used e.g. as the init clock
+        of transceiver kernels.
+        """
         if ddr_slr is None:
             ddr_slr = [0]
         if sll_count is None:
@@ -100,12 +120,53 @@ class Platform:
         self.hbm_slr = hbm_slr
         self.ddr_slr = ddr_slr
         self.qsfp_slr = qsfp_slr
+        self._qsfp_gt_interface = qsfp_gt_interface
+        self._qsfp_refclk_interface = qsfp_refclk_interface
+        self.freerunning_clock = freerunning_clock
         # limits must be a np.array either of
         # the same shape as compute_resources
         # or broadcastable to it
         self.res_limits = limits
         # list of tuples of the form ( tuple of resource positions to avg, limit )
         self.avg_constraints = avg_constraints
+
+    def get_qsfp_gt_interface(self, index: int) -> str:
+        """Return the name of the GT interface of the QSFP port with the given index. Raises an
+        error if the name is not known for this platform.
+
+        >>> Alveo_NxU55C_Platform().get_qsfp_gt_interface(1)
+        'io_gt_qsfp1_00'
+        >>> Zynq7020_Platform().get_qsfp_gt_interface(0)
+        Traceback (most recent call last):
+            ...
+        finn.util.exception.FINNUserError: The QSFP GT interface names of platform ...
+        """
+        if index < 0:
+            raise FINNInternalError(f"Invalid QSFP index {index}. QSFP indices start at 0.")
+        if self._qsfp_gt_interface is None:
+            raise FINNUserError(
+                f"The QSFP GT interface names of platform {type(self).__name__} are not known. "
+                f"The platform either has no QSFP ports, or they are missing from its platform "
+                f"definition (check platforms.py)."
+            )
+        return self._qsfp_gt_interface.format(index=index)
+
+    def get_qsfp_refclk_interface(self, index: int) -> str:
+        """Return the name of the reference clock interface of the QSFP port with the given index.
+        Raises an error if the name is not known for this platform.
+
+        >>> Alveo_NxU55C_Platform().get_qsfp_refclk_interface(1)
+        'io_clk_qsfp1_refclkb_00'
+        """
+        if index < 0:
+            raise FINNInternalError(f"Invalid QSFP index {index}. QSFP indices start at 0.")
+        if self._qsfp_refclk_interface is None:
+            raise FINNUserError(
+                f"The QSFP reference clock interface names of platform {type(self).__name__} are "
+                f"not known. The platform either has no QSFP ports, or they are missing from its "
+                f"platform definition (check platforms.py)."
+            )
+        return self._qsfp_refclk_interface.format(index=index)
 
     @property
     @abstractmethod
@@ -385,6 +446,9 @@ class Alveo_NxU50_Platform(Platform):
             eth_slr=1,
             eth_gbps=100,
             qsfp_slr="SLR1",
+            qsfp_gt_interface=ALVEO_QSFP_GT_INTERFACE,
+            qsfp_refclk_interface=ALVEO_QSFP_REFCLK_INTERFACE,
+            freerunning_clock=ALVEO_FREERUNNING_CLOCK,
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -421,6 +485,9 @@ class Alveo_NxU200_Platform(Platform):
             eth_slr=2,
             eth_gbps=100,
             qsfp_slr="SLR2",
+            qsfp_gt_interface=ALVEO_QSFP_GT_INTERFACE,
+            qsfp_refclk_interface=ALVEO_QSFP_REFCLK_INTERFACE,
+            freerunning_clock=ALVEO_FREERUNNING_CLOCK,
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -464,6 +531,9 @@ class Alveo_NxU250_Platform(Platform):
             eth_slr=3,
             eth_gbps=100,
             qsfp_slr="SLR2",
+            qsfp_gt_interface=ALVEO_QSFP_GT_INTERFACE,
+            qsfp_refclk_interface=ALVEO_QSFP_REFCLK_INTERFACE,
+            freerunning_clock=ALVEO_FREERUNNING_CLOCK,
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -498,6 +568,9 @@ class Alveo_NxU280_Platform(Platform):
             eth_slr=2,
             eth_gbps=100,
             qsfp_slr="SLR2",
+            qsfp_gt_interface=ALVEO_QSFP_GT_INTERFACE,
+            qsfp_refclk_interface=ALVEO_QSFP_REFCLK_INTERFACE,
+            freerunning_clock=ALVEO_FREERUNNING_CLOCK,
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -537,6 +610,9 @@ class Alveo_NxU55C_Platform(Platform):
             eth_slr=1,
             eth_gbps=100,
             qsfp_slr="SLR1",
+            qsfp_gt_interface=ALVEO_QSFP_GT_INTERFACE,
+            qsfp_refclk_interface=ALVEO_QSFP_REFCLK_INTERFACE,
+            freerunning_clock=ALVEO_FREERUNNING_CLOCK,
             limits=limits,
             avg_constraints=avg_constraints,
         )

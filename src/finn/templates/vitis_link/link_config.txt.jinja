@@ -2,10 +2,8 @@
 {% for kernel, cu in nk -%}
 nk={{ kernel }}:1:{{ cu }}
 {% endfor %}
-{% for origin_cu in sc.keys() -%}
-{% for target_cu in sc[origin_cu] -%}
+{% for origin_cu, target_cu in sc.items() -%}
 sc={{ origin_cu }}:{{ target_cu }}
-{% endfor -%}
 {% endfor %}
 {% for cu, sp_type in sp.items() -%}
 sp={{ cu }}:{{ sp_type }}

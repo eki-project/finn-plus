@@ -14,6 +14,9 @@ ResourceEstimates = dict[str, dict[str, int | float]]
 ResourceEstimatesByIndex = dict[int, dict[str, int | float]]
 """Short alias for a resource dict."""
 
+PLATFORM_RESOURCE_TYPES: list[str] = ["LUT", "FF", "BRAM_18K", "URAM", "DSP"]
+"""Resource types of the platforms in finn.util.platforms, in the order of `compute_resources`."""
+
 
 def _merge_resource_estimations(
     finn_estimates: ResourceEstimates, hls_estimates: ResourceEstimates
@@ -120,7 +123,7 @@ def _resources_per_device_per_slr(p: Platform) -> dict[int, dict[str, int]]:
     for slr in range(len(res)):
         new[slr] = {}
         # TODO: As soon as platforms.py uses dicts instead of lists this can be removed
-        for i, name in enumerate(["LUT", "FF", "BRAM_18K", "URAM", "DSP"]):
+        for i, name in enumerate(PLATFORM_RESOURCE_TYPES):
             new[slr][name] = res[slr][i]
     return new
 

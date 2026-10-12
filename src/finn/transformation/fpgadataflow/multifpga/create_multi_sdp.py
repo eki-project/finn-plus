@@ -114,6 +114,10 @@ class ResolveCircularPartitionIDs(Transformation):
     dependency. For example when given this graph with partition IDs A and B:
     -> A - B - A ->
        | --- /
+
+    TODO: The cycle detection traverses all downstream nodes for every node and uses list
+    lookups, so it scales roughly cubically with the number of nodes. This may become slow for
+    very large graphs.
     """  # noqa
 
     def __init__(self, partition_attribute: str = "partition_id") -> None:
