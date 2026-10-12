@@ -175,7 +175,7 @@ class VitisBuild(Transformation):
         # Multi-FPGA specific config changes
         if self.cfg.multifpga_configuration is not None:
             log.info("Modifying linking configuration for Multi-FPGA...")
-            backend = get_backend(self.cfg.multifpga_configuration.communication_kernel)
+            backend = get_backend(self.cfg.multifpga_configuration.network_backend)
             model = model.transform(backend.modify_link_config(self.cfg))
 
         # Check for errors and warnings

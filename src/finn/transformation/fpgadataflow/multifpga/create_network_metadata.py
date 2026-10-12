@@ -40,7 +40,7 @@ class CreateNetworkMetadata(Transformation):
         super().__init__()
         self.verbosity = multifpga_configuration.verbosity
         self.metadata_type: type[NetworkMetadata] = get_backend(
-            multifpga_configuration.communication_kernel
+            multifpga_configuration.network_backend
         ).metadata_type
 
         # Create the empty metadata object

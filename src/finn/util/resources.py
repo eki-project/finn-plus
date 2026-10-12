@@ -14,8 +14,8 @@ ResourceEstimates = dict[str, dict[str, int | float]]
 ResourceEstimatesByIndex = dict[int, dict[str, int | float]]
 """Short alias for a resource dict."""
 
-PLATFORM_RESOURCE_TYPES: list[str] = ["LUT", "FF", "BRAM_18K", "URAM", "DSP"]
-"""Resource types of the platforms in finn.util.platforms, in the order of `compute_resources`."""
+PLATFORM_RESOURCE_TYPES = ["LUT", "FF", "BRAM_18K", "URAM", "DSP"]
+"""Resource types listed per SLR in the platforms' `compute_resources` (in that order)."""
 
 
 def _merge_resource_estimations(

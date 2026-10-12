@@ -111,7 +111,7 @@ class PartitionForMultiFPGA(Transformation):
         self.verbosity = self.mfcfg.verbosity
 
         # Select the partitioner based on the communication kernel
-        self.partitioner_type = get_backend(self.mfcfg.communication_kernel).partitioner
+        self.partitioner_type = get_backend(self.mfcfg.network_backend).partitioner
 
         # These will be filled out after partitioning
         self.partitioner: Partitioner | None = None

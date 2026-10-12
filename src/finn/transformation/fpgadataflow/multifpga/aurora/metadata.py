@@ -57,7 +57,7 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
     """
 
     data: dict[int, list[AuroraNetworkKernelMetadata]] = field(default_factory=dict)
-    ports_per_device: int = 2
+    links_per_device: int = 2
     # Not serialized, since it is only valid for the file it was loaded from. Set by load().
     loaded_from_path: Path | None = field(default=None, metadata={"serialize": "omit"})
 
@@ -65,8 +65,8 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
     def create_from_multifpga_configuration(
         cls, mfcfg: MultiFPGAConfiguration
     ) -> AuroraNetworkMetadata:
-        """Create an empty metadata object, using the configured number of ports per device."""
-        return cls(ports_per_device=mfcfg.ports_per_device)
+        """Create an empty metadata object, using the configured number of links per device."""
+        return cls(links_per_device=mfcfg.links_per_device)
 
     @staticmethod
     def load_from_model(model: ModelWrapper) -> AuroraNetworkMetadata:
@@ -166,12 +166,12 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         # Check if we already used all ports on this device. If yes, we cannot map
         # the partitioning.
         current_ports_used = len(self.data[on_device])
-        if current_ports_used == self.ports_per_device:
+        if current_ports_used == self.links_per_device:
             raise FINNMultiFPGAConfigError(
                 f"Could not add a connection between devices "
                 f"{on_device} and {other_device}, because "
                 f"{on_device} already uses all of it's "
-                f"{self.ports_per_device} communication ports. "
+                f"{self.links_per_device} communication links. "
                 f"Unable to map this model to this setup."
             )
 

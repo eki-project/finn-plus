@@ -60,7 +60,8 @@ from pathlib import Path, PosixPath, PurePath
 from typing import Any, Literal, Optional, cast
 
 from finn.util.basic import alveo_default_platform, hbm_boards, part_map
-from finn.util.exception import FINNConfigurationError
+from finn.util.exception import FINNConfigurationError, FINNMultiFPGAConfigError
+from finn.util.resources import PLATFORM_RESOURCE_TYPES
 
 
 class LogLevel(str, Enum):
@@ -221,18 +222,18 @@ class PartitioningStrategy(str, Enum):
     LAYER_COUNT = "layer_count"
 
 
-class MFCommunicationKernel(str, Enum):
-    """Communication kernels for Multi-FPGA usage."""
+class MFNetworkBackendType(str, Enum):
+    """Network backends (communication kernels) for Multi-FPGA usage."""
 
-    AURORA = "aurora"
+    AURORAFLOW = "auroraflow"
 
 
 class MFTopology(str, Enum):
     """Topology for Multi-FPGA use."""
 
-    CHAIN = "chain"
-    RETURNCHAIN = "returnchain"
-    CIRCLE = "circle"
+    SIMPLEX_CHAIN = "simplex_chain"
+    DUPLEX_CHAIN = "duplex_chain"
+    RING = "ring"
 
 
 @dataclass
@@ -258,20 +259,20 @@ class MultiFPGAConfiguration:
     # device count
     num_fpgas: int = 0
 
-    # The number of ports per device - this might change in meaning,
+    # The number of network links per device - this might change in meaning,
     # depending on the communication kernel used
     # TODO: Should be moved into platforms.py
-    ports_per_device: int = 2
+    links_per_device: int = 2
 
     # What strategy to use to partition the dataflow graph
     partition_strategy: PartitioningStrategy = PartitioningStrategy.RESOURCE_UTILIZATION
 
     # Tells the flow what topology to use. This determines the transformation
     # that creates the network metadata necessary for kernel packing
-    topology: MFTopology = MFTopology.CHAIN
+    topology: MFTopology = MFTopology.SIMPLEX_CHAIN
 
-    # What kind of kernel is used to communicate in the network
-    communication_kernel: MFCommunicationKernel = MFCommunicationKernel.AURORA
+    # Which network backend (communication kernel) is used to communicate in the network
+    network_backend: MFNetworkBackendType = MFNetworkBackendType.AURORAFLOW
 
     # Arguments to pass along to the communication kernel. This can for example
     # be used to configure specific details, such as a receiver FIFO depth or
@@ -300,9 +301,7 @@ class MultiFPGAConfiguration:
     # The list of resource types that the partitioner should consider.
     # Only relevant if RESOURCE_UTILIZATION is chosen as a strategy
     # TODO: Add HBM / DDR
-    considered_resources: list[str] = field(
-        default_factory=lambda: ["LUT", "FF", "DSP", "BRAM_18K"]
-    )
+    considered_resources: list[str] = field(default_factory=lambda: PLATFORM_RESOURCE_TYPES)
 
     # Number of seconds before the solver doing the partitioning
     # times out.
@@ -331,6 +330,22 @@ class MultiFPGAConfiguration:
     # Since the Multi-FPGA flow contains a large number of extra steps (+ information), it benefits
     # from a verbosity setting that is independent of the general FINN one.
     verbosity: MFVerbosity = MFVerbosity.MEDIUM
+
+    def __post_init__(self) -> None:
+        """Convert the topology and network backend to their enums, unless they already are enum
+        members. Invalid values raise an error that lists all valid options. Configs read from
+        YAML/JSON are already checked by `DataflowBuildConfig.__pre_deserialize__`.
+        """
+        for name, options in [("topology", MFTopology), ("network_backend", MFNetworkBackendType)]:
+            value = getattr(self, name)
+            if isinstance(value, options):
+                continue
+            valid = [o.value for o in options]
+            if value not in valid:
+                raise FINNMultiFPGAConfigError(
+                    f"Invalid Multi-FPGA {name} '{value}'. Valid options are: {', '.join(valid)}"
+                )
+            setattr(self, name, options(value))
 
 
 #: List of steps that will be run as part of the standard dataflow build, in the
@@ -401,6 +416,27 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
                 "was renamed to 'multifpga_configuration' (MultiFPGAConfiguration). "
                 "Please update your config."
             )
+        mfcfg = d.get("multifpga_configuration")
+        if isinstance(mfcfg, dict):
+            for old, new in [
+                ("ports_per_device", "links_per_device"),
+                ("communication_kernel", "network_backend"),
+            ]:
+                if old in mfcfg:
+                    raise FINNMultiFPGAConfigError(
+                        f"The Multi-FPGA configuration field '{old}' was renamed to '{new}'. "
+                        "Please update your config."
+                    )
+            for name, options in [
+                ("topology", MFTopology),
+                ("network_backend", MFNetworkBackendType),
+            ]:
+                valid = [o.value for o in options]
+                if name in mfcfg and mfcfg[name] not in valid:
+                    raise FINNMultiFPGAConfigError(
+                        f"Invalid Multi-FPGA option {name} '{mfcfg[name]}'. "
+                        f"Valid options are: {', '.join(valid)}"
+                    )
         return d
 
     @classmethod

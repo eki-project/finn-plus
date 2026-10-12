@@ -17,7 +17,11 @@ from finn.util.exception import (
 )
 from finn.util.logging import log
 from finn.util.platforms import platforms
-from finn.util.resources import available_resources_on_platform, get_estimated_model_resources
+from finn.util.resources import (
+    PLATFORM_RESOURCE_TYPES,
+    available_resources_on_platform,
+    get_estimated_model_resources,
+)
 
 
 class AuroraPartitioner(Partitioner):
@@ -118,6 +122,26 @@ class AuroraPartitioner(Partitioner):
                         f"layers might make partitioning impossible, "
                         f"despite enough resources "
                         f"being available overall."
+                    )
+
+            # Error about resources that are ignored by the solver, but heavily used by the model
+            all_resources_available = available_resources_on_platform(
+                platforms[self.cfg.board](),  # type: ignore
+                PLATFORM_RESOURCE_TYPES,
+            )
+            for restype in PLATFORM_RESOURCE_TYPES:
+                if restype in self.mfcfg.considered_resources:
+                    continue
+                total_required = sum(rv.get(restype, 0) for rv in self.resource_estimates.values())
+                max_on_device = self.mfcfg.max_utilization * all_resources_available[restype]
+                if total_required > 0.5 * max_on_device:
+                    log.error(
+                        f"The model requires a total of {total_required} {restype}, which is more "
+                        f"than half of the allowed utilization of a single device "
+                        f"({max_on_device} {restype} at {self.mfcfg.max_utilization:.2%} max "
+                        f"utilization). However {restype} is not in considered_resources, so "
+                        f"the partitioner ignores it and might overutilize {restype} on a "
+                        f"device. Consider adding {restype} to considered_resources."
                     )
 
             # Give a warning if resource usage gets close to its maximum
@@ -329,7 +353,7 @@ class AuroraPartitioner(Partitioner):
 
         # Limit the number of connections per device (depends on the FPGAs QSFP ports)
         for device in range(self.mfcfg.num_fpgas):
-            self.model += self.connections_per_device[device] <= self.mfcfg.ports_per_device
+            self.model += self.connections_per_device[device] <= self.mfcfg.links_per_device
 
         # Consecutive nodes must be on consecutive devices
         self.device_diff: dict[str, dict[str, mip.Var]] = {}
@@ -376,7 +400,7 @@ class AuroraPartitioner(Partitioner):
                 "pass custom device constraints to the partitioner."
             )
         match self.mfcfg.topology:
-            case MFTopology.CHAIN:
+            case MFTopology.SIMPLEX_CHAIN:
                 for node in input_nodes:
                     self.model += self.chosen_device[node.name] == 0
                 for node in output_nodes:
@@ -388,7 +412,7 @@ class AuroraPartitioner(Partitioner):
                     for suc in self.get_successors(node):
                         self.model += self.chosen_device[suc.name] >= self.chosen_device[node.name]
 
-            case MFTopology.RETURNCHAIN:
+            case MFTopology.DUPLEX_CHAIN:
                 for node in input_nodes:
                     self.model += self.chosen_device[node.name] == 0
                 for node in output_nodes:

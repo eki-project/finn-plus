@@ -3,7 +3,7 @@
 import pytest
 
 from finn.builder.build_dataflow_config import (
-    MFCommunicationKernel,
+    MFNetworkBackendType,
     MFVerbosity,
     MultiFPGAConfiguration,
 )
@@ -14,12 +14,12 @@ from finn.util.exception import FINNInternalError, FINNMultiFPGAConfigError
 
 
 @pytest.mark.multifpga
-@pytest.mark.parametrize("communication_kernel", list(MFCommunicationKernel))
-def test_every_communication_kernel_has_backend(
-    communication_kernel: MFCommunicationKernel,
+@pytest.mark.parametrize("network_backend", list(MFNetworkBackendType))
+def test_every_network_backend_is_registered(
+    network_backend: MFNetworkBackendType,
 ) -> None:
     """Test that every selectable communication kernel has a registered backend."""
-    assert get_backend(communication_kernel).kernel == communication_kernel
+    assert get_backend(network_backend).type == network_backend
 
 
 @pytest.mark.multifpga
@@ -27,26 +27,26 @@ def test_missing_backend_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that looking up a kernel without a backend raises a configuration error, also when
     done indirectly by a transformation of the flow.
     """
-    monkeypatch.delitem(backend_module._BACKENDS, MFCommunicationKernel.AURORA)  # noqa: SLF001
-    with pytest.raises(FINNMultiFPGAConfigError, match="AURORA has no Multi-FPGA backend"):
-        get_backend(MFCommunicationKernel.AURORA)
+    monkeypatch.delitem(backend_module._BACKENDS, MFNetworkBackendType.AURORAFLOW)  # noqa: SLF001
+    with pytest.raises(FINNMultiFPGAConfigError, match="AURORAFLOW is not registered"):
+        get_backend(MFNetworkBackendType.AURORAFLOW)
     mfcfg = MultiFPGAConfiguration(
-        communication_kernel=MFCommunicationKernel.AURORA, verbosity=MFVerbosity.NONE
+        network_backend=MFNetworkBackendType.AURORAFLOW, verbosity=MFVerbosity.NONE
     )
-    with pytest.raises(FINNMultiFPGAConfigError, match="AURORA has no Multi-FPGA backend"):
+    with pytest.raises(FINNMultiFPGAConfigError, match="AURORAFLOW is not registered"):
         CreateNetworkMetadata(mfcfg)
 
 
 @pytest.mark.multifpga
 def test_duplicate_registration_raises() -> None:
     """Test that a communication kernel cannot be registered twice."""
-    existing = get_backend(MFCommunicationKernel.AURORA)
-    with pytest.raises(FINNInternalError, match="AURORA is already registered"):
+    existing = get_backend(MFNetworkBackendType.AURORAFLOW)
+    with pytest.raises(FINNInternalError, match="AURORAFLOW is already registered"):
         register_backend(
-            MFCommunicationKernel.AURORA,
+            MFNetworkBackendType.AURORAFLOW,
             partitioner=existing.partitioner,
             metadata_type=existing.metadata_type,
             prepare_kernels=existing.prepare_kernels,
             modify_link_config=existing.modify_link_config,
         )
-    assert get_backend(MFCommunicationKernel.AURORA) is existing
+    assert get_backend(MFNetworkBackendType.AURORAFLOW) is existing

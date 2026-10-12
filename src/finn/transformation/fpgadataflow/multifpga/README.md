@@ -10,13 +10,13 @@ An example configuration could look like this:
 multifpga_configuration:
   num_fpgas: 2
   partition_strategy: resource_utilization
-  topology: chain
-  communication_kernel: aurora
+  topology: simplex_chain
+  network_backend: auroraflow
   max_utilization: 0.8
   parallel_synthesis_workers: 2
 ```
 
-Such a configuration would try to partition the design onto 2 devices. To let the partitioner decide itself (based on estimate reports), select `-1`. The used partition strategy is `resource_utilization`, meaning that a balanced resource utilization is used as the metric to judge a good solution. The `chain` topology constrains the solver to a certain assignment of device IDs. `aurora` specifies which communication technology to use. `max_utilization` is used by the solver to make sure that the FPGAs resources are not overutilized. Finally, `parallel_synthesis_workers` specifies how many synthesis processes can run in parallel.
+Such a configuration would try to partition the design onto 2 devices. To let the partitioner decide itself (based on estimate reports), select `-1`. The used partition strategy is `resource_utilization`, meaning that a balanced resource utilization is used as the metric to judge a good solution. The `simplex_chain` topology constrains the solver to a certain assignment of device IDs. `auroraflow` specifies which network backend (communication technology) to use. `max_utilization` is used by the solver to make sure that the FPGAs resources are not overutilized. Finally, `parallel_synthesis_workers` specifies how many synthesis processes can run in parallel.
 
 Now simply run FINN+ as usual: `finn build cfg.yaml`.
 
@@ -53,7 +53,7 @@ Since different communication methods may work slightly differently, each commun
 At this point, depending on which communication methodology is used, custom preparation steps can be done. For example, the _AuroraFlow_ kernel needs to be configured and packaged into an XO file to be used at the linking stage. Such preparations can be done in this step (but are not required).
 
 #### Technical Details
-Everything that depends on the communication kernel is bundled in a `CommunicationBackend` (`backend.py`): the partitioner, the metadata class, the preparation transformation and the transformation that modifies the linker configuration. The steps of the flow look up the backend of the configured kernel with `get_backend(...)`. To add a new communication kernel, implement these four parts and register them with `register_backend(...)` at the end of `backend.py`.
+Everything that depends on the communication kernel is bundled in a `NetworkBackend` (`backend.py`): the partitioner, the metadata class, the preparation transformation and the transformation that modifies the linker configuration. The steps of the flow look up the backend of the configured kernel with `get_backend(...)`. To add a new communication kernel, implement these four parts and register them with `register_backend(...)` at the end of `backend.py`.
 
 ### (Synthesis)
 After everything is done, the SDPs are packaged into XOs as well (Vitis flow only) and the linker configuration is created. For Multi-FPGA, an additional transformation will be executed. This additional transformation modifies the linker configuration to, for example, instantiate the communication kernel and connect its stream interface with the compute kernel.

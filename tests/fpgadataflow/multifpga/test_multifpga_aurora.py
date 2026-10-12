@@ -28,7 +28,7 @@ from typing import Final, cast
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
-    MFCommunicationKernel,
+    MFNetworkBackendType,
     MFTopology,
     MFVerbosity,
     MIPSolver,
@@ -64,7 +64,7 @@ from finn.util.resources import (
 @pytest.mark.auroraflow
 @pytest.mark.multifpga
 @pytest.mark.parametrize("board", ["U55C"])
-@pytest.mark.parametrize("topology", [MFTopology.CHAIN])
+@pytest.mark.parametrize("topology", [MFTopology.SIMPLEX_CHAIN])
 @pytest.mark.parametrize(
     "communication_kernel_args",
     [{}, {"FIFO_WIDTH": 32, "TX_FIFO_SIZE": 8192, "RX_FIFO_SIZE": 65536}],
@@ -103,7 +103,7 @@ class TestAuroraFlowPreparationAndMetadata:
             board=board,
             multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=devices,
-                communication_kernel=MFCommunicationKernel.AURORA,
+                network_backend=MFNetworkBackendType.AURORAFLOW,
                 topology=topology,
                 communication_kernel_arguments=communication_kernel_args,
             ),
@@ -175,7 +175,7 @@ class TestAuroraFlowPreparationAndMetadata:
             multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=2,
                 topology=topology,
-                communication_kernel=MFCommunicationKernel.AURORA,
+                network_backend=MFNetworkBackendType.AURORAFLOW,
                 communication_kernel_arguments=communication_kernel_args,
             ),
         )
@@ -203,7 +203,7 @@ class TestAuroraFlowPreparationAndMetadata:
 @pytest.mark.auroraflow
 @pytest.mark.multifpga
 @pytest.mark.parametrize("board", ["U55C", "Pynq-Z1"])
-@pytest.mark.parametrize("topology", [MFTopology.CHAIN])
+@pytest.mark.parametrize("topology", [MFTopology.SIMPLEX_CHAIN])
 class TestAuroraFlowPartitioning:
     """Tests regarding the partitioning using the AuroraFlow kernel and partitioner class."""
 
@@ -318,11 +318,11 @@ class TestAuroraFlowPartitioning:
             multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=devices,
                 topology=topology,
-                communication_kernel=MFCommunicationKernel.AURORA,
+                network_backend=MFNetworkBackendType.AURORAFLOW,
                 partition_strategy=partition_strategy,
                 max_utilization=max_util,
                 ideal_utilization=ideal_util,
-                ports_per_device=2,
+                links_per_device=2,
                 separate_iodmas=True,
                 partition_solver=MIPSolver.GUROBI,
                 partition_solver_timeout=180,
@@ -513,11 +513,11 @@ class TestAuroraFlowPartitioning:
             multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=2,
                 topology=topology,
-                communication_kernel=MFCommunicationKernel.AURORA,
+                network_backend=MFNetworkBackendType.AURORAFLOW,
                 partition_strategy=strategy,
                 max_utilization=0.8,
                 ideal_utilization=0.7,
-                ports_per_device=2,
+                links_per_device=2,
                 separate_iodmas=True,
                 partition_solver=SOLVER,
                 partition_solver_timeout=TIMEOUT,
@@ -695,7 +695,7 @@ class TestAuroraFlowPartitioning:
                 ideal_utilization=ideal_util,
                 verbosity=MFVerbosity.EXTRA_HIGH,
                 topology=topology,
-                ports_per_device=network_ports,
+                links_per_device=network_ports,
                 single_stream_network=False,
                 considered_resources=considered_resources,
                 partition_solver=MIPSolver.GUROBI,
@@ -811,7 +811,7 @@ class TestAuroraFlowPartitioning:
                 assert abs(solution[node.name] - solution[s.name]) <= 1
 
         # No device was visited twice
-        if topology == MFTopology.CHAIN:
+        if topology == MFTopology.SIMPLEX_CHAIN:
             visited = [solution["0"]]
             for i in range(nodes - 1):
                 if solution[str(i + 1)] != solution[str(i)]:
@@ -879,7 +879,7 @@ class TestAuroraFlowPartitioning:
                 ideal_utilization=0.4,
                 verbosity=MFVerbosity.EXTRA_HIGH,
                 topology=topology,
-                ports_per_device=2,
+                links_per_device=2,
                 single_stream_network=False,
                 considered_resources=["LUT"],
                 partition_solver=MIPSolver.GUROBI,

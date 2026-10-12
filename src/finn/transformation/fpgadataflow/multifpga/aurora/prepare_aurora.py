@@ -52,7 +52,7 @@ class PrepareAuroraFlow(Transformation):
         self.make_args = " ".join(
             f"{k}={v}" for k, v in multifpga_configuration.communication_kernel_arguments.items()
         )
-        self.ports = multifpga_configuration.ports_per_device
+        self.ports = multifpga_configuration.links_per_device
         self.aurora_storage = Path(make_build_dir("aurora_storage_")).absolute()
         self.aurora_path = get_settings().finn_deps / "AuroraFlow"
         if not self.aurora_path.exists():
@@ -98,9 +98,9 @@ class PrepareAuroraFlow(Transformation):
         The directory is named 'aurora_device_<device>_index_<index>'.
         Inside are the packaged xo files.
 
-        >>> from finn.builder.build_dataflow_config import MFCommunicationKernel
+        >>> from finn.builder.build_dataflow_config import MFNetworkBackendType
         >>> p = MultiFPGAConfiguration(
-        ...     num_fpgas=2, ports_per_device=2, communication_kernel=MFCommunicationKernel.AURORA
+        ...     num_fpgas=2, links_per_device=2, network_backend=MFNetworkBackendType.AURORAFLOW
         ... )
         >>> t = PrepareAuroraFlow("xilinx_u55c_gen3x16_xdma_3_202210_1", "xcu55c-fsvh2892-2L-e", p)
         >>> xo = t.package_single("", device=0, index=0)

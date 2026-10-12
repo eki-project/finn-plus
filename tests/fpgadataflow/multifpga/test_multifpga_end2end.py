@@ -13,7 +13,7 @@ execution environment with driver testing.
 #     DataflowBuildConfig,
 #     LargeFIFOMemStyle,
 #     LogLevel,
-#     MFCommunicationKernel,
+#     MFNetworkBackendType,
 #     MFTopology,
 #     MFVerbosity,
 #     MultiFPGAConfiguration,
@@ -28,10 +28,11 @@ execution environment with driver testing.
 # @pytest.mark.vivado
 # @pytest.mark.multifpga
 # @pytest.mark.parametrize(
-#     "fpgas,synth_clk_period_ns,target_fps,mvau_wwidth_max,folding_two_pass,max_util,communication_kernel,topology,partition_strategy",
+#     "fpgas,synth_clk_period_ns,target_fps,mvau_wwidth_max,folding_two_pass,max_util,network_backend,topology,partition_strategy",
 #     [
 #         pytest.param(
-#             2, 10.0, 100, 412, True, 0.85, MFCommunicationKernel.AURORA, MFTopology.CHAIN,
+#             2, 10.0, 100, 412, True, 0.85, MFNetworkBackendType.AURORAFLOW,
+#             MFTopology.SIMPLEX_CHAIN,
 #             PartitioningStrategy.RESOURCE_UTILIZATION, id="slow_linear_aurora_resource"
 #         )
 #     ]
@@ -39,7 +40,7 @@ execution environment with driver testing.
 # def test_end2end_multifpga_mobilenet(
 #     fpgas: int, synth_clk_period_ns: float, target_fps: int,
 #     mvau_wwidth_max: int, folding_two_pass: bool,
-#     max_util: float, communication_kernel: MFCommunicationKernel, topology: MFTopology,
+#     max_util: float, network_backend: MFNetworkBackendType, topology: MFTopology,
 #     partition_strategy: PartitioningStrategy
 # ) -> None:
 #     """Do a complete end2end test of the Multi-FPGA variant of the mobilenet."""
@@ -47,10 +48,10 @@ execution environment with driver testing.
 #         multifpga_configuration=MultiFPGAConfiguration(
 #             partitioning=None,
 #             num_fpgas=fpgas,
-#             ports_per_device=2,
+#             links_per_device=2,
 #             partition_strategy=partition_strategy,
 #             topology=topology,
-#             communication_kernel=communication_kernel,
+#             network_backend=network_backend,
 #             communication_kernel_arguments={},
 #             max_utilization=max_util,
 #             ideal_utilization=max_util - 0.05,
