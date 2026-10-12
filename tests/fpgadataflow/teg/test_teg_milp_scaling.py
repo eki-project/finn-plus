@@ -40,7 +40,9 @@ through environment variables (the pipeline variables of the CI):
   "resnet18"}, ...]}``; an instance may carry its own ``time_limit``;
 * ``MILP_SCALING_SOLVER`` (``highs``/``gurobi``), ``MILP_SCALING_TIME_LIMIT`` (seconds per
   instance), ``MILP_SCALING_THREADS``, ``MILP_SCALING_MEM_LIMIT_GB``,
-  ``MILP_SCALING_MAX_CONSTRAINTS`` (instances above it are only sized, 0: no limit);
+  ``MILP_SCALING_MAX_CONSTRAINTS`` (instances above it are only sized, 0: no limit),
+  ``MILP_SCALING_SOLVER_PARAMS`` (JSON object of Gurobi parameters, e.g.
+  ``{"Method": 1, "NodefileStart": 200}``);
 * results go to ``$CI_PROJECT_DIR/reports/milp_scaling`` (archived by the CI) or the FINN
   build directory.
 
@@ -363,6 +365,7 @@ def test_milp_scaling_plan() -> None:
     threads = int(os.environ.get("MILP_SCALING_THREADS", "0"))
     mem_limit = os.environ.get("MILP_SCALING_MEM_LIMIT_GB")
     max_rows = int(os.environ.get("MILP_SCALING_MAX_CONSTRAINTS", "0"))
+    solver_params = json.loads(os.environ.get("MILP_SCALING_SOLVER_PARAMS") or "{}")
     out = results_dir()
     out.mkdir(parents=True, exist_ok=True)
     (out / "plan.json").write_text(
@@ -374,6 +377,7 @@ def test_milp_scaling_plan() -> None:
                 "threads": threads,
                 "mem_limit_gb": mem_limit,
                 "max_constraints": max_rows,
+                "solver_params": solver_params,
             },
             indent=2,
         )
@@ -411,12 +415,15 @@ def test_milp_scaling_plan() -> None:
                         time_limit=float(spec.get("time_limit", time_limit)),
                         threads=threads,
                         mem_limit_gb=float(mem_limit) if mem_limit else None,
+                        solver_params=solver_params,
                     )
             log.info(
                 f"{inst.label}: {row['size_constraints']} rows, "
                 f"{row.get('solve_s', '-')} s, {row.get('message', 'size only')} "
                 f"({time.time() - t0:.0f} s total)"
             )
+            # the summary after every instance: a job that is killed keeps a complete table
+            scaling.summarize(out)
         except Exception as exc:  # keep going: one failed instance must not lose the others
             log.error(f"instance {spec} failed: {exc!r}")
             failures.append((spec, repr(exc)))

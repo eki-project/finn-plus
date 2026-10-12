@@ -107,7 +107,9 @@ def ensure_model(path: Path) -> str:
     repo_root = next((p for p in path.parents if (p / ".dvc").is_dir()), None)
     if repo_root is None:
         return "no .dvc directory above the model"
-    lock = path.with_name(path.name + ".teg.lock")
+    # next to the .dvc file: the model's own directory does not exist before a directory
+    # import has been pulled
+    lock = dvc_file.with_name(dvc_file.name + ".teg.lock")
     with lock.open("w") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         if path.is_file():

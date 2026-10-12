@@ -406,6 +406,7 @@ def solve_milp(
     on_progress: ProgressFn | None = None,
     progress_interval: float = 60.0,
     mem_limit_gb: float | None = None,
+    solver_params: dict[str, object] | None = None,
 ) -> MILPResult:
     """Build and solve the periodic-schedule MILP.
 
@@ -432,6 +433,12 @@ def solve_milp(
         progress_interval: seconds between progress reports.
         mem_limit_gb: soft memory limit in GB after which the solver stops with its best
             solution (Gurobi ``SoftMemLimit``).
+        solver_params: further solver parameters by name (Gurobi only), applied last. The
+            root LP is solved with dual simplex by default (``Method = 1``): Gurobi's
+            concurrent root also runs the barrier method, whose factorisation of these
+            chain-structured instances needs memory far beyond the problem size (a
+            1.4M-row instance exceeded 600 GB in the ordering phase, while dual simplex
+            solved an 820k-row one in a few GB); pass ``{"Method": -1}`` to restore it.
     """
     inst = build_instance(model, period, candidates, cost, big_m)
     if inst.infeasible_message is not None:
@@ -450,6 +457,7 @@ def solve_milp(
             on_progress,
             progress_interval,
             mem_limit_gb,
+            solver_params,
         )
     raise FINNInternalError(f"Unknown MILP solver {solver!r} (highs or gurobi)")
 
@@ -544,6 +552,7 @@ def _solve_gurobi(
     on_progress: ProgressFn | None,
     progress_interval: float,
     mem_limit_gb: float | None,
+    solver_params: dict[str, object] | None = None,
 ) -> MILPResult:
     """Solve with Gurobi through ``gurobipy``'s matrix API."""
     try:
@@ -570,6 +579,9 @@ def _solve_gurobi(
             m.Params.MIPGap = mip_gap
         if mem_limit_gb:
             m.Params.SoftMemLimit = float(mem_limit_gb)
+        m.Params.Method = 1  # dual simplex at the root, see solve_milp
+        for key, value in (solver_params or {}).items():
+            m.setParam(str(key), value)
         nvar = len(inst.cvec)
         vtype = np.where(inst.integrality > 0, GRB.BINARY, GRB.CONTINUOUS)
         x = m.addMVar(nvar, lb=inst.lbv, ub=inst.ubv, obj=inst.cvec, vtype=vtype)

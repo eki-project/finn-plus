@@ -319,6 +319,7 @@ class RunMILPFIFOSizing(Transformation):
             on_progress=on_progress,
             progress_interval=float(cfg.teg_milp_progress_interval_s),
             mem_limit_gb=cfg.teg_milp_mem_limit_gb,
+            solver_params=dict(cfg.teg_milp_solver_params),
         )
         solver_info = {
             "solver": res.solver,

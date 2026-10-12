@@ -231,6 +231,7 @@ def run_instance(
     mem_limit_gb: float | None = None,
     progress_interval: float = 60.0,
     verify_frames: int = 16,
+    solver_params: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Solve one instance, keeping every incumbent on disk, and record the result row."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -291,6 +292,7 @@ def run_instance(
         on_progress=on_progress,
         progress_interval=progress_interval,
         mem_limit_gb=mem_limit_gb,
+        solver_params=solver_params,
     )
     verified = None
     verified_interval = None
@@ -301,6 +303,7 @@ def run_instance(
     row.update(
         {
             "solver": res.solver,
+            "solver_params": solver_params or {},
             "time_limit_s": time_limit,
             "threads": threads,
             "solve_s": round(res.solve_time, 2),

@@ -815,6 +815,12 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Soft memory limit in GB after which Gurobi stops with its best solution (None: none).
     teg_milp_mem_limit_gb: Optional[float] = None
 
+    #: (Only relevant when auto_fifo_strategy == milp and teg_milp_solver == gurobi)
+    #: Further Gurobi parameters by name, applied last (e.g. {"Method": -1, "NodefileStart":
+    #: 100}); the root LP uses dual simplex by default because the barrier method's
+    #: factorisation needs memory far beyond the size of these instances.
+    teg_milp_solver_params: dict[str, Any] = field(default_factory=dict)
+
     #: (Only relevant when auto_fifo_strategy == milp)
     #: Also offer the depths 2, 4, 8 and 16 below the 32-entry floor of the block-granular
     #: search as candidates, so that the MILP reports the true minimum.

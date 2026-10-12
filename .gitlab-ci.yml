@@ -72,6 +72,9 @@ variables:
   MILP_SCALING_MEM_LIMIT_GB:
     description: "TEST_SUITE = milp_scaling: soft memory limit of a solve in GB (Gurobi stops with its best solution)"
     value: "600"
+  MILP_SCALING_SOLVER_PARAMS:
+    description: "TEST_SUITE = milp_scaling: JSON object of further Gurobi parameters (default root method: dual simplex)"
+    value: "{}"
   MILP_SCALING_MAX_CONSTRAINTS:
     description: "TEST_SUITE = milp_scaling: instances with more constraint rows are only sized, not solved (0: no limit)"
     value: "0"
