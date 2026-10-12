@@ -10,7 +10,7 @@ from qonnx.util.basic import qonnx_make_model
 from typing import cast
 
 from finn.builder.build_dataflow_config import (
-    MFCommunicationKernel,
+    MFNetworkBackend,
     MFTopology,
     MFVerbosity,
     MultiFPGAConfiguration,
@@ -26,12 +26,12 @@ from tests.fpgadataflow.test_set_folding import make_multi_fclayer_model
 
 
 def make_mfcfg(
-    communication_kernel: MFCommunicationKernel, ports_per_device: int = 2
+    network_backend: MFNetworkBackend, links_per_device: int = 2
 ) -> MultiFPGAConfiguration:
     """Return a Multi-FPGA configuration for metadata creation, without logging output."""
     return MultiFPGAConfiguration(
-        communication_kernel=communication_kernel,
-        ports_per_device=ports_per_device,
+        network_backend=network_backend,
+        links_per_device=links_per_device,
         verbosity=MFVerbosity.NONE,
     )
 
@@ -51,9 +51,9 @@ def sdp_model(partition_topology: MFTopology) -> ModelWrapper:  # noqa
     """
 
     def device_id(i: int, nodes: int) -> int:
-        if partition_topology == MFTopology.CHAIN:
+        if partition_topology == MFTopology.SIMPLEX_CHAIN:
             return i
-        elif partition_topology == MFTopology.RETURNCHAIN:  # noqa
+        elif partition_topology == MFTopology.DUPLEX_CHAIN:  # noqa
             return max(i, abs(nodes - i))
         raise NotImplementedError()
 
@@ -83,34 +83,34 @@ def sdp_model(partition_topology: MFTopology) -> ModelWrapper:  # noqa
 @pytest.mark.multifpga
 @pytest.mark.auroraflow
 @pytest.mark.parametrize("nodes", [1, 10, 100])
-@pytest.mark.parametrize("communication_kernel", [MFCommunicationKernel.AURORA])
-def test_metadata_sdp_only(nodes: int, communication_kernel: MFCommunicationKernel) -> None:
+@pytest.mark.parametrize("network_backend", [MFNetworkBackend.AURORAFLOW])
+def test_metadata_sdp_only(nodes: int, network_backend: MFNetworkBackend) -> None:
     """Test that the network metadata assignment only accepts SDP-only graphs."""
     model: ModelWrapper = make_multi_fclayer_model(
         3, DataType["BINARY"], DataType["BINARY"], DataType["BINARY"], nodes
     )
     with pytest.raises(FINNError):
-        _ = model.transform(CreateNetworkMetadata(make_mfcfg(communication_kernel)))
+        _ = model.transform(CreateNetworkMetadata(make_mfcfg(network_backend)))
 
 
 @pytest.mark.multifpga
 @pytest.mark.auroraflow
-@pytest.mark.parametrize("communication_kernel", [MFCommunicationKernel.AURORA])
-@pytest.mark.parametrize("topology", [MFTopology.CHAIN, MFTopology.RETURNCHAIN])
+@pytest.mark.parametrize("network_backend", [MFNetworkBackend.AURORAFLOW])
+@pytest.mark.parametrize("topology", [MFTopology.SIMPLEX_CHAIN, MFTopology.DUPLEX_CHAIN])
 def test_metadata(
-    communication_kernel: MFCommunicationKernel,
+    network_backend: MFNetworkBackend,
     topology: MFTopology,
 ) -> None:
     """Test that metadata for a model is created correctly."""
     model = sdp_model(topology)
-    model = model.transform(CreateNetworkMetadata(make_mfcfg(communication_kernel)))
+    model = model.transform(CreateNetworkMetadata(make_mfcfg(network_backend)))
     path = get_metadata_prop_path(model, "network_metadata", must_exist=True)
 
     # Metadata file exists
     assert path.exists()
 
     # Load from model
-    meta = get_backend(communication_kernel).metadata_type.load_from_model(model)
+    meta = get_backend(network_backend).metadata_type.load_from_model(model)
 
     # Check per connection
     for node in model.graph.node:
@@ -127,7 +127,7 @@ def test_metadata(
                 assert meta.get_partner_node(successor.name, DataDirection.RX) == node.name
 
     # Aurora specific tests
-    if communication_kernel == MFCommunicationKernel.AURORA:
+    if network_backend == MFNetworkBackend.AURORAFLOW:
         meta = cast("AuroraNetworkMetadata", meta)
         devices = {get_device_id(node) for node in model.graph.node}
 
@@ -175,16 +175,16 @@ def test_metadata(
             )
     else:
         raise NotImplementedError(
-            f"No checks implemented for communication kernel {communication_kernel.name}"
+            f"No checks implemented for communication kernel {network_backend.name}"
         )
 
 
 @pytest.mark.multifpga
 @pytest.mark.auroraflow
-@pytest.mark.parametrize("communication_kernel", [MFCommunicationKernel.AURORA])
-@pytest.mark.parametrize("ports_per_device", [2, 3, 4])
-def test_metadata_ports_per_device(
-    communication_kernel: MFCommunicationKernel, ports_per_device: int
+@pytest.mark.parametrize("network_backend", [MFNetworkBackend.AURORAFLOW])
+@pytest.mark.parametrize("links_per_device", [2, 3, 4])
+def test_metadata_links_per_device(
+    network_backend: MFNetworkBackend, links_per_device: int
 ) -> None:
     """Test that the configured number of ports per device is respected by the metadata."""
     # Six SDPs alternating between device 0 and 1 cross devices five times. Both devices take
@@ -210,23 +210,23 @@ def test_metadata_ports_per_device(
             oh.make_graph(nodes, inputs=[tensors[0]], outputs=[tensors[-1]], name="graph")
         )
     )
-    transform = CreateNetworkMetadata(make_mfcfg(communication_kernel, ports_per_device))
-    match communication_kernel:
-        case MFCommunicationKernel.AURORA:
-            # Adding a connection that needs a new kernel on a device whose ports are all in use
+    transform = CreateNetworkMetadata(make_mfcfg(network_backend, links_per_device))
+    match network_backend:
+        case MFNetworkBackend.AURORAFLOW:
+            # Adding a connection that needs a new kernel on a device whose links are all in use
             # raises in AuroraNetworkMetadata._add_single_connection
-            if ports_per_device < 3:
-                with pytest.raises(FINNMultiFPGAConfigError, match="communication ports"):
+            if links_per_device < 3:
+                with pytest.raises(FINNMultiFPGAConfigError, match="communication links"):
                     _ = model.transform(transform)
                 return
             model = model.transform(transform)
             meta = AuroraNetworkMetadata.load_from_model(model)
-            assert meta.ports_per_device == ports_per_device
+            assert meta.links_per_device == links_per_device
             assert len(meta.data[0]) == 3
             assert len(meta.data[1]) == 3
         case _:
             raise NotImplementedError(
-                f"No checks implemented for communication kernel {communication_kernel.name}"
+                f"No checks implemented for communication kernel {network_backend.name}"
             )
 
 
@@ -236,7 +236,7 @@ def test_aurora_metadata_path_serialization() -> None:
     """Test that the load path is not stored in the file, but set again when loading."""
     build_dir = Path(make_build_dir("test_aurora_metadata_path_"))
     path = build_dir / "metadata.yaml"
-    meta = AuroraNetworkMetadata(ports_per_device=4)
+    meta = AuroraNetworkMetadata(links_per_device=4)
     meta.add_connection(0, "n0", 1, "n1")
     meta.save(path)
     assert "loaded_from_path" not in path.read_text()
@@ -244,7 +244,7 @@ def test_aurora_metadata_path_serialization() -> None:
     # Loading sets the path, so saving without a path writes back to the same file
     loaded = AuroraNetworkMetadata.load(path)
     assert loaded.loaded_from_path == path
-    assert loaded.ports_per_device == 4
+    assert loaded.links_per_device == 4
     assert loaded.data == meta.data
     loaded.add_connection(1, "n1", 2, "n2")
     loaded.save()
@@ -258,8 +258,8 @@ def test_aurora_metadata_path_serialization() -> None:
 
 @pytest.mark.multifpga
 @pytest.mark.auroraflow
-@pytest.mark.parametrize("communication_kernel", [MFCommunicationKernel.AURORA])
-def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
+@pytest.mark.parametrize("network_backend", [MFNetworkBackend.AURORAFLOW])
+def test_metadata_small(network_backend: MFNetworkBackend) -> None:
     """Test metadata creation on hand-crafted small models."""
     # Create the base model
     tensors = [oh.make_tensor_value_info(f"t_{i}", TensorProto.FLOAT, [1, 1]) for i in range(4)]
@@ -285,8 +285,8 @@ def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
     set_device_id(c_nodes[0], 0)
     set_device_id(c_nodes[1], 1)
     set_device_id(c_nodes[2], 2)
-    metadata_type = get_backend(communication_kernel).metadata_type
-    chain_model = chain_model.transform(CreateNetworkMetadata(make_mfcfg(communication_kernel)))
+    metadata_type = get_backend(network_backend).metadata_type
+    chain_model = chain_model.transform(CreateNetworkMetadata(make_mfcfg(network_backend)))
     meta = metadata_type.load_from_model(chain_model)
     assert meta.node_is_sender(c_nodes[0].name)
     assert meta.node_is_sender(c_nodes[1].name)
@@ -304,7 +304,7 @@ def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
     set_device_id(rc_nodes[0], 0)
     set_device_id(rc_nodes[1], 1)
     set_device_id(rc_nodes[2], 0)
-    rchain_model = rchain_model.transform(CreateNetworkMetadata(make_mfcfg(communication_kernel)))
+    rchain_model = rchain_model.transform(CreateNetworkMetadata(make_mfcfg(network_backend)))
     meta = metadata_type.load_from_model(rchain_model)
     assert meta.node_is_sender(rc_nodes[0].name)
     assert meta.node_is_sender(rc_nodes[1].name)
@@ -316,7 +316,7 @@ def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
     assert meta.get_partner_node(rc_nodes[1].name, DataDirection.TX) == rc_nodes[2].name
     assert meta.get_partner_node(rc_nodes[1].name, DataDirection.RX) == rc_nodes[0].name
     assert meta.get_partner_node(rc_nodes[2].name, DataDirection.RX) == rc_nodes[1].name
-    if communication_kernel == MFCommunicationKernel.AURORA:
+    if network_backend == MFNetworkBackend.AURORAFLOW:
         meta = cast("AuroraNetworkMetadata", meta)
         assert len(meta.data[0]) == 1
         assert len(meta.data[1]) == 1
@@ -330,5 +330,5 @@ def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
         ), str(meta.data[0])
     else:
         raise NotImplementedError(
-            f"No checks implemented for communication kernel {communication_kernel.name}"
+            f"No checks implemented for communication kernel {network_backend.name}"
         )

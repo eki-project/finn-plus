@@ -329,7 +329,7 @@ class AuroraPartitioner(Partitioner):
 
         # Limit the number of connections per device (depends on the FPGAs QSFP ports)
         for device in range(self.mfcfg.num_fpgas):
-            self.model += self.connections_per_device[device] <= self.mfcfg.ports_per_device
+            self.model += self.connections_per_device[device] <= self.mfcfg.links_per_device
 
         # Consecutive nodes must be on consecutive devices
         self.device_diff: dict[str, dict[str, mip.Var]] = {}
@@ -376,7 +376,7 @@ class AuroraPartitioner(Partitioner):
                 "pass custom device constraints to the partitioner."
             )
         match self.mfcfg.topology:
-            case MFTopology.CHAIN:
+            case MFTopology.SIMPLEX_CHAIN:
                 for node in input_nodes:
                     self.model += self.chosen_device[node.name] == 0
                 for node in output_nodes:
@@ -388,7 +388,7 @@ class AuroraPartitioner(Partitioner):
                     for suc in self.get_successors(node):
                         self.model += self.chosen_device[suc.name] >= self.chosen_device[node.name]
 
-            case MFTopology.RETURNCHAIN:
+            case MFTopology.DUPLEX_CHAIN:
                 for node in input_nodes:
                     self.model += self.chosen_device[node.name] == 0
                 for node in output_nodes:

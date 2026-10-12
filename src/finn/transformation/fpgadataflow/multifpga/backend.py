@@ -1,8 +1,8 @@
-"""Registry of the communication kernels supported by the Multi-FPGA flow. Each communication
-kernel registers one backend that bundles everything the flow needs for this kernel: The
-partitioner, the metadata class and the transformations to prepare the kernels and to add them to
-the linking configurations. Steps of the flow look up the backend with `get_backend()` instead of
-dispatching on the communication kernel themselves.
+"""Registry of the network backends (communication kernels) supported by the Multi-FPGA flow.
+Each communication kernel registers one backend that bundles everything the flow needs for this
+kernel: The partitioner, the metadata class and the transformations to prepare the kernels and to
+add them to the linking configurations. Steps of the flow look up the backend with `get_backend()`
+instead of dispatching on the communication kernel themselves.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
-    MFCommunicationKernel,
+    MFNetworkBackend,
     MultiFPGAConfiguration,
 )
 from finn.transformation.fpgadataflow.multifpga.aurora.link_config_transform import (
@@ -33,13 +33,13 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class CommunicationBackend:
+class NetworkBackend:
     """Everything the Multi-FPGA flow needs to know about one communication kernel.
     Create and register backends with `register_backend()`.
     """
 
-    kernel: MFCommunicationKernel
-    """The communication kernel this backend implements."""
+    backend: MFNetworkBackend
+    """The network backend (communication kernel) this entry implements."""
 
     partitioner: Callable[[DataflowBuildConfig, ModelWrapper], Partitioner]
     """Create the partitioner for the given model. Used by `PartitionForMultiFPGA`."""
@@ -54,43 +54,41 @@ class CommunicationBackend:
     """Create the transformation that adds the communication kernels to the linking configs."""
 
 
-_BACKENDS: dict[MFCommunicationKernel, CommunicationBackend] = {}
+_BACKENDS: dict[MFNetworkBackend, NetworkBackend] = {}
 
 
 def register_backend(
-    kernel: MFCommunicationKernel,
+    backend: MFNetworkBackend,
     *,
     partitioner: Callable[[DataflowBuildConfig, ModelWrapper], Partitioner],
     metadata_type: type[NetworkMetadata],
     prepare_kernels: Callable[[DataflowBuildConfig], Transformation],
     modify_link_config: Callable[[DataflowBuildConfig], Transformation],
-) -> CommunicationBackend:
-    """Create and register the backend for the given communication kernel and return it.
-    Raises an error if the kernel already has a backend.
+) -> NetworkBackend:
+    """Create and register the entry for the given network backend and return it.
+    Raises an error if the network backend is already registered.
     """
-    if kernel in _BACKENDS:
-        raise FINNInternalError(
-            f"A backend for communication kernel {kernel.name} is already registered."
-        )
-    backend = CommunicationBackend(
-        kernel=kernel,
+    if backend in _BACKENDS:
+        raise FINNInternalError(f"Network backend {backend.name} is already registered.")
+    entry = NetworkBackend(
+        backend=backend,
         partitioner=partitioner,
         metadata_type=metadata_type,
         prepare_kernels=prepare_kernels,
         modify_link_config=modify_link_config,
     )
-    _BACKENDS[kernel] = backend
-    return backend
+    _BACKENDS[backend] = entry
+    return entry
 
 
-def get_backend(kernel: MFCommunicationKernel) -> CommunicationBackend:
-    """Return the backend of the given communication kernel."""
+def get_backend(backend: MFNetworkBackend) -> NetworkBackend:
+    """Return the registered entry of the given network backend."""
     try:
-        return _BACKENDS[kernel]
+        return _BACKENDS[backend]
     except KeyError as e:
         raise FINNMultiFPGAConfigError(
-            f"Communication kernel {kernel.name} has no Multi-FPGA backend. Available "
-            f"communication kernels: {', '.join(k.name for k in _BACKENDS) or 'none'}"
+            f"Network backend {backend.name} is not registered for Multi-FPGA. Registered "
+            f"network backends: {', '.join(b.name for b in _BACKENDS) or 'none'}"
         ) from e
 
 
@@ -112,7 +110,7 @@ def _get_board(cfg: DataflowBuildConfig) -> str:
 
 # AuroraFlow
 register_backend(
-    MFCommunicationKernel.AURORA,
+    MFNetworkBackend.AURORAFLOW,
     partitioner=AuroraPartitioner,
     metadata_type=AuroraNetworkMetadata,
     prepare_kernels=lambda cfg: PrepareAuroraFlow(

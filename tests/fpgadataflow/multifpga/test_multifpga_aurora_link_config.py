@@ -8,11 +8,7 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import qonnx_make_model
 
-from finn.builder.build_dataflow_config import (
-    MFCommunicationKernel,
-    MFVerbosity,
-    MultiFPGAConfiguration,
-)
+from finn.builder.build_dataflow_config import MFNetworkBackend, MFVerbosity, MultiFPGAConfiguration
 from finn.transformation.fpgadataflow.multifpga.aurora.link_config_transform import (
     AddAuroraToLinkConfig,
 )
@@ -51,7 +47,7 @@ def test_link_config_shared_aurora_kernel(monkeypatch: pytest.MonkeyPatch) -> No
         )
     )
     mfcfg = MultiFPGAConfiguration(
-        communication_kernel=MFCommunicationKernel.AURORA, verbosity=MFVerbosity.NONE
+        network_backend=MFNetworkBackend.AURORAFLOW, verbosity=MFVerbosity.NONE
     )
     model = model.transform(CreateNetworkMetadata(mfcfg))
 

@@ -2051,7 +2051,7 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                                 "StreamingDataflowPartition creation!"
                             )
                 model = model.transform(CreateNetworkMetadata(mfcfg))
-                backend = get_backend(mfcfg.communication_kernel)
+                backend = get_backend(mfcfg.network_backend)
                 model = model.transform(backend.prepare_kernels(cfg))
 
             # Create / package XOs for all SDPs
