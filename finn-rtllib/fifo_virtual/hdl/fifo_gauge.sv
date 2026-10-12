@@ -34,9 +34,12 @@ module fifo_gauge #(
 	//-----------------------------------------------------------------------
 	// Control & Status Regs
 	logic [31:0]  Period   = 0; // sticky high bit for overflow detection
-	logic [ 3:0]  StallSig = 0;
+	logic [ 3:0]  StallSig = 0; // stall flags latched at frame boundaries
+	logic [ 3:0]  StallAcc = 0; // stall flags accumulated since the last RUN_* command
 	logic [31:0]  FillMax  = 0; // sticky high bit for overflow detection
+	logic [31:0]  FillPeak = 0; // peak occupancy since the last RUN_* command (any mode)
 	logic         fill_put;
+	logic         run_put;  // any RUN_* command: clears FillPeak and StallAcc
 	uwire [31:0]  fill_val;
 
 	//-----------------------------------------------------------------------
@@ -120,6 +123,7 @@ module fifo_gauge #(
 				IStall <= '{ default: 0 };
 				OStall <= '{ default: 0 };
 				StallSig <= '0;
+				StallAcc <= '0;
 			end
 			else begin
 				automatic stall_t  istall = '{
@@ -130,6 +134,15 @@ module fifo_gauge #(
 					rdy: OStall.rdy || (ovld && !ordy),
 					vld: OStall.vld || (ordy && !ovld)
 				};
+
+				// Run-sticky accumulation of the same four conditions, independent of
+				// frame boundaries, so that stalls are visible in deadlocked runs as well.
+				if(run_put)  StallAcc <= '0;
+				else begin
+					StallAcc[3:2] <= StallAcc[3:2] | { ovld && !ordy, ordy && !ovld };
+					StallAcc[1:0] <= StallAcc[1:0] | { ivld && !irdy, irdy && !ivld };
+				end
+
 				if(itxn && ilst) begin
 					StallSig[3:2] <= ostall;
 					istall = '{ default: 0 };
@@ -240,9 +253,9 @@ module fifo_gauge #(
 
 			// Local Patch Value Selection
 			uwire [31:0]  cfg_src =
-				State !=? IsRdWr?      Period  :
-				State !=? ReadIsStall? FillMax :
-				{ 28'b0, StallSig };
+				State !=? IsRdWr?      Period   :
+				State !=? ReadIsStall? FillPeak :
+				{ 24'b0, StallAcc, StallSig };
 			uwire [7:0]  cfg_val_b[4] = '{
 				// Cnt[1:0]
 				/*  2 */ 2: cfg_src[24+:8],
@@ -270,13 +283,15 @@ module fifo_gauge #(
 			cfg_put = 0;
 			cfg_set = 0;
 
-			fill_put =  0;
+			fill_put = 0;
+			run_put  = 0;
 
 			unique casex(State)
 			Start:
 				unique casex(icfg)
 				M_NOP: state_nxt <= Start;
 				M_RUN: begin // Run Control
+					run_put = 1;
 					unique casex(icfg)
 					M_RUN_BOUNDED:  begin fill_put = 0; io_mode_nxt = Bounded; end
 					M_RUN_PACED:    begin fill_put = 1; io_mode_nxt = Paced; end
@@ -366,6 +381,7 @@ module fifo_gauge #(
 			FillCnt <= 0;
 			Avl <= 0;
 			FillMax <= 0;
+			FillPeak <= 0;
 		end
 		else begin
 			FillCnt <= FillCnt + (itxn == otxn? 0 : itxn? 1 : -1);
@@ -373,6 +389,13 @@ module fifo_gauge #(
 
 			if(!cap && (iflow !=? fifo))  FillMax <= FillCnt;
 			if(fill_put)  FillMax <= fill_val;
+
+			// Peak occupancy in every mode. In paced/detached mode, this coincides with
+			// FillMax (both are the running maximum from 0 after the RUN_* command). In
+			// bounded mode, FillCnt reaches at most FillMax+1, and re-running with the
+			// capacity register set to FillPeak reproduces the execution exactly.
+			if(run_put)                    FillPeak <= 0;
+			else if(FillCnt > FillPeak)    FillPeak <= FillCnt;
 		end
 	end
 	assign	irdy = (iflow ==? free) || ((iflow ==? fifo) && cap);

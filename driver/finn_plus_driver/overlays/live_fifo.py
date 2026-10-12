@@ -1,12 +1,117 @@
 """Driver for live FIFO sizing experiments."""
 
 import json
+import math
 import matplotlib.pyplot as plt
 import os
 import random
 import time
+import warnings
 
+from finn_plus_driver.overlays.fifo_search import (
+    STALL_IVLD,
+    STALL_STICKY_SHIFT,
+    EvalResult,
+    EvaluationCache,
+    FeasibilityCheck,
+    SearchBudget,
+    SearchContext,
+    TotalBitsCost,
+    cache_to_iterations,
+    producer_blocked_from_stall,
+    resolve_strategy_name,
+    run_search,
+    search_result_to_dict,
+)
 from finn_plus_driver.overlays.instrumentation import FINNInstrumentationOverlay
+
+# Ring opcodes of the virtual FIFO gauge (finn-rtllib/fifo_virtual/hdl/fifo_gauge_pkg.sv)
+OP_NOP = 0x00
+OP_RUN_BOUNDED = 0x04
+OP_RUN_PACED = 0x05
+OP_RUN_DETACHED4 = 0x07
+OP_BARRIER_CLEAN = 0x08
+OP_COMP_PERIOD = 0x0A
+OP_READ_FILL = 0x0C
+OP_READ_STALL = 0x0D
+OP_WRITE_FILL = 0x0E
+
+#: Kwargs of experiment_fifosizing that are passed on to the search strategy
+STRATEGY_KWARGS = (
+    "seed_strategy",
+    "upper_bound_factor",
+    "node_order",
+    "pareto",
+    "pareto_cost_limit",
+    "allow_unreliable_flags",
+)
+
+
+class LiveFIFOOracle:
+    """Hardware implementation of the ``Oracle`` protocol of ``fifo_search``.
+
+    One evaluation is the inner loop of the original binary search: reset the accelerator,
+    configure the bounded FIFO depths, run with the throttled input for ``iteration_runtime``
+    seconds and read the instrumentation. Only when a strategy asks for them, the peak
+    occupancies (``READ_FILL``) and the stall flags (``READ_STALL``) of every FIFO are read
+    from the ring afterwards. Ring reads are non-intrusive; they cost a few ms per FIFO.
+    """
+
+    def __init__(self, overlay, iteration_runtime, throttle_interval, hw_capabilities):
+        """Bind to an overlay, the per-evaluation runtime and the input throttle interval."""
+        self.overlay = overlay
+        self.num_fifos = overlay.num_fifos
+        self.iteration_runtime = iteration_runtime
+        self.throttle_interval = throttle_interval
+        self.hw_capabilities = hw_capabilities
+        self.num_evaluations = 0
+
+    def evaluate(self, depths, need_flags=False, need_peaks=False):
+        """Measure one bounded configuration on the FPGA."""
+        ov = self.overlay
+        depths = [int(d) for d in depths]
+        ov.reset_accelerator()
+        ov.configure_fifos_bounded(depths)
+        ov.start_accelerator(throttle_interval=self.throttle_interval)
+        time.sleep(self.iteration_runtime)
+        (
+            overflow_err,
+            underflow_err,
+            frame,
+            checksum,
+            min_latency,
+            latency,
+            interval,
+            *_,
+        ) = ov.observe_instrumentation(False)
+        ov.stop_accelerator()
+        self.num_evaluations += 1
+        deadlock = interval == 0 or bool(overflow_err) or bool(underflow_err)
+
+        producer_blocked = None
+        stall_flags = None
+        flags_reliable = True
+        if need_flags:
+            # Registers are only cleared by RUN_* commands, so reading them after the run is safe.
+            stall_flags = tuple(ov.read_stall_flags())
+            sticky = bool(self.hw_capabilities.get("sticky_stall_flags", False))
+            producer_blocked = tuple(producer_blocked_from_stall(f, sticky) for f in stall_flags)
+            flags_reliable = sticky
+        peak = None
+        if need_peaks and self.hw_capabilities.get("peak_occupancy", False):
+            peak = tuple(ov.read_peak_occupancy())
+
+        return EvalResult(
+            depths=tuple(depths),
+            interval=interval,
+            latency=latency,
+            min_latency=min_latency,
+            deadlock=deadlock,
+            producer_blocked=producer_blocked,
+            stall_flags=stall_flags,
+            peak=peak,
+            flags_reliable=flags_reliable,
+        )
 
 
 class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
@@ -47,6 +152,11 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # This results in a minimum possible FIFO depth of 1 + 1 = 2.
         self.fifo_depth_offset = 1
 
+        # Capabilities of the virtual FIFO hardware, probed in experiment_fifosizing:
+        # - peak_occupancy: READ_FILL reports the peak occupancy of a bounded run
+        # - sticky_stall_flags: READ_STALL reports run-sticky stall flags in bits [7:4]
+        self.hw_capabilities = {"peak_occupancy": False, "sticky_stall_flags": False}
+
         # Sanity check
         # We expect 4 AXI-Lite peripherals:
         # fifo_controller_0, instrumentation_wrap_0, axi_gpio_0 (for reset), zynq_ps
@@ -83,7 +193,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
     def ctrl_set_depth(self, fifo_id, depth=2):
         """Set FIFO depth via WRITE_FILL instruction."""
         # Issue WRITE_FILL instruction (asynchronous, returns immediately)
-        self.ctrl_write(opcode=0x0E, fifo_id=fifo_id, value=depth)
+        self.ctrl_write(opcode=OP_WRITE_FILL, fifo_id=fifo_id, value=depth)
         # Read to confirm controller has returned to idle state
         self.ctrl_read(check_success=True)
 
@@ -91,8 +201,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         """Configure all FIFOs with bounded depths.
         Caller can supply a list of depths or a single depth for all FIFOs.
         """
-        if isinstance(depths, list):
-            fifo_depths = depths
+        if isinstance(depths, (list, tuple)):
+            fifo_depths = list(depths)
         else:
             fifo_depths = [depths] * self.num_fifos
 
@@ -101,25 +211,57 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             self.ctrl_set_depth(i, fifo_depths[i])
 
         # Issue RUN_BOUNDED instruction once all depths have been set
-        self.ctrl_read(opcode=0x04, check_success=True)
+        self.ctrl_read(opcode=OP_RUN_BOUNDED, check_success=True)
+
+    def read_peak_occupancy(self):
+        """Read the peak occupancy of every FIFO since the last RUN_* command (READ_FILL)."""
+        return [self.ctrl_read(opcode=OP_READ_FILL, fifo_id=i) for i in range(self.num_fifos)]
+
+    def read_stall_flags(self):
+        """Read the READ_STALL status byte of every FIFO.
+
+        Bits [3:0] are latched per frame, bits [7:4] accumulate since the last RUN_* command
+        (only with the extended gauge, see ``hw_capabilities``).
+        """
+        return [
+            self.ctrl_read(opcode=OP_READ_STALL, fifo_id=i) & 0xFF for i in range(self.num_fifos)
+        ]
+
+    def probe_hw_capabilities(self):
+        """Detect the virtual FIFO extensions from the stall flags after a paced run.
+
+        In paced mode every gauge is always ready and sees no valid input at least until the
+        pipeline fills, so the run-sticky "producer idle" flag (bit 4) must be set for every
+        FIFO if the extended gauge and the fixed controller are in the bitfile. An old controller
+        returns 0 for READ_STALL, an old gauge leaves bits [7:4] clear. Must be called after
+        ``run_paced`` and before the next RUN_* command.
+        """
+        flags = self.read_stall_flags()
+        sticky = all((f >> STALL_STICKY_SHIFT) & STALL_IVLD for f in flags)
+        self.hw_capabilities = {"peak_occupancy": sticky, "sticky_stall_flags": sticky}
+        print(
+            "HW CAPABILITIES: %s (stall flags after paced run: %s)"
+            % (self.hw_capabilities, ["0x%02x" % f for f in flags])
+        )
+        return self.hw_capabilities
 
     def run_detached(self):
         """Run FIFOs in detached mode to determine bottleneck period."""
         self.reset_accelerator()
 
         # Issue RUN_DETACHED4 instruction
-        self.ctrl_read(opcode=0x07, check_success=True)
+        self.ctrl_read(opcode=OP_RUN_DETACHED4, check_success=True)
         print("DEBUG: RUN_DETACHED4 completed")
 
         # Wait on detached run to complete by issuing BARRIER_CLEAN
         # Internally, the controller will re-issue this instruction until it succeeds
         # TODO: FIX BARRIER_CLEAN, simply sleep as a workaround
         time.sleep(5)
-        # self.ctrl_read(opcode=0x08, check_success=True)
+        # self.ctrl_read(opcode=OP_BARRIER_CLEAN, check_success=True)
         # print("DEBUG: BARRIER_CLEAN completed")
 
         # Issue COMP_PERIOD instruction to collect global max period across all FIFOs
-        max_period = self.ctrl_read(opcode=0x0A)
+        max_period = self.ctrl_read(opcode=OP_COMP_PERIOD)
         print("DEBUG: COMP_PERIOD completed")
         return max_period
 
@@ -128,7 +270,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.reset_accelerator()
 
         # Issue RUN_PACED instruction
-        self.ctrl_read(opcode=0x05, check_success=True)
+        self.ctrl_read(opcode=OP_RUN_PACED, check_success=True)
 
         # Let accelerator run for specified wallclock time
         self.start_accelerator(throttle_interval=throttle_interval)
@@ -146,9 +288,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.stop_accelerator()
 
         # Collect maximum occupancy of all FIFOs by issuing READ_FILL instructions
-        max_occupancy = []
-        for i in range(self.num_fifos):
-            max_occupancy.append(self.ctrl_read(opcode=0x0C, fifo_id=i))
+        max_occupancy = self.read_peak_occupancy()
 
         return max_occupancy, latency
 
@@ -161,6 +301,124 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         total_size_kB = total_size_bits / 8.0 / 1000.0
         return total_size_kB
 
+    def fifo_width_list(self):
+        """FIFO widths in bits as a list indexed by FIFO ID."""
+        return [self.fifo_widths[str(i)] for i in range(self.num_fifos)]
+
+    def run_fifo_search(
+        self,
+        search_strategy,
+        start_depth,
+        iteration_runtime,
+        throttle_interval=0,
+        stop_condition="both",
+        relaxation=0.0,
+        max_evaluations=None,
+        max_runtime_s=None,
+        **strategy_kwargs,
+    ):
+        """Run a FIFO depth search strategy on the hardware oracle.
+
+        Parameters
+        ----------
+        search_strategy : str
+            Name from ``fifo_search.SEARCH_STRATEGIES``: ``binary_<order>`` for the per-FIFO
+            binary search (orders: forward, reverse, largest_first, deepest_first, alternating,
+            random), ``bottom_up_exact`` or ``top_down_bnb``.
+        start_depth : int or list
+            Initial depth(s) for FIFOs; the performance targets are measured here.
+        iteration_runtime : float
+            Runtime for each test iteration in seconds
+        throttle_interval : int
+            Throttle interval in cycles
+        stop_condition : str
+            Metric to use for determining if a FIFO depth is too small. Options:
+            - "interval": Stop if interval degrades from target_interval
+            - "latency": Stop if latency degrades from target_latency
+            - "both": Stop if either interval or latency degrades
+        relaxation : float
+            Allowed degradation tolerance (0.0 to 1.0, where 1.0 = 100% degradation allowed).
+            Default 0.0 means no degradation allowed.
+        max_evaluations, max_runtime_s :
+            Budget of the search (hardware evaluations / wall-clock seconds), None = unlimited.
+        strategy_kwargs :
+            Passed on to the strategy (seed_strategy, upper_bound_factor, node_order, pareto,
+            pareto_cost_limit, allow_unreliable_flags).
+
+        Returns a dict with the keys of the original binary search (duration, fifo_depths,
+        log_total_fifo_size, log_interval, log_min_latency, log_latency, all_iterations) plus
+        ``search`` (the strategy summary) and ``result`` (the ``SearchResult``).
+        """
+        if isinstance(start_depth, (list, tuple)):
+            start_depths = tuple(int(d) for d in start_depth)
+        else:
+            start_depths = tuple([int(start_depth)] * self.num_fifos)
+
+        widths = self.fifo_width_list()
+        cost_model = TotalBitsCost(widths, offset=self.fifo_depth_offset)
+        oracle = LiveFIFOOracle(self, iteration_runtime, throttle_interval, self.hw_capabilities)
+        cache = EvaluationCache(oracle, cost_model)
+
+        # Run once at the start configuration to determine the targets (iteration "0")
+        start_time = time.time()
+        target = cache.evaluate(start_depths, role="target")
+        feasibility = FeasibilityCheck.from_result(stop_condition, relaxation, target.result)
+        budget = SearchBudget(max_evaluations=max_evaluations, max_runtime_s=max_runtime_s)
+        ctx = SearchContext(
+            oracle,
+            feasibility,
+            cost_model,
+            start_depths,
+            widths,
+            cache=cache,
+            budget=budget,
+            log=print,
+            rng=random,
+        )
+        result = run_search(search_strategy, ctx, **strategy_kwargs)
+        duration = int(time.time() - start_time)
+        print(f"Done ({duration} seconds)")
+        if result.abort_reason:
+            print(f"SEARCH ABORTED: {result.abort_reason}")
+        if result.budget_exhausted:
+            print("SEARCH BUDGET EXHAUSTED: reporting the best configuration found so far")
+
+        # Log of the successful configurations (target measurement + every PASS with a finite
+        # cost), as plotted by the original binary search graph
+        log_total_fifo_size, log_interval, log_min_latency, log_latency = [], [], [], []
+        for entry in cache.log:
+            if entry.index == 0 or (
+                entry.info.get("status") == "PASS" and math.isfinite(entry.cost)
+            ):
+                log_total_fifo_size.append(entry.cost)
+                log_interval.append(entry.result.interval)
+                log_min_latency.append(entry.result.min_latency)
+                log_latency.append(entry.result.latency)
+
+        return {
+            "duration": duration,
+            "fifo_depths": list(result.depths),
+            "log_total_fifo_size": log_total_fifo_size,
+            "log_interval": log_interval,
+            "log_min_latency": log_min_latency,
+            "log_latency": log_latency,
+            "all_iterations": cache_to_iterations(cache),
+            "search": {
+                **search_result_to_dict(result),
+                "stop_condition": stop_condition,
+                "relaxation": relaxation,
+                "iteration_runtime_s": iteration_runtime,
+                "throttle_interval": throttle_interval,
+                "target_interval_cycles": feasibility.target_interval,
+                "target_latency_cycles": feasibility.target_latency,
+                "relaxed_interval_threshold": feasibility.relaxed_interval_threshold,
+                "relaxed_latency_threshold": feasibility.relaxed_latency_threshold,
+                "hw_capabilities": dict(self.hw_capabilities),
+                "num_cache_hits": cache.num_cache_hits,
+            },
+            "result": result,
+        }
+
     def size_iteratively_binary_search(
         self,
         start_depth,
@@ -172,232 +430,17 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
     ):
         """Iteratively reduce FIFO depths using binary search to find minimum for each FIFO.
 
-        Parameters
-        ----------
-        start_depth : int or list
-            Initial depth(s) for FIFOs
-        iteration_runtime : float
-            Runtime for each test iteration in seconds
-        throttle_interval : int
-            Throttle interval in cycles
-        fifo_order_strategy : str
-            Strategy for ordering FIFO optimization. Options:
-            - "forward": Topological order (FIFO 0 to N-1)
-            - "reverse": Reverse topological order (FIFO N-1 to 0)
-            - "largest_first": Sort by initial size (depth * width)
-            - "deepest_first": Sort by initial depth
-            - "alternating": Ping-pong between first and last FIFOs
-            - "random": Random shuffle order
-        stop_condition : str
-            Metric to use for determining if a FIFO depth is too small. Options:
-            - "interval": Stop if interval degrades from target_interval
-            - "latency": Stop if latency degrades from target_latency
-            - "both": Stop if either interval or latency degrades
-        relaxation : float
-            Allowed degradation tolerance (0.0 to 1.0, where 1.0 = 100% degradation allowed).
-            Default 0.0 means no degradation allowed.
+        Kept for compatibility: this is ``run_fifo_search`` with the ``binary_<order>``
+        strategy and returns the same dict as before (plus the ``search`` summary).
         """
-        fifo_minimum_reached = [False] * self.num_fifos
-
-        if isinstance(start_depth, list):
-            # Individual start depth for each FIFO has been supplied
-            fifo_depths = start_depth.copy()
-        else:
-            # Initialize all depths to the same start depth
-            fifo_depths = [start_depth] * self.num_fifos
-
-        # Reset accelerator and configure FIFOs
-        self.reset_accelerator()
-        self.configure_fifos_bounded(fifo_depths)
-
-        # Run once to determine target interval
-        self.start_accelerator(throttle_interval=throttle_interval)
-        time.sleep(iteration_runtime)
-        (
-            overflow_err,
-            underflow_err,
-            frame,
-            checksum,
-            min_latency,
-            latency,
-            interval,
-            *_,
-        ) = self.observe_instrumentation(False)
-        log_total_fifo_size = [self.total_fifo_size(fifo_depths)]
-        log_interval = [interval]
-        log_min_latency = [min_latency]
-        log_latency = [latency]
-        all_iterations = {
-            "0": {
-                "interval": interval,
-                "min_latency": min_latency,
-                "latency": latency,
-                "total_fifo_size_kB": self.total_fifo_size(fifo_depths),
-                "fifo_depths": fifo_depths.copy(),
-            }
-        }
-        target_interval = interval
-        target_latency = latency
-
-        # Apply relaxation to thresholds
-        # Always allow 0.05% latency degradation due to jitter observed for some models
-        latency_default_relaxation = 0.0005
-        relaxed_interval_threshold = target_interval * (1 + relaxation)
-        relaxed_latency_threshold = target_latency * (1 + (latency_default_relaxation + relaxation))
-
-        # Binary search for each FIFO to find minimum depth
-        iteration = 0
-        start_time = time.time()
-
-        # Determine search order based on strategy
-        if fifo_order_strategy == "forward":
-            fifo_order = list(range(self.num_fifos))
-        elif fifo_order_strategy == "reverse":
-            fifo_order = list(range(self.num_fifos - 1, -1, -1))
-        elif fifo_order_strategy == "largest_first":
-            fifo_order = sorted(
-                range(self.num_fifos), key=lambda i: -fifo_depths[i] * self.fifo_widths[str(i)]
-            )
-        elif fifo_order_strategy == "deepest_first":
-            fifo_order = sorted(range(self.num_fifos), key=lambda i: -fifo_depths[i])
-        elif fifo_order_strategy == "alternating":
-            # Ping-pong between first and last
-            fifo_order = []
-            left, right = 0, self.num_fifos - 1
-            while left <= right:
-                fifo_order.append(left)
-                if left != right:
-                    fifo_order.append(right)
-                left += 1
-                right -= 1
-        elif fifo_order_strategy == "random":
-            fifo_order = list(range(self.num_fifos))
-            random.shuffle(fifo_order)
-        else:
-            raise ValueError(f"Unknown fifo_order_strategy: {fifo_order_strategy}")
-
-        for fifo_id in fifo_order:
-            print(f"Binary searching for FIFO {fifo_id}...")
-
-            # Binary search bounds
-            low = 1
-            high = fifo_depths[fifo_id]
-            best_working_depth = high
-
-            while low <= high:
-                mid = (low + high) // 2
-
-                # Test with this depth
-                test_depths = fifo_depths.copy()
-                test_depths[fifo_id] = mid
-
-                # Reset accelerator
-                self.reset_accelerator()
-
-                # Configure all FIFOs
-                self.configure_fifos_bounded(test_depths)
-
-                # Start accelerator
-                self.start_accelerator(throttle_interval=throttle_interval)
-
-                # Let it run
-                time.sleep(iteration_runtime)
-
-                # Check if throughput dropped or deadlock occurred
-                (
-                    overflow_err,
-                    underflow_err,
-                    frame,
-                    checksum,
-                    min_latency,
-                    latency,
-                    interval,
-                    *_,
-                ) = self.observe_instrumentation(False)
-
-                # Determine if this depth causes degradation based on stop_condition
-                if stop_condition == "interval":
-                    degraded = interval > relaxed_interval_threshold
-                elif stop_condition == "latency":
-                    degraded = latency > relaxed_latency_threshold
-                elif stop_condition == "both":
-                    degraded = (
-                        interval > relaxed_interval_threshold or latency > relaxed_latency_threshold
-                    )
-                else:
-                    raise ValueError(f"Unknown stop_condition: {stop_condition}")
-
-                if degraded or interval == 0 or overflow_err or underflow_err:
-                    # This depth is too small, search higher
-                    low = mid + 1
-                    result_status = "FAIL"
-                else:
-                    # This depth works, try smaller
-                    best_working_depth = mid
-                    high = mid - 1
-                    result_status = "PASS"
-
-                    # Log this successful configuration
-                    log_total_fifo_size.append(self.total_fifo_size(test_depths))
-                    log_interval.append(interval)
-                    log_min_latency.append(min_latency)
-                    log_latency.append(latency)
-
-                iteration += 1
-
-                # Log all iterations
-                all_iterations[str(iteration)] = {
-                    "tested_fifo": fifo_id,
-                    "tested_depth": mid,
-                    "status": result_status,
-                    "search_bounds": [low, high],
-                    "best_working_depth": best_working_depth,
-                    "interval": interval,
-                    "min_latency": min_latency,
-                    "latency": latency,
-                    "total_fifo_size_kB": self.total_fifo_size(test_depths),
-                    "fifo_depths": test_depths.copy(),
-                }
-
-                # Report status
-                result = result_status
-                print(f"  Iteration {iteration}: Testing depth {mid} - {result}")
-                print(f"    Binary search bounds: [{low}, {high}]")
-                print(f"    Best working depth so far: {best_working_depth}")
-                if stop_condition == "interval" or stop_condition == "both":
-                    print(
-                        f"    Interval: {interval}, "
-                        f"Threshold: {relaxed_interval_threshold:.1f} "
-                        f"(Target: {target_interval})"
-                    )
-                if stop_condition == "latency" or stop_condition == "both":
-                    print(
-                        f"    Latency: {latency}, "
-                        f"Threshold: {relaxed_latency_threshold:.1f} "
-                        f"(Target: {target_latency})"
-                    )
-
-            # Set the FIFO to its minimum working depth
-            fifo_depths[fifo_id] = best_working_depth
-            fifo_minimum_reached[fifo_id] = True
-
-            print(f"  FIFO {fifo_id} minimized to depth {best_working_depth}")
-            print(f"  Number of minimized FIFOs: {sum(fifo_minimum_reached)}/{self.num_fifos}")
-            print(f"  Total FIFO Size (kB): {self.total_fifo_size(fifo_depths)}")
-
-        end_time = time.time()
-        duration = int(end_time - start_time)
-        print(f"Done ({duration} seconds)")
-
-        return {
-            "duration": duration,
-            "fifo_depths": fifo_depths,
-            "log_total_fifo_size": log_total_fifo_size,
-            "log_interval": log_interval,
-            "log_min_latency": log_min_latency,
-            "log_latency": log_latency,
-            "all_iterations": all_iterations,
-        }
+        return self.run_fifo_search(
+            f"binary_{fifo_order_strategy}",
+            start_depth,
+            iteration_runtime,
+            throttle_interval=throttle_interval,
+            stop_condition=stop_condition,
+            relaxation=relaxation,
+        )
 
     def generate_fifosizing_graph(
         self,
@@ -457,16 +500,76 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         plt.tight_layout()
         plt.savefig(os.path.join(report_dir, "fifo_sizing_graph.png"), dpi=300)
+        plt.close(fig)
+
+    def generate_search_graph(self, search_log, report_dir):
+        """Plot the incumbent cost over the evaluations of an exact search and its lower bound."""
+        result = search_log["result"]
+        num_evaluations = max(1, result.num_evaluations)
+        trace = list(result.incumbent_trace)
+        if not trace or trace[0][0] > 0:
+            trace.insert(0, (0, search_log["log_total_fifo_size"][0]))
+        xs = [i for i, _ in trace] + [num_evaluations]
+        ys = [c for _, c in trace] + [trace[-1][1]]
+
+        fig, ax = plt.subplots()
+        ax.step(xs, ys, where="post", color="tab:red", label="Incumbent (best feasible)")
+        if result.lower_bounds_cost is not None and math.isfinite(result.lower_bounds_cost):
+            ax.axhline(
+                result.lower_bounds_cost,
+                color="tab:gray",
+                linestyle=":",
+                label="Cost of per-FIFO lower bounds",
+            )
+        if result.lower_bound_cost is not None and math.isfinite(result.lower_bound_cost):
+            ax.axhline(
+                result.lower_bound_cost,
+                color="tab:blue",
+                linestyle="--",
+                label="Proven lower bound",
+            )
+        ax.set_xlabel("Hardware evaluation")
+        ax.set_ylabel("Total FIFO Size [kB]")
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0)
+        ax.set_title(
+            "%s: %s" % (result.strategy, "optimal proven" if result.optimal_proven else "gap open")
+        )
+        ax.legend(loc="upper right")
+        plt.tight_layout()
+        plt.savefig(os.path.join(report_dir, "fifo_sizing_graph.png"), dpi=300)
+        plt.close(fig)
 
     def experiment_fifosizing(self, *args, **kwargs):
-        """Run live FIFO sizing experiment and save report."""
-        fifo_search_order = kwargs.get("fifo_search_order", "largest_first")
+        """Run live FIFO sizing experiment and save report.
+
+        Kwargs: ``search_strategy`` (default ``binary_largest_first``; ``fifo_search_order``
+        is accepted as a deprecated alias for ``binary_<order>``), ``stop_condition``,
+        ``relaxation``, ``relaxation_sweep`` (binary strategies only), ``max_evaluations``,
+        ``max_runtime_s``, ``iteration_runtime_factor`` (safety factor on the per-evaluation
+        runtime heuristic), ``hw_capabilities`` ("auto" or a bool overriding the probe) and the
+        strategy-specific ``seed_strategy``, ``upper_bound_factor``, ``node_order``, ``pareto``,
+        ``pareto_cost_limit``, ``allow_unreliable_flags``.
+        """
+        fifo_search_order = kwargs.get("fifo_search_order")
+        if fifo_search_order is not None:
+            warnings.warn(
+                "fifo_search_order is deprecated, use search_strategy='binary_<order>'",
+                DeprecationWarning,
+            )
+        search_strategy = resolve_strategy_name(kwargs.get("search_strategy"), fifo_search_order)
         stop_condition = kwargs.get("stop_condition", "both")
         relaxation = kwargs.get("relaxation", 0.0)
         relaxation_sweep = kwargs.get("relaxation_sweep", False)
+        max_evaluations = kwargs.get("max_evaluations")
+        max_runtime_s = kwargs.get("max_runtime_s")
+        iteration_runtime_factor = kwargs.get("iteration_runtime_factor", 1.0)
+        hw_capabilities = kwargs.get("hw_capabilities", "auto")
+        strategy_kwargs = {k: kwargs[k] for k in STRATEGY_KWARGS if k in kwargs}
+        is_binary = search_strategy.startswith("binary_")
         base_report_dir = kwargs.get("report_dir")
-        # Create subdirectory for this search order + stop condition
-        report_dir = os.path.join(base_report_dir, fifo_search_order, stop_condition)
+        # Create subdirectory for this search strategy + stop condition
+        report_dir = os.path.join(base_report_dir, search_strategy, stop_condition)
         os.makedirs(report_dir, exist_ok=True)
         reportfile = os.path.join(report_dir, "report_experiment_fifosizing.json")
 
@@ -482,22 +585,39 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         for fifo_id, occupancy in enumerate(max_occupancy):
             print(f"{fifo_id:7} | {occupancy:13}")
         print("TOTAL FIFO SIZE @ MAX OCCUPANCY (kB): %f" % self.total_fifo_size(max_occupancy))
+        # Detect the virtual FIFO extensions (peak occupancy, run-sticky stall flags)
+        if hw_capabilities == "auto":
+            self.probe_hw_capabilities()
+        else:
+            self.hw_capabilities = {
+                "peak_occupancy": bool(hw_capabilities),
+                "sticky_stall_flags": bool(hw_capabilities),
+            }
+            print("HW CAPABILITIES (from kwargs): %s" % self.hw_capabilities)
 
         print("---PHASE 3: ITERATIVE MINIMIZATION---")
-        print("FIFO SEARCH ORDER: %s" % fifo_search_order)
+        print("SEARCH STRATEGY: %s" % search_strategy)
         print("STOP CONDITION: %s" % stop_condition)
         print("RELAXATION: %.1f%%" % (relaxation * 100))
         print("RELAXATION SWEEP: %s" % ("Enabled" if relaxation_sweep else "Disabled"))
+        if strategy_kwargs:
+            print("STRATEGY KWARGS: %s" % strategy_kwargs)
+        if max_evaluations is not None or max_runtime_s is not None:
+            print("BUDGET: %s evaluations, %s s" % (max_evaluations, max_runtime_s))
         # Determine search iteration runtime via heuristic based on free-running latency
         iteration_runtime = max(0.001, (paced_latency * 4) * 10 / 1000 / 1000 / 1000)
+        iteration_runtime *= iteration_runtime_factor
 
-        search_log = self.size_iteratively_binary_search(
+        search_log = self.run_fifo_search(
+            search_strategy,
             start_depth=max_occupancy,
             iteration_runtime=iteration_runtime,
             throttle_interval=max_period,
-            fifo_order_strategy=fifo_search_order,
             stop_condition=stop_condition,
             relaxation=relaxation,
+            max_evaluations=max_evaluations,
+            max_runtime_s=max_runtime_s,
+            **strategy_kwargs,
         )
 
         fifo_depths = search_log["fifo_depths"]
@@ -505,22 +625,34 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         log_interval = search_log["log_interval"]
         log_min_latency = search_log["log_min_latency"]
         log_latency = search_log["log_latency"]
+        result = search_log["result"]
 
         # Generate visualization graph
-        self.generate_fifosizing_graph(
-            log_total_fifo_size,
-            log_min_latency,
-            log_latency,
-            log_interval,
-            report_dir,
-            stop_condition,
-        )
+        if is_binary:
+            self.generate_fifosizing_graph(
+                log_total_fifo_size,
+                log_min_latency,
+                log_latency,
+                log_interval,
+                report_dir,
+                stop_condition,
+            )
+        else:
+            self.generate_search_graph(search_log, report_dir)
 
-        # Calculate relative degradation
+        # Final performance: the measurement of the final configuration if it was evaluated,
+        # otherwise the last successful configuration of the log
         target_interval = log_interval[0]
         target_latency = log_latency[0]
-        final_interval = log_interval[-1]
-        final_latency = log_latency[-1]
+        if result.result is not None:
+            final_interval = result.result.interval
+            final_latency = result.result.latency
+            final_min_latency = result.result.min_latency
+        else:
+            final_interval = log_interval[-1]
+            final_latency = log_latency[-1]
+            final_min_latency = log_min_latency[-1]
+        final_total_fifo_size = self.total_fifo_size(fifo_depths)
 
         interval_degradation = (
             (final_interval - target_interval) / target_interval if target_interval != 0 else 0
@@ -531,7 +663,12 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         # Relaxation sweep: explore additional relaxation values if enabled
         relaxation_sweep_results = []
-        if relaxation_sweep:
+        if relaxation_sweep and not is_binary:
+            warnings.warn(
+                "relaxation_sweep only applies to the binary strategies; use pareto=True "
+                "with bottom_up_exact to record the cost/performance trade-off"
+            )
+        elif relaxation_sweep:
             print("---RELAXATION SWEEP---")
             # Pre-defined sequence of relaxation values to explore
             relaxation_values = [0.01, 0.02, 0.03, 0.04, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 1.0]
@@ -541,11 +678,11 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             for sweep_relaxation in relaxation_values:
                 print(f"Testing relaxation: {sweep_relaxation:.2f} ({sweep_relaxation*100:.0f}%)")
 
-                sweep_search_log = self.size_iteratively_binary_search(
+                sweep_search_log = self.run_fifo_search(
+                    search_strategy,
                     start_depth=max_occupancy,
                     iteration_runtime=iteration_runtime,
                     throttle_interval=max_period,
-                    fifo_order_strategy=fifo_search_order,
                     stop_condition=stop_condition,
                     relaxation=sweep_relaxation,
                 )
@@ -588,9 +725,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             print("RELAXATION SWEEP COMPLETE")
 
         # Generate fifo_sizing_report.json
+        search_summary = search_log["search"]
         fifo_report = {
             "error": self.error,
-            "fifo_size_total_kB": log_total_fifo_size[-1],
+            "fifo_size_total_kB": final_total_fifo_size,
             "detached_max_period_cycles": max_period,
             "target_interval_cycles": target_interval,
             "final_interval_cycles": final_interval,
@@ -600,14 +738,20 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             "latency_degradation": latency_degradation,
             "fifo_depths": {},
             "fifo_sizes": {},
-            "binary_search": {
-                "search_order": fifo_search_order,
+            "search": {
+                **search_summary,
+                "all_iterations": search_log["all_iterations"],
+            },
+        }
+        if is_binary:
+            # Report block of the original binary search, unchanged for its consumers
+            fifo_report["binary_search"] = {
+                "search_order": search_strategy[len("binary_") :],
                 "stop_condition": stop_condition,
                 "relaxation": relaxation,
                 "iteration_runtime_s": iteration_runtime,
-                **search_log,
-            },
-        }
+                **{k: v for k, v in search_log.items() if k not in ("search", "result")},
+            }
 
         # Add relaxation sweep results if available
         if relaxation_sweep_results:
@@ -640,9 +784,9 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             json.dump(self.folding_config, f, indent=2)
 
         # Generate the usual instrumentation performance report based on final state
-        min_latency = log_min_latency[-1]
-        latency = log_latency[-1]
-        interval = log_interval[-1]
+        min_latency = final_min_latency
+        latency = final_latency
+        interval = final_interval
         report = {
             "error": self.error,
             "checksum": 0,
