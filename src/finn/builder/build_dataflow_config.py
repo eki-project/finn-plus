@@ -221,7 +221,7 @@ class PartitioningStrategy(str, Enum):
     LAYER_COUNT = "layer_count"
 
 
-class MFNetworkBackend(str, Enum):
+class MFNetworkBackendType(str, Enum):
     """Network backends (communication kernels) for Multi-FPGA usage."""
 
     AURORAFLOW = "auroraflow"
@@ -271,7 +271,7 @@ class MultiFPGAConfiguration:
     topology: MFTopology = MFTopology.SIMPLEX_CHAIN
 
     # Which network backend (communication kernel) is used to communicate in the network
-    network_backend: MFNetworkBackend = MFNetworkBackend.AURORAFLOW
+    network_backend: MFNetworkBackendType = MFNetworkBackendType.AURORAFLOW
 
     # Arguments to pass along to the communication kernel. This can for example
     # be used to configure specific details, such as a receiver FIFO depth or
@@ -337,7 +337,7 @@ class MultiFPGAConfiguration:
         members. Invalid values raise an error that lists all valid options. Configs read from
         YAML/JSON are already checked by `DataflowBuildConfig.__pre_deserialize__`.
         """
-        for name, options in [("topology", MFTopology), ("network_backend", MFNetworkBackend)]:
+        for name, options in [("topology", MFTopology), ("network_backend", MFNetworkBackendType)]:
             value = getattr(self, name)
             if isinstance(value, options):
                 continue
@@ -428,7 +428,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
                         f"The Multi-FPGA configuration field '{old}' was renamed to '{new}'. "
                         "Please update your config."
                     )
-            for name, options in [("topology", MFTopology), ("network_backend", MFNetworkBackend)]:
+            for name, options in [
+                ("topology", MFTopology),
+                ("network_backend", MFNetworkBackendType),
+            ]:
                 valid = [o.value for o in options]
                 if name in mfcfg and mfcfg[name] not in valid:
                     raise FINNMultiFPGAConfigError(

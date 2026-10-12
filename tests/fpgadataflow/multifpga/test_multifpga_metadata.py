@@ -10,7 +10,7 @@ from qonnx.util.basic import qonnx_make_model
 from typing import cast
 
 from finn.builder.build_dataflow_config import (
-    MFNetworkBackend,
+    MFNetworkBackendType,
     MFTopology,
     MFVerbosity,
     MultiFPGAConfiguration,
@@ -26,7 +26,7 @@ from tests.fpgadataflow.test_set_folding import make_multi_fclayer_model
 
 
 def make_mfcfg(
-    network_backend: MFNetworkBackend, links_per_device: int = 2
+    network_backend: MFNetworkBackendType, links_per_device: int = 2
 ) -> MultiFPGAConfiguration:
     """Return a Multi-FPGA configuration for metadata creation, without logging output."""
     return MultiFPGAConfiguration(
@@ -83,8 +83,8 @@ def sdp_model(partition_topology: MFTopology) -> ModelWrapper:  # noqa
 @pytest.mark.multifpga
 @pytest.mark.auroraflow
 @pytest.mark.parametrize("nodes", [1, 10, 100])
-@pytest.mark.parametrize("network_backend", [MFNetworkBackend.AURORAFLOW])
-def test_metadata_sdp_only(nodes: int, network_backend: MFNetworkBackend) -> None:
+@pytest.mark.parametrize("network_backend", [MFNetworkBackendType.AURORAFLOW])
+def test_metadata_sdp_only(nodes: int, network_backend: MFNetworkBackendType) -> None:
     """Test that the network metadata assignment only accepts SDP-only graphs."""
     model: ModelWrapper = make_multi_fclayer_model(
         3, DataType["BINARY"], DataType["BINARY"], DataType["BINARY"], nodes
@@ -95,10 +95,10 @@ def test_metadata_sdp_only(nodes: int, network_backend: MFNetworkBackend) -> Non
 
 @pytest.mark.multifpga
 @pytest.mark.auroraflow
-@pytest.mark.parametrize("network_backend", [MFNetworkBackend.AURORAFLOW])
+@pytest.mark.parametrize("network_backend", [MFNetworkBackendType.AURORAFLOW])
 @pytest.mark.parametrize("topology", [MFTopology.SIMPLEX_CHAIN, MFTopology.DUPLEX_CHAIN])
 def test_metadata(
-    network_backend: MFNetworkBackend,
+    network_backend: MFNetworkBackendType,
     topology: MFTopology,
 ) -> None:
     """Test that metadata for a model is created correctly."""
@@ -127,7 +127,7 @@ def test_metadata(
                 assert meta.get_partner_node(successor.name, DataDirection.RX) == node.name
 
     # Aurora specific tests
-    if network_backend == MFNetworkBackend.AURORAFLOW:
+    if network_backend == MFNetworkBackendType.AURORAFLOW:
         meta = cast("AuroraNetworkMetadata", meta)
         devices = {get_device_id(node) for node in model.graph.node}
 
@@ -181,10 +181,10 @@ def test_metadata(
 
 @pytest.mark.multifpga
 @pytest.mark.auroraflow
-@pytest.mark.parametrize("network_backend", [MFNetworkBackend.AURORAFLOW])
+@pytest.mark.parametrize("network_backend", [MFNetworkBackendType.AURORAFLOW])
 @pytest.mark.parametrize("links_per_device", [2, 3, 4])
 def test_metadata_links_per_device(
-    network_backend: MFNetworkBackend, links_per_device: int
+    network_backend: MFNetworkBackendType, links_per_device: int
 ) -> None:
     """Test that the configured number of ports per device is respected by the metadata."""
     # Six SDPs alternating between device 0 and 1 cross devices five times. Both devices take
@@ -212,7 +212,7 @@ def test_metadata_links_per_device(
     )
     transform = CreateNetworkMetadata(make_mfcfg(network_backend, links_per_device))
     match network_backend:
-        case MFNetworkBackend.AURORAFLOW:
+        case MFNetworkBackendType.AURORAFLOW:
             # Adding a connection that needs a new kernel on a device whose links are all in use
             # raises in AuroraNetworkMetadata._add_single_connection
             if links_per_device < 3:
@@ -258,8 +258,8 @@ def test_aurora_metadata_path_serialization() -> None:
 
 @pytest.mark.multifpga
 @pytest.mark.auroraflow
-@pytest.mark.parametrize("network_backend", [MFNetworkBackend.AURORAFLOW])
-def test_metadata_small(network_backend: MFNetworkBackend) -> None:
+@pytest.mark.parametrize("network_backend", [MFNetworkBackendType.AURORAFLOW])
+def test_metadata_small(network_backend: MFNetworkBackendType) -> None:
     """Test metadata creation on hand-crafted small models."""
     # Create the base model
     tensors = [oh.make_tensor_value_info(f"t_{i}", TensorProto.FLOAT, [1, 1]) for i in range(4)]
@@ -316,7 +316,7 @@ def test_metadata_small(network_backend: MFNetworkBackend) -> None:
     assert meta.get_partner_node(rc_nodes[1].name, DataDirection.TX) == rc_nodes[2].name
     assert meta.get_partner_node(rc_nodes[1].name, DataDirection.RX) == rc_nodes[0].name
     assert meta.get_partner_node(rc_nodes[2].name, DataDirection.RX) == rc_nodes[1].name
-    if network_backend == MFNetworkBackend.AURORAFLOW:
+    if network_backend == MFNetworkBackendType.AURORAFLOW:
         meta = cast("AuroraNetworkMetadata", meta)
         assert len(meta.data[0]) == 1
         assert len(meta.data[1]) == 1

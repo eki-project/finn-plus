@@ -13,7 +13,7 @@ execution environment with driver testing.
 #     DataflowBuildConfig,
 #     LargeFIFOMemStyle,
 #     LogLevel,
-#     MFNetworkBackend,
+#     MFNetworkBackendType,
 #     MFTopology,
 #     MFVerbosity,
 #     MultiFPGAConfiguration,
@@ -31,7 +31,8 @@ execution environment with driver testing.
 #     "fpgas,synth_clk_period_ns,target_fps,mvau_wwidth_max,folding_two_pass,max_util,network_backend,topology,partition_strategy",
 #     [
 #         pytest.param(
-#             2, 10.0, 100, 412, True, 0.85, MFNetworkBackend.AURORAFLOW, MFTopology.SIMPLEX_CHAIN,
+#             2, 10.0, 100, 412, True, 0.85, MFNetworkBackendType.AURORAFLOW,
+#             MFTopology.SIMPLEX_CHAIN,
 #             PartitioningStrategy.RESOURCE_UTILIZATION, id="slow_linear_aurora_resource"
 #         )
 #     ]
@@ -39,7 +40,7 @@ execution environment with driver testing.
 # def test_end2end_multifpga_mobilenet(
 #     fpgas: int, synth_clk_period_ns: float, target_fps: int,
 #     mvau_wwidth_max: int, folding_two_pass: bool,
-#     max_util: float, network_backend: MFNetworkBackend, topology: MFTopology,
+#     max_util: float, network_backend: MFNetworkBackendType, topology: MFTopology,
 #     partition_strategy: PartitioningStrategy
 # ) -> None:
 #     """Do a complete end2end test of the Multi-FPGA variant of the mobilenet."""

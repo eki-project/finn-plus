@@ -28,7 +28,7 @@ from typing import Final, cast
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
-    MFNetworkBackend,
+    MFNetworkBackendType,
     MFTopology,
     MFVerbosity,
     MIPSolver,
@@ -103,7 +103,7 @@ class TestAuroraFlowPreparationAndMetadata:
             board=board,
             multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=devices,
-                network_backend=MFNetworkBackend.AURORAFLOW,
+                network_backend=MFNetworkBackendType.AURORAFLOW,
                 topology=topology,
                 communication_kernel_arguments=communication_kernel_args,
             ),
@@ -175,7 +175,7 @@ class TestAuroraFlowPreparationAndMetadata:
             multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=2,
                 topology=topology,
-                network_backend=MFNetworkBackend.AURORAFLOW,
+                network_backend=MFNetworkBackendType.AURORAFLOW,
                 communication_kernel_arguments=communication_kernel_args,
             ),
         )
@@ -318,7 +318,7 @@ class TestAuroraFlowPartitioning:
             multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=devices,
                 topology=topology,
-                network_backend=MFNetworkBackend.AURORAFLOW,
+                network_backend=MFNetworkBackendType.AURORAFLOW,
                 partition_strategy=partition_strategy,
                 max_utilization=max_util,
                 ideal_utilization=ideal_util,
@@ -513,7 +513,7 @@ class TestAuroraFlowPartitioning:
             multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=2,
                 topology=topology,
-                network_backend=MFNetworkBackend.AURORAFLOW,
+                network_backend=MFNetworkBackendType.AURORAFLOW,
                 partition_strategy=strategy,
                 max_utilization=0.8,
                 ideal_utilization=0.7,

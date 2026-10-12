@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
-    MFNetworkBackend,
+    MFNetworkBackendType,
     MultiFPGAConfiguration,
 )
 from finn.transformation.fpgadataflow.multifpga.aurora.link_config_transform import (
@@ -38,8 +38,8 @@ class NetworkBackend:
     Create and register backends with `register_backend()`.
     """
 
-    backend: MFNetworkBackend
-    """The network backend (communication kernel) this entry implements."""
+    type: MFNetworkBackendType
+    """The type of network backend (communication kernel) this entry implements."""
 
     partitioner: Callable[[DataflowBuildConfig, ModelWrapper], Partitioner]
     """Create the partitioner for the given model. Used by `PartitionForMultiFPGA`."""
@@ -54,40 +54,40 @@ class NetworkBackend:
     """Create the transformation that adds the communication kernels to the linking configs."""
 
 
-_BACKENDS: dict[MFNetworkBackend, NetworkBackend] = {}
+_BACKENDS: dict[MFNetworkBackendType, NetworkBackend] = {}
 
 
 def register_backend(
-    backend: MFNetworkBackend,
+    backend_type: MFNetworkBackendType,
     *,
     partitioner: Callable[[DataflowBuildConfig, ModelWrapper], Partitioner],
     metadata_type: type[NetworkMetadata],
     prepare_kernels: Callable[[DataflowBuildConfig], Transformation],
     modify_link_config: Callable[[DataflowBuildConfig], Transformation],
 ) -> NetworkBackend:
-    """Create and register the entry for the given network backend and return it.
-    Raises an error if the network backend is already registered.
+    """Create and register the entry for the given network backend type and return it.
+    Raises an error if the network backend type is already registered.
     """
-    if backend in _BACKENDS:
-        raise FINNInternalError(f"Network backend {backend.name} is already registered.")
+    if backend_type in _BACKENDS:
+        raise FINNInternalError(f"Network backend {backend_type.name} is already registered.")
     entry = NetworkBackend(
-        backend=backend,
+        type=backend_type,
         partitioner=partitioner,
         metadata_type=metadata_type,
         prepare_kernels=prepare_kernels,
         modify_link_config=modify_link_config,
     )
-    _BACKENDS[backend] = entry
+    _BACKENDS[backend_type] = entry
     return entry
 
 
-def get_backend(backend: MFNetworkBackend) -> NetworkBackend:
-    """Return the registered entry of the given network backend."""
+def get_backend(backend_type: MFNetworkBackendType) -> NetworkBackend:
+    """Return the registered entry of the given network backend type."""
     try:
-        return _BACKENDS[backend]
+        return _BACKENDS[backend_type]
     except KeyError as e:
         raise FINNMultiFPGAConfigError(
-            f"Network backend {backend.name} is not registered for Multi-FPGA. Registered "
+            f"Network backend {backend_type.name} is not registered for Multi-FPGA. Registered "
             f"network backends: {', '.join(b.name for b in _BACKENDS) or 'none'}"
         ) from e
 
@@ -110,7 +110,7 @@ def _get_board(cfg: DataflowBuildConfig) -> str:
 
 # AuroraFlow
 register_backend(
-    MFNetworkBackend.AURORAFLOW,
+    MFNetworkBackendType.AURORAFLOW,
     partitioner=AuroraPartitioner,
     metadata_type=AuroraNetworkMetadata,
     prepare_kernels=lambda cfg: PrepareAuroraFlow(

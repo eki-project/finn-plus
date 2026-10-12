@@ -98,9 +98,9 @@ class PrepareAuroraFlow(Transformation):
         The directory is named 'aurora_device_<device>_index_<index>'.
         Inside are the packaged xo files.
 
-        >>> from finn.builder.build_dataflow_config import MFNetworkBackend
+        >>> from finn.builder.build_dataflow_config import MFNetworkBackendType
         >>> p = MultiFPGAConfiguration(
-        ...     num_fpgas=2, links_per_device=2, network_backend=MFNetworkBackend.AURORAFLOW
+        ...     num_fpgas=2, links_per_device=2, network_backend=MFNetworkBackendType.AURORAFLOW
         ... )
         >>> t = PrepareAuroraFlow("xilinx_u55c_gen3x16_xdma_3_202210_1", "xcu55c-fsvh2892-2L-e", p)
         >>> xo = t.package_single("", device=0, index=0)
