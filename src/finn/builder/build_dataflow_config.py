@@ -212,14 +212,29 @@ class MFVerbosity(Enum):
 class PartitioningStrategy(str, Enum):
     """Multi-FPGA Partitioning strategy for the solver to use."""
 
-    # Strategy to partition based on the estimated resource
-    # utilization of the layers
-    RESOURCE_UTILIZATION = "resource_utilization"
+    BALANCE_RESOURCE = "balance_resource"
+    """On N devices, ideally each device carries R_t / N resource load.
+    (R_t = total resources of type t in the entire model). This strategy minimizes
+    the worst difference to ideal over any resources and devices."""
 
-    # Partition based on the number of layers per device
-    # Much simpler but usable in case no estimates
-    # are available
+    BALANCE_RESOURCE_WEIGHTED = "balance_resource_weighted"
+    """Same as BALANCE_RESOURCE, but with an additional small weighted term.
+    If the worst difference cannot be minimized below a threshold D,
+    any resource which is closer to its ideal than D is not considered anymore.
+    The additional term helps minimizing this difference, even when D is set by another
+    difference. This strategy only provides a benefit if the model is quite coarse granular
+    (few layers, large resource chunks), since otherwise D becomes so small that the
+    further minimization of other resources does not have a measurable impact anymore."""
+
+    MINIMIZE_MAX_RESOURCE = "minimize_max_resource"
+    """Minimize the largest resource utilization on the device.
+    If a resource cannot be reduced anymore, anything below its relative usage
+    in terms of other resource types stays unabalanced."""
+
     LAYER_COUNT = "layer_count"
+    """Partition based on the number of layers per device.
+    Very naive strategy, but usable if no/bad estimates are available
+    and the model is regular in shape from start to end."""
 
 
 class MFNetworkBackendType(str, Enum):
@@ -232,8 +247,19 @@ class MFTopology(str, Enum):
     """Topology for Multi-FPGA use."""
 
     SIMPLEX_CHAIN = "simplex_chain"
+    """A chain of nodes. A -> B -> C -> D."""
+
     DUPLEX_CHAIN = "duplex_chain"
+    """A chain of nodes that returns the same way it arrived.
+    A -> B -> C -> B -> A."""
+
+    ARBITRARY = "arbitrary"
+    """Completely unbounded. Solver decides the topology within the
+    other given constraints."""
+
     RING = "ring"
+    """Same start and end node, but not returning on the same path.
+    A -> B -> C -> D -> A."""
 
 
 @dataclass
@@ -265,7 +291,7 @@ class MultiFPGAConfiguration:
     links_per_device: int = 2
 
     # What strategy to use to partition the dataflow graph
-    partition_strategy: PartitioningStrategy = PartitioningStrategy.RESOURCE_UTILIZATION
+    partition_strategy: PartitioningStrategy = PartitioningStrategy.BALANCE_RESOURCE
 
     # Tells the flow what topology to use. This determines the transformation
     # that creates the network metadata necessary for kernel packing
@@ -294,12 +320,8 @@ class MultiFPGAConfiguration:
     # on the lower side on purpose.
     max_utilization: float = 0.80
 
-    # How much resources of a single FPGA should be used ideally. Used in some objective
-    # functions.
-    ideal_utilization: float = 0.70
-
     # The list of resource types that the partitioner should consider.
-    # Only relevant if RESOURCE_UTILIZATION is chosen as a strategy
+    # Only relevant for the resource based strategies (BALANCE_RESOURCE*, MINIMIZE_MAX_RESOURCE)
     # TODO: Add HBM / DDR
     considered_resources: list[str] = field(default_factory=lambda: PLATFORM_RESOURCE_TYPES)
 
@@ -409,7 +431,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     @classmethod
     def __pre_deserialize__(cls, d: dict[Any, Any]) -> dict[Any, Any]:
-        """Point configs that still use the pre-rename Multi-FPGA field to its new name."""
+        """Point configs that still use pre-rename Multi-FPGA names to the new ones."""
         if "partitioning_configuration" in d:
             raise FINNConfigurationError(
                 "The build config field 'partitioning_configuration' (PartitioningConfiguration) "
@@ -437,6 +459,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
                         f"Invalid Multi-FPGA option {name} '{mfcfg[name]}'. "
                         f"Valid options are: {', '.join(valid)}"
                     )
+        if isinstance(mfcfg, dict) and mfcfg.get("partition_strategy") == "resource_utilization":
+            raise FINNConfigurationError(
+                "The Multi-FPGA partition_strategy 'resource_utilization' is outdated. Please refer"
+                " to the documentation on which behaviour the different strategies implement."
+            )
         return d
 
     @classmethod
