@@ -148,7 +148,12 @@ def no_sleep(monkeypatch):
         {"fifo_search_order": "forward"},
         {"search_strategy": "bottom_up_exact"},
         {"search_strategy": "top_down_bnb", "seed_strategy": "binary_largest_first"},
-        {"search_strategy": "top_down_bnb", "seed_strategy": None, "node_order": "best_bound"},
+        {
+            "search_strategy": "top_down_bnb",
+            "seed_strategy": None,
+            "node_order": "best_bound",
+            "report_name": "top_down_bnb_seed_occupancy",
+        },
         {"search_strategy": "bottom_up_exact", "pareto": True},
         {"search_strategy": "top_down_bnb", "max_evaluations": 5},
     ],
@@ -160,7 +165,7 @@ def test_experiment_fifosizing_writes_reports(tmp_path, kwargs):
         overlay.experiment_fifosizing(report_dir=str(tmp_path), stop_condition="both", **kwargs)
 
     strategy = kwargs.get("search_strategy") or "binary_" + kwargs["fifo_search_order"]
-    report_dir = tmp_path / strategy / "both"
+    report_dir = tmp_path / kwargs.get("report_name", strategy) / "both"
     for name in (
         "fifo_sizing_report.json",
         "fifo_config.json",

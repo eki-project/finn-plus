@@ -1,96 +1,86 @@
 {
-    "global": {
-      "bitfile_name": "bitfile/finn-accel.bit",
-      "report_path": "report",
-
-      "PAF": {
-        "rails": [
-          "0V85",
-          "3V3"
-        ],
-        "sensors": []
-      }
-    },
-    "experiments": [
-      {
-        "name": "experiment_fifosizing",
-        "warmup": 1,
-        "num_runs": 1,
-        "functions": [
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_forward", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_forward", "stop_condition": "latency", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_forward", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_reverse", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_reverse", "stop_condition": "latency", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_reverse", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_largest_first", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_largest_first", "stop_condition": "latency", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_largest_first", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": true}
-          },
-
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_deepest_first", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_deepest_first", "stop_condition": "latency", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_deepest_first", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_alternating", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_alternating", "stop_condition": "latency", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "binary_alternating", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
-          },
-
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "bottom_up_exact", "stop_condition": "both", "relaxation": 0.0, "max_runtime_s": 600}
-          },
-          {
-            "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "top_down_bnb", "stop_condition": "both", "relaxation": 0.0, "seed_strategy": "binary_largest_first", "max_runtime_s": 600}
-          }
-        ]
-      }
-    ]
-  }
+  "global": {
+    "bitfile_name": "bitfile/finn-accel.bit",
+    "report_path": "report",
+    "PAF": {
+      "rails": [
+        "0V85",
+        "3V3"
+      ],
+      "sensors": []
+    }
+  },
+  "experiments": [
+    {
+      "name": "experiment_fifosizing",
+      "warmup": 1,
+      "num_runs": 1,
+      "functions": [
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "binary_forward", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "binary_forward", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "binary_reverse", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "binary_reverse", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "binary_largest_first", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "binary_largest_first", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": true}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "binary_deepest_first", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "binary_deepest_first", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "binary_alternating", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "binary_alternating", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "bottom_up_exact", "stop_condition": "interval", "relaxation": 0.0, "max_runtime_s": 600}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "bottom_up_exact", "stop_condition": "both", "relaxation": 0.0, "max_runtime_s": 600}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "top_down_bnb", "stop_condition": "interval", "relaxation": 0.0, "seed_strategy": "binary_largest_first", "report_name": "top_down_bnb_seed_binary", "max_runtime_s": 600}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "top_down_bnb", "stop_condition": "both", "relaxation": 0.0, "seed_strategy": "binary_largest_first", "report_name": "top_down_bnb_seed_binary", "max_runtime_s": 600}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "top_down_bnb", "stop_condition": "interval", "relaxation": 0.0, "seed_strategy": null, "report_name": "top_down_bnb_seed_occupancy", "max_runtime_s": 600}
+        },
+        {
+          "function_name": "experiment_fifosizing",
+          "kwargs": {"search_strategy": "top_down_bnb", "stop_condition": "both", "relaxation": 0.0, "seed_strategy": null, "report_name": "top_down_bnb_seed_occupancy", "max_runtime_s": 600}
+        }
+      ]
+    }
+  ]
+}

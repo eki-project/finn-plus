@@ -545,7 +545,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         Kwargs: ``search_strategy`` (default ``binary_largest_first``; ``fifo_search_order``
         is accepted as a deprecated alias for ``binary_<order>``), ``stop_condition``,
-        ``relaxation``, ``relaxation_sweep`` (binary strategies only), ``max_evaluations``,
+        ``relaxation``, ``relaxation_sweep`` (binary strategies only), ``report_name`` (report
+        sub-directory, default: the strategy name), ``max_evaluations``,
         ``max_runtime_s``, ``iteration_runtime_factor`` (safety factor on the per-evaluation
         runtime heuristic), ``hw_capabilities`` ("auto" or a bool overriding the probe) and the
         strategy-specific ``seed_strategy``, ``upper_bound_factor``, ``node_order``, ``pareto``,
@@ -568,8 +569,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         strategy_kwargs = {k: kwargs[k] for k in STRATEGY_KWARGS if k in kwargs}
         is_binary = search_strategy.startswith("binary_")
         base_report_dir = kwargs.get("report_dir")
-        # Create subdirectory for this search strategy + stop condition
-        report_dir = os.path.join(base_report_dir, search_strategy, stop_condition)
+        # Create subdirectory for this search strategy + stop condition. report_name lets
+        # several variants of one strategy (e.g. different seeds) keep separate reports.
+        report_name = kwargs.get("report_name") or search_strategy
+        report_dir = os.path.join(base_report_dir, report_name, stop_condition)
         os.makedirs(report_dir, exist_ok=True)
         reportfile = os.path.join(report_dir, "report_experiment_fifosizing.json")
 
