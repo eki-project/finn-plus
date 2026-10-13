@@ -84,7 +84,11 @@
 
           {
             "function_name": "experiment_fifosizing",
-            "kwargs": {"search_strategy": "top_down_bnb", "stop_condition": "both", "relaxation": 0.0, "seed_strategy": "binary_largest_first", "max_runtime_s": 900}
+            "kwargs": {"search_strategy": "bottom_up_exact", "stop_condition": "both", "relaxation": 0.0, "max_runtime_s": 600}
+          },
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs": {"search_strategy": "top_down_bnb", "stop_condition": "both", "relaxation": 0.0, "seed_strategy": "binary_largest_first", "max_runtime_s": 600}
           }
         ]
       }
