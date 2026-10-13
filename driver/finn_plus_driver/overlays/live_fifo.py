@@ -253,12 +253,12 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.ctrl_read(opcode=OP_RUN_DETACHED4, check_success=True)
         print("DEBUG: RUN_DETACHED4 completed")
 
-        # Wait on detached run to complete by issuing BARRIER_CLEAN
-        # Internally, the controller will re-issue this instruction until it succeeds
-        # TODO: FIX BARRIER_CLEAN, simply sleep as a workaround
-        time.sleep(5)
-        # self.ctrl_read(opcode=OP_BARRIER_CLEAN, check_success=True)
-        # print("DEBUG: BARRIER_CLEAN completed")
+        # Wait on detached run to complete by issuing BARRIER_CLEAN. Internally, the
+        # controller re-issues this instruction until every gauge reports clean, i.e. has
+        # produced its detached output frames; the read blocks until then. The input FIFO's
+        # detached consumption is not awaited, so the instrumentation source need not run.
+        self.ctrl_read(opcode=OP_BARRIER_CLEAN, check_success=True)
+        print("DEBUG: BARRIER_CLEAN completed")
 
         # Issue COMP_PERIOD instruction to collect global max period across all FIFOs
         max_period = self.ctrl_read(opcode=OP_COMP_PERIOD)

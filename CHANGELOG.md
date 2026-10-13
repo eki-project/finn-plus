@@ -18,6 +18,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - The CIFAR validation of the PYNQ driver normalizes the images for every accelerator with a float input, not only for CIFAR-100 (override with the `normalize` kwarg of `validate`) (eki-project#290)
 
 ### Fixed
+- The `BARRIER_CLEAN` handshake of the virtual FIFO ring never completed because the first FIFO waited for detached input frames from the instrumentation source, which is not running in that phase; the barrier now only awaits the detached output production (which finalises the periods) and the live FIFO sizing driver uses it instead of a fixed 5 s wait (eki-project#294)
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
 - (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)
 - RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate at the cost of a slightly larger buffer (eki-project#290)

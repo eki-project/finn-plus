@@ -20,6 +20,7 @@ from finn_plus_driver.overlays.fifo_search import (
     TotalBitsCost,
 )
 from finn_plus_driver.overlays.live_fifo import (
+    OP_BARRIER_CLEAN,
     OP_COMP_PERIOD,
     OP_NOP,
     OP_READ_FILL,
@@ -93,6 +94,8 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         if opcode in (OP_RUN_BOUNDED, OP_RUN_PACED, OP_RUN_DETACHED4):
             self.mode = {OP_RUN_BOUNDED: "bounded", OP_RUN_PACED: "paced"}.get(opcode, "detached")
             return opcode
+        if opcode == OP_BARRIER_CLEAN:
+            return OP_BARRIER_CLEAN
         if opcode == OP_COMP_PERIOD:
             return 1000
         if opcode == OP_READ_FILL:

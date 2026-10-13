@@ -25,11 +25,14 @@
  *	   maps of input without any flow dependency. Each FIFO will record the
  *	   period spent on producing individual feature map outputs.
  *	 - Issue `BARRIER_CLEAN` commands. Gauging FIFOs will replace it by a
- *	   `BARRIER_DIRTY` if the detached production and consumption of
- *	   feature maps is still in process. They forward the `BARRIER_*`
- *	   command unchanged otherwise. Once, the central control receives back a
- *	   `BARRIER_CLEAN`, the detached individual throughput measurement is
- *	   completed globally.
+ *	   `BARRIER_DIRTY` if the detached production of feature maps is still in
+ *	   process or a feature map is partially transferred on either side. They
+ *	   forward the `BARRIER_*` command unchanged otherwise. Once, the central
+ *	   control receives back a `BARRIER_CLEAN`, the detached individual
+ *	   throughput measurement is completed globally. The detached consumption
+ *	   of input feature maps is not awaited: the first FIFO on the ring
+ *	   consumes from an external producer that need not be active, and the
+ *	   periods are final once every FIFO has produced its output.
  *	 - Issue a `COMP_PERIOD` command with a 32-bit argument in network byte
  *	   order. The command is issued with an argument of 0. Each gauging FIFO
  *	   on the ring updates this value by the maximum between the value it

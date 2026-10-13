@@ -114,22 +114,34 @@ module fifo_controller_tb;
 			logic [7:0]  dst_dat;
 			assign	i_vld[l+1] = dst_vld;
 			assign	i_dat[l+1] = dst_dat;
+			// The layer restarts its schedule on every reset, like the accelerator does
+			// when the driver resets it before a run.
 			initial forever begin
+				src_rdy <= 0;
+				dst_vld <= 0;
 				dst_dat <= 0;
-				for(int unsigned  i = 0; i < MIN_PERIOD; i++) begin
-					src_rdy <= ((i+1)*IFM_SIZE)/MIN_PERIOD > (i*IFM_SIZE)/MIN_PERIOD;
-					dst_vld <= ((i+1)*OFM_SIZE)/MIN_PERIOD > (i*OFM_SIZE)/MIN_PERIOD;
-					forever @(posedge clk) begin
-						automatic logic  stxn = src_vld && src_rdy;
-						automatic logic  dtxn = dst_vld && dst_rdy;
-						automatic logic  srdy = src_rdy && !src_vld;
-						automatic logic  dvld = dst_vld && !dst_rdy;
-						src_rdy <= srdy;
-						dst_vld <= dvld;
-						if(dtxn)  dst_dat <= dst_dat + 1;
-						if(!srdy && !dvld)  break;
+				@(posedge clk iff !rst);
+				fork
+					forever begin
+						dst_dat <= 0;
+						for(int unsigned  i = 0; i < MIN_PERIOD; i++) begin
+							src_rdy <= ((i+1)*IFM_SIZE)/MIN_PERIOD > (i*IFM_SIZE)/MIN_PERIOD;
+							dst_vld <= ((i+1)*OFM_SIZE)/MIN_PERIOD > (i*OFM_SIZE)/MIN_PERIOD;
+							forever @(posedge clk) begin
+								automatic logic  stxn = src_vld && src_rdy;
+								automatic logic  dtxn = dst_vld && dst_rdy;
+								automatic logic  srdy = src_rdy && !src_vld;
+								automatic logic  dvld = dst_vld && !dst_rdy;
+								src_rdy <= srdy;
+								dst_vld <= dvld;
+								if(dtxn)  dst_dat <= dst_dat + 1;
+								if(!srdy && !dvld)  break;
+							end
+						end
 					end
-				end
+				join_none
+				@(posedge clk iff rst);
+				disable fork;
 			end
 		end : genLayer
 	end : blkPipeline
@@ -192,6 +204,17 @@ module fifo_controller_tb;
 		end
 	endtask : ctrl_run
 
+	// reset_accelerator: the driver's GPIO reset resets the whole design through
+	// proc_sys_reset (gauges, layers, instrumentation and controller alike).
+	task automatic reset_accelerator();
+		ivld <= 0;
+		ordy <= 0;
+		rst <= 1;
+		repeat(8) @(posedge clk);
+		rst <= 0;
+		repeat(4) @(posedge clk);
+	endtask : reset_accelerator
+
 	//=======================================================================
 	// Traffic
 	int unsigned  Period = 0;
@@ -241,27 +264,32 @@ module fifo_controller_tb;
 		repeat(4) @(posedge clk);
 
 		//-------------------------------------------------------------------
-		// Phase 1: detached run to determine the bottleneck period
-		$display("[%0t] RUN_DETACHED4", $time);
+		// Phase 1: detached run to determine the bottleneck period, exactly as the
+		// driver does it: the instrumentation source is not started (no input to the
+		// first gauge), the sink drains. The BARRIER_CLEAN read must complete once every
+		// gauge has produced its four detached output frames.
+		$display("[%0t] RUN_DETACHED4 (source idle)", $time);
+		reset_accelerator();
+		ordy <= 1;
 		ctrl_run(RUN_DETACHED4);
 		fork
 			begin
-				ivld <= 1;
-				repeat(4*FM_SIZE[0]) @(posedge clk iff irdy);
-				ivld <= 0;
+				// the controller re-issues BARRIER_CLEAN until the ring reports clean
+				ctrl_read(BARRIER_CLEAN, 0, ret);
 			end
 			begin
-				ordy <= 1;
-				repeat(4*FM_SIZE[LAYERS]) @(posedge clk iff ovld);
-				ordy <= 0;
+				repeat(4000) @(posedge clk);
+				$error("BARRIER_CLEAN did not complete within 4000 cycles.");
+				$stop;
 			end
-		join
-		// BARRIER_CLEAN: the controller re-issues until the ring reports clean
-		ctrl_read(BARRIER_CLEAN, 0, ret);
+		join_any
+		disable fork;
 		assert(ret == BARRIER_CLEAN) else begin
 			$error("BARRIER_CLEAN acknowledged with 0x%08x.", ret);
 			errors++;
 		end
+		$display("[%0t] BARRIER_CLEAN completed", $time);
+		ordy <= 0;
 		ctrl_read(COMP_PERIOD, 0, ret);
 		Period = ret;
 		$display("[%0t] COMP_PERIOD = %0d cycles", $time, Period);
@@ -273,6 +301,7 @@ module fifo_controller_tb;
 		//-------------------------------------------------------------------
 		// Phase 2: paced run, read peaks (READ_FILL) and stall flags (READ_STALL)
 		$display("[%0t] RUN_PACED", $time);
+		reset_accelerator();
 		ctrl_run(RUN_PACED);
 		run_paced_traffic(6);
 		for(int unsigned  l = 0; l <= LAYERS; l++) begin
@@ -302,6 +331,7 @@ module fifo_controller_tb;
 		//-------------------------------------------------------------------
 		// Phase 3: bounded run at the paced peaks must reproduce the paced execution
 		$display("[%0t] RUN_BOUNDED at paced peaks", $time);
+		reset_accelerator();
 		for(int unsigned  l = 0; l <= LAYERS; l++)  ctrl_set_depth(l, peak_paced[l]);
 		ctrl_run(RUN_BOUNDED);
 		run_paced_traffic(6);
@@ -322,6 +352,7 @@ module fifo_controller_tb;
 		//-------------------------------------------------------------------
 		// Phase 4: the unbounded capacity register value reproduces the paced execution
 		$display("[%0t] RUN_BOUNDED with unbounded capacities", $time);
+		reset_accelerator();
 		for(int unsigned  l = 0; l <= LAYERS; l++)  ctrl_set_depth(l, 32'h7FFF_FFFF);
 		ctrl_run(RUN_BOUNDED);
 		run_paced_traffic(6);
@@ -336,10 +367,9 @@ module fifo_controller_tb;
 		//-------------------------------------------------------------------
 		// Phase 5: bounded run with a blocked output must deadlock, the sticky flags
 		// must show every producer blocked while the per-frame flags of the last
-		// gauge (which never completes a frame) keep their previous value. This is the
-		// last phase: recovering from the deadlock would need the reset of the dataflow
-		// pipeline that the driver issues before every run.
+		// gauge (which never completes a frame) keep their previous value.
 		$display("[%0t] RUN_BOUNDED with blocked output (deadlock)", $time);
+		reset_accelerator();
 		for(int unsigned  l = 0; l <= LAYERS; l++)  ctrl_set_depth(l, 2);
 		ctrl_run(RUN_BOUNDED);
 		ivld <= 1;
@@ -363,9 +393,8 @@ module fifo_controller_tb;
 				errors++;
 			end
 		end
-		assert(ret[3:0] == stall_before[LAYERS][3:0]) else begin
-			$error("Per-frame flags of the last gauge changed (%04b -> %04b) without a completed frame.",
-				stall_before[LAYERS][3:0], ret[3:0]);
+		assert(ret[3:0] == 4'b0000) else begin
+			$error("Per-frame flags of the last gauge are %04b without a completed frame since reset.", ret[3:0]);
 			errors++;
 		end
 		ivld <= 0;

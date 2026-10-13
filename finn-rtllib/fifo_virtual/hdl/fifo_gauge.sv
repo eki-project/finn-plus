@@ -300,7 +300,13 @@ module fifo_gauge #(
 					state_nxt = Start;
 				end
 				M_BARRIER: begin
-					cfg_set = IDirty || ODirty || ((IoMode ==? Detached) && (IoMode !=? DetachedDone));
+					// Dirty while a frame is partially transferred or the detached production
+					// of output frames is still in progress. The detached consumption of
+					// input frames is deliberately not awaited: the period is recorded on the
+					// output side and is final once the production is done, whereas the input
+					// side of the first FIFO on the ring depends on an external producer that
+					// need not be running in this phase.
+					cfg_set = IDirty || ODirty || ((IoMode ==? Detached) && IoMode[0]);
 					state_nxt = Start;
 				end
 				M_COMP: begin // Compute
