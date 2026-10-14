@@ -154,6 +154,32 @@ def cell(report, best_kb):
     return text
 
 
+def upper_bound(per_strategy):
+    """Cost of the start configuration (paced-mode peak occupancies) across the run's reports.
+
+    Every experiment measures the occupancies anew, so the values can differ slightly between
+    strategies; returns ``(min, max)``.
+    """
+    values = []
+    for report in per_strategy.values():
+        first = (report.get("search") or {}).get("all_iterations", {}).get("0")
+        if first is None:  # report of the driver before the search refactor
+            first = report.get("binary_search", {}).get("all_iterations", {}).get("0")
+        if first and first.get("total_fifo_size_kB") is not None:
+            values.append(first["total_fifo_size_kB"])
+    return (min(values), max(values)) if values else None
+
+
+def fmt_bound(bound):
+    """Single value, or a range when the strategies measured different start configurations."""
+    if bound is None:
+        return "?"
+    lo, hi = bound
+    if math.isclose(lo, hi, rel_tol=0, abs_tol=5e-3):
+        return f"{lo:.2f}"
+    return f"{lo:.2f}–{hi:.2f}"
+
+
 def lower_bound(per_strategy):
     """Cost of the per-FIFO lower bounds, as reported by any exact strategy of the run."""
     for report in per_strategy.values():
@@ -199,7 +225,9 @@ def table_for(reports, stop_condition, names, all_binary_orders=False):
     )
     if not ordered:
         return f"No reports with stop_condition `{stop_condition}`.\n"
-    header = ["DUT", "target (cycles)", "LB kB"] + [STRATEGY_LABELS.get(s, s) for s in ordered]
+    header = ["DUT", "target (cycles)", "UB kB", "LB kB"] + [
+        STRATEGY_LABELS.get(s, s) for s in ordered
+    ]
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     for run_dir, per_run in reports.items():
         per_strategy = per_run.get(stop_condition, {})
@@ -215,6 +243,7 @@ def table_for(reports, stop_condition, names, all_binary_orders=False):
         row = [
             names[run_dir],
             str(target) if target is not None else "?",
+            fmt_bound(upper_bound(per_strategy)),
             f"{lb:.2f}" if lb is not None else "?",
         ]
         for s in ordered:
@@ -259,6 +288,8 @@ def main(argv=None):
         "⏱ budget exhausted, ✗ search aborted (seed returned). The binary column shows the "
         "cheapest of the binary search orders per DUT, with that order in brackets "
         "(tie: several orders reach the same size). "
+        "UB is the size of the start configuration, the peak occupancies measured with "
+        "unbounded FIFOs (a range if the strategies' own measurements differed). "
         "LB is the cost of the per-FIFO lower bounds (every FIFO at its minimum with all "
         "others unbounded), a lower bound on any feasible configuration.\n"
     )
