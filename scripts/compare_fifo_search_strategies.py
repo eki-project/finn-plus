@@ -27,6 +27,7 @@ from pathlib import Path
 
 #: Column order; strategies not listed here are appended alphabetically.
 STRATEGY_ORDER = [
+    "binary (best order)",
     "binary_forward",
     "binary_reverse",
     "binary_largest_first",
@@ -146,6 +147,8 @@ def cell(report, best_kb):
         duration = bs.get("duration")
         markers = ""
     text = f"{size:.2f} ({evals if evals is not None else '?'}, {fmt_duration(duration)}){markers}"
+    if "best_binary_order" in report:
+        text += f" [{report['best_binary_order']}]"
     if best_kb is not None and math.isclose(size, best_kb, rel_tol=0, abs_tol=1e-6):
         text = f"**{text}**"
     return text
@@ -160,8 +163,27 @@ def lower_bound(per_strategy):
     return None
 
 
-def table_for(reports, stop_condition, names):
+BINARY_BEST = "binary (best order)"
+
+
+def best_binary(per_strategy):
+    """Combine the binary_<order> reports of a run into the one with the lowest FIFO size."""
+    binary = {s: r for s, r in per_strategy.items() if s.startswith("binary_")}
+    if not binary:
+        return per_strategy
+    order, report = min(binary.items(), key=lambda kv: kv[1].get("fifo_size_total_kB", math.inf))
+    combined = {s: r for s, r in per_strategy.items() if not s.startswith("binary_")}
+    combined[BINARY_BEST] = dict(report, best_binary_order=order[len("binary_") :])
+    return combined
+
+
+def table_for(reports, stop_condition, names, all_binary_orders=False):
     """Markdown table for one stop condition."""
+    if not all_binary_orders:
+        reports = OrderedDict(
+            (run_dir, {sc: best_binary(ps) for sc, ps in per_run.items()})
+            for run_dir, per_run in reports.items()
+        )
     strategies = set()
     for per_run in reports.values():
         strategies |= set(per_run.get(stop_condition, {}))
@@ -207,6 +229,11 @@ def main(argv=None):
         default=["both", "interval"],
         help="stop conditions to tabulate (default: both interval)",
     )
+    parser.add_argument(
+        "--all-binary-orders",
+        action="store_true",
+        help="one column per binary search order instead of the best order per DUT",
+    )
     parser.add_argument("--output", help="write the Markdown to this file instead of stdout")
     args = parser.parse_args(argv)
 
@@ -222,13 +249,14 @@ def main(argv=None):
     out.append(
         "Cells: total FIFO size in kB (hardware evaluations, search duration). "
         "The cheapest result per DUT is bold. Markers: ✓ optimality proven, "
-        "⏱ budget exhausted, ✗ search aborted (seed returned). "
+        "⏱ budget exhausted, ✗ search aborted (seed returned). The binary column shows the "
+        "cheapest of the binary search orders per DUT, with that order in brackets. "
         "LB is the cost of the per-FIFO lower bounds (every FIFO at its minimum with all "
         "others unbounded), a lower bound on any feasible configuration.\n"
     )
     for stop_condition in args.stop_condition:
         out.append(f"## stop_condition = {stop_condition}\n")
-        out.append(table_for(reports, stop_condition, names))
+        out.append(table_for(reports, stop_condition, names, args.all_binary_orders))
     text = "\n".join(out)
     if args.output:
         with open(args.output, "w") as f:
