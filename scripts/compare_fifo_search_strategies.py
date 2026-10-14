@@ -180,6 +180,15 @@ def fmt_bound(bound):
     return f"{lo:.2f}–{hi:.2f}"
 
 
+def num_fifos(per_strategy):
+    """Number of FIFOs of the run, from any of its reports."""
+    for report in per_strategy.values():
+        depths = report.get("fifo_depths")
+        if depths:
+            return len(depths)
+    return None
+
+
 def lower_bound(per_strategy):
     """Cost of the per-FIFO lower bounds, as reported by any exact strategy of the run."""
     for report in per_strategy.values():
@@ -225,7 +234,7 @@ def table_for(reports, stop_condition, names, all_binary_orders=False):
     )
     if not ordered:
         return f"No reports with stop_condition `{stop_condition}`.\n"
-    header = ["DUT", "target (cycles)", "UB kB", "LB kB"] + [
+    header = ["DUT", "FIFOs", "target (cycles)", "UB kB", "LB kB"] + [
         STRATEGY_LABELS.get(s, s) for s in ordered
     ]
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
@@ -240,8 +249,10 @@ def table_for(reports, stop_condition, names, all_binary_orders=False):
         any_report = next(iter(per_strategy.values()))
         target = any_report.get("target_interval_cycles")
         lb = lower_bound(per_strategy)
+        n = num_fifos(per_strategy)
         row = [
             names[run_dir],
+            str(n) if n is not None else "?",
             str(target) if target is not None else "?",
             fmt_bound(upper_bound(per_strategy)),
             f"{lb:.2f}" if lb is not None else "?",
