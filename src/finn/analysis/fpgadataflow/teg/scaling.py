@@ -366,11 +366,11 @@ def summarize(out_dir: Path, default_fit: tuple[float, float] = (1.2e-7, 1.7)) -
     pts = [(r["size_constraints"], r["solve_s"]) for r in solved]
     a, b = fit_power_law(pts) if len(pts) >= 2 else default_fit
     table = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for r in sorted(rows, key=lambda r: r["size_constraints"]):
-        if r["label"] in seen:
+        if (r["label"], r["kind"]) in seen:  # a size entry and a solve of the same model
             continue
-        seen.add(r["label"])
+        seen.add((r["label"], r["kind"]))
         est = extrapolate(a, b, r["size_constraints"])
         table.append(
             {
