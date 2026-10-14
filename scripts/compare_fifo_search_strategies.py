@@ -172,8 +172,15 @@ def best_binary(per_strategy):
     if not binary:
         return per_strategy
     order, report = min(binary.items(), key=lambda kv: kv[1].get("fifo_size_total_kB", math.inf))
+    best_size = report.get("fifo_size_total_kB", math.inf)
+    tied = [
+        s
+        for s, r in binary.items()
+        if math.isclose(r.get("fifo_size_total_kB", math.inf), best_size, rel_tol=0, abs_tol=1e-6)
+    ]
+    label = "tie" if len(tied) > 1 else order[len("binary_") :]
     combined = {s: r for s, r in per_strategy.items() if not s.startswith("binary_")}
-    combined[BINARY_BEST] = dict(report, best_binary_order=order[len("binary_") :])
+    combined[BINARY_BEST] = dict(report, best_binary_order=label)
     return combined
 
 
@@ -250,7 +257,8 @@ def main(argv=None):
         "Cells: total FIFO size in kB (hardware evaluations, search duration). "
         "The cheapest result per DUT is bold. Markers: ✓ optimality proven, "
         "⏱ budget exhausted, ✗ search aborted (seed returned). The binary column shows the "
-        "cheapest of the binary search orders per DUT, with that order in brackets. "
+        "cheapest of the binary search orders per DUT, with that order in brackets "
+        "(tie: several orders reach the same size). "
         "LB is the cost of the per-FIFO lower bounds (every FIFO at its minimum with all "
         "others unbounded), a lower bound on any feasible configuration.\n"
     )
