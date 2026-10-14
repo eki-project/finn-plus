@@ -191,13 +191,26 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 bool fifoValid = _send_request(fromProducerInterface[i], istreamReady, stoken);
                 this->istreams[i].setValid(fifoValid);  // deferred
             }
+            if (stoken.stop_requested()) {
+                // Cancelled by the controller while waiting for the predecessor: the exchange
+                // did not happen, so this cycle is neither simulated nor counted
+                --cyclesRun;
+                return ret;
+            }
         }
         if constexpr (!LastNode) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
                 // Interface sim -valid-> FIFO
                 this->fifo[i].setInputValid(this->ostreams[i].getOutputValid(), stoken);
                 // Interface FIFO <-> SHM
-                this->fifo[i].setOutputReady(_receive_request(toConsumerInterface[i], stoken), stoken);
+                bool consumerReady = _receive_request(toConsumerInterface[i], stoken);
+                if (stoken.stop_requested()) {
+                    // Same as above for the successor; do not clock the FIFO with a made-up
+                    // ready, which would add occupancy that never happened
+                    --cyclesRun;
+                    return ret;
+                }
+                this->fifo[i].setOutputReady(consumerReady, stoken);
 
                 // Toggle FIFO clock
                 ret |= this->fifo[i].toggleClock();
@@ -337,18 +350,33 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         }
     }
 
+    /// Returns true on a timeout. Only the output node ends the run by itself; every other
+    /// node runs in lockstep with it until the controller stops it, so being stopped is not
+    /// a timeout and the cycle limit is only enforced by the output node. (While running,
+    /// a node can be ahead of the output node by its distance to it, which is not a timeout
+    /// either.) Only a missing expected first valid is reported by any node.
     [[gnu::hot, gnu::always_inline]] bool runToStableState(std::stop_token stoken = {}, std::size_t max_cycles = std::numeric_limits<std::size_t>::max()) {
-        bool timeout = false;
-        while (!std::all_of(this->ostreams.begin(), this->ostreams.end(), [](const M_AXIS_Control& stream) { return stream.stableState.is_stable(); }) & !stoken.stop_requested() &
-               (cyclesRun <= max_cycles) & !timeout) {
-            timeout |= runSingleCycle(stoken);
-            if constexpr (!PreciseTimeout) {
-                timeout |= runSingleCycle(stoken);
-                timeout |= runSingleCycle(stoken);
-                timeout |= runSingleCycle(stoken);
+        constexpr std::size_t CyclesPerCheck = PreciseTimeout ? 1 : 4;
+        bool firstValidTimeout = false;
+        while (true) {
+            if (std::all_of(this->ostreams.begin(), this->ostreams.end(), [](const M_AXIS_Control& stream) { return stream.stableState.is_stable(); })) {
+                return false;
+            }
+            if (stoken.stop_requested()) {
+                return firstValidTimeout;
+            }
+            if (firstValidTimeout) {
+                return true;
+            }
+            if constexpr (LastNode) {
+                if (cyclesRun > max_cycles) {
+                    return true;
+                }
+            }
+            for (std::size_t i = 0; i < CyclesPerCheck && !stoken.stop_requested(); ++i) {
+                firstValidTimeout |= runSingleCycle(stoken);
             }
         }
-        return timeout || cyclesRun > max_cycles;
     }
 
     /// Get the number of FIFOs

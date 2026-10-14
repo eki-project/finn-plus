@@ -1211,8 +1211,17 @@ class RunLayerParallelSimulation(Transformation):
         # List of list of fifo depths
         fifo_depths, fifo_first_valid_cycles = self.create_starting_fifo_depths(initial_fifo_depths)
 
-        # Max cycles for any simulation
-        sim_cycles: int = cast("int", max([val["cycles"] for val in initial_fifo_depths]))
+        # Length of the simulation. Only the output nodes end the run by themselves, all other
+        # nodes run until the controller stops them, so their cycle counts depend on when the
+        # stop reached them and are not reproducible. The cycle limit is enforced by the output
+        # nodes only, so it is derived from them as well.
+        output_nodes = {
+            node.name for node in model.graph.node if model.find_direct_successors(node) is None
+        }
+        sim_cycles: int = cast(
+            "int",
+            max([val["cycles"] for val in initial_fifo_depths if val["name"] in output_nodes]),
+        )
 
         # Extract bitwidths from outstream widths of hw nodes
         bit_widths = []
