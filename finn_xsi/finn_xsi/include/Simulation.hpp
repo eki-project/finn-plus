@@ -113,7 +113,13 @@ class Simulation {
         for (unsigned i = 0; i < 16; i++) {
             clk.toggleClk();
         }
+        // Release the reset right after an active edge, as every other input is driven (and
+        // as a reset synchronous to ap_clk is released in hardware). Released before the edge,
+        // ap_clk2x would leave reset on the edge it shares with ap_clk instead of on the
+        // following one, which puts clock-pumped logic out of phase with ap_clk.
+        clk.clockHigh();
         rst_n.set(1).write_back();
+        clk.clockLow();
     }
 };
 
