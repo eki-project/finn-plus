@@ -9,14 +9,14 @@ An example configuration could look like this:
 ```YAML
 multifpga_configuration:
   num_fpgas: 2
-  partition_strategy: resource_utilization
   topology: simplex_chain
   network_backend: auroraflow
+  partition_strategy: balance_resource
   max_utilization: 0.8
   parallel_synthesis_workers: 2
 ```
 
-Such a configuration would try to partition the design onto 2 devices. To let the partitioner decide itself (based on estimate reports), select `-1`. The used partition strategy is `resource_utilization`, meaning that a balanced resource utilization is used as the metric to judge a good solution. The `simplex_chain` topology constrains the solver to a certain assignment of device IDs. `auroraflow` specifies which network backend (communication technology) to use. `max_utilization` is used by the solver to make sure that the FPGAs resources are not overutilized. Finally, `parallel_synthesis_workers` specifies how many synthesis processes can run in parallel.
+Such a configuration would try to partition the design onto 2 devices. To let the partitioner decide itself (based on estimate reports), select `-1`. The used partition strategy is `balance_resource`, which tries to balance the resource use across all devices. The `simplex_chain` topology constrains the solver to a certain assignment of device IDs. `auroraflow` specifies which network backend (communication technology) to use. `max_utilization` is used by the solver to make sure that the FPGAs resources are not overutilized. Finally, `parallel_synthesis_workers` specifies how many synthesis processes can run in parallel.
 
 Now simply run FINN+ as usual: `finn build cfg.yaml`.
 

@@ -149,17 +149,25 @@ class AddAuroraToLinkConfig(Transformation):
                             f"on the platforms SLRs is missing from the platform definitions "
                             f"(check platforms.py)."
                         )
+                    if self.platform.freerunning_clock is None:
+                        raise FINNUserError(
+                            f"Cannot connect AuroraFlow kernels on device with platform "
+                            f"{type(self.platform).__name__} because the name of its "
+                            f"free-running clock is not known. It is missing from the platform "
+                            f"definitions (check platforms.py)."
+                        )
                     configs[device].add_xo(aurora_data.aurora_xo)
                     configs[device].add_cu(aurora_cu, aurora_cu)
                     configs[device].add_slr(aurora_cu, self.platform.qsfp_slr)
                     configs[device].add_connect(
-                        f"io_clk_qsfp{index}_refclkb_00", f"{aurora_cu}/gt_refclk_{index}"
+                        self.platform.get_qsfp_refclk_interface(index),
+                        f"{aurora_cu}/gt_refclk_{index}",
                     )
                     configs[device].add_connect(
-                        f"aurora_flow_{index}/gt_port", f"io_gt_qsfp{index}_00"
+                        f"{aurora_cu}/gt_port", self.platform.get_qsfp_gt_interface(index)
                     )
                     configs[device].add_connect(
-                        f"aurora_flow_{index}/init_clk", "ii_level0_wire/ulp_m_aclk_freerun_ref_00"
+                        f"{aurora_cu}/init_clk", self.platform.freerunning_clock
                     )
 
                 # SDP -> Aurora -> Network
@@ -168,7 +176,20 @@ class AddAuroraToLinkConfig(Transformation):
                         f"Adding AuroraFlow kernel to device {device}, "
                         f"index {index} connected to {node.name} (TX)."
                     )
-                    configs[device].add_sc(node.name + ".m_axis_0", f"{aurora_cu}.tx_axis")
+                    # TODO: Support SDPs with more than one output stream. The output port of the
+                    # SDP is currently always assumed to be m_axis_0.
+                    # TODO: This requires adding support for a "port" field to the
+                    # metadata as well.
+                    sdp_output = node.name + ".m_axis_0"
+                    if configs[device].is_stream_port_connected(sdp_output):
+                        raise FINNInternalError(
+                            f"Cannot connect AuroraFlow kernel {index} on device {device} to "
+                            f"{sdp_output}, since this port is already connected to another "
+                            f"kernel. The SDP {node.name} has more than one outgoing stream "
+                            f"(e.g. to several devices, or to a kernel on the same and on "
+                            f"another device), which is not yet implemented for AuroraFlow."
+                        )
+                    configs[device].add_sc(sdp_output, f"{aurora_cu}.tx_axis")
 
                     # Check if we need a dummy kernel for the unused RX direction
                     if rx_kernel_pair is None:
@@ -184,7 +205,20 @@ class AddAuroraToLinkConfig(Transformation):
                         f"Adding AuroraFlow kernel to device {device}, "
                         f"index {index} connected to {node.name} (RX)."
                     )
-                    configs[device].add_sc(f"{aurora_cu}.rx_axis", node.name + ".s_axis_0")
+                    # TODO: Support SDPs with more than one input stream. The input port of the
+                    # SDP is currently always assumed to be s_axis_0
+                    # TODO: This requires adding support for a "port" field to the
+                    # metadata as well.
+                    sdp_input = node.name + ".s_axis_0"
+                    if configs[device].is_stream_port_connected(sdp_input):
+                        raise FINNInternalError(
+                            f"Cannot connect AuroraFlow kernel {index} on device {device} to "
+                            f"{sdp_input}, since this port is already connected to another "
+                            f"kernel. The SDP {node.name} has more than one incoming stream "
+                            f"(e.g. from several devices, or from a kernel on the same and on "
+                            f"another device), which is not yet implemented for AuroraFlow."
+                        )
+                    configs[device].add_sc(f"{aurora_cu}.rx_axis", sdp_input)
 
                     # Check if we need a dummy kernel for the unused TX direction
                     if tx_kernel_pair is None:
