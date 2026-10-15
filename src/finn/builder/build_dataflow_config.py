@@ -547,6 +547,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         self.specialize_layers_config_file = _fix_path(self.specialize_layers_config_file)
         self.folding_config_file = _fix_path(self.folding_config_file)
         self.layouts_config_file = _fix_path(self.layouts_config_file)
+        self.fifo_config_file = _fix_path(self.fifo_config_file)
 
     def get_report_directory(self, create: bool = True) -> Path:
         """Return the path that reports should be stored at."""

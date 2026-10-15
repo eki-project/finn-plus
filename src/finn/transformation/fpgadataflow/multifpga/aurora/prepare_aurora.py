@@ -117,7 +117,7 @@ class PrepareAuroraFlow(Transformation):
                 f"(index {index}), since the configuration/device "
                 f"has only {self.ports} networking ports."
             )
-        if self.verbosity == MFVerbosity.HIGH:
+        if self.verbosity.value >= MFVerbosity.HIGH.value:
             log.info(f"Packaging AuroraFlow core (Device: {device}, Index: {index})")
 
         # Copy the AuroraFlow project into a build directory

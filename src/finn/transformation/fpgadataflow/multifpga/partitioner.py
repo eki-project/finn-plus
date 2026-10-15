@@ -1,308 +1,175 @@
-"""Partitioners for Multi-FPGA usage."""
+"""Abstract base class for Multi-FPGA partitioners."""
 
-from __future__ import annotations
-
-import locale
-import mip
-import os
-import random
 import time
 import yaml
 from abc import ABC, abstractmethod
-from mip import Model
+from collections import Counter
+from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from qonnx.core.modelwrapper import ModelWrapper
 
-from finn.builder.build_dataflow_config import DataflowBuildConfig, MIPSolver, PartitioningStrategy
-from finn.util.basic import make_build_dir
-from finn.util.exception import FINNMultiFPGAError, FINNMultiFPGAUserError
-from finn.util.logging import log
-
-if TYPE_CHECKING:
-    pass
-
-# Gurobi hands out one floating license token per environment and asks its token server for it
-# every time an environment is created. In a highly parallel setting (the CI test suite runs
-# dozens of pytest workers that all create partitioners) this fails now and then because the
-# token server is momentarily out of tokens or does not answer in time. Gurobi's own
-# recommendation for this case is to retry after a short delay, see Partitioner.create_model.
-MIP_SOLVER_MAX_ATTEMPTS_ENV = "FINN_MIP_SOLVER_MAX_ATTEMPTS"  # overrides the default below
-MIP_SOLVER_MAX_ATTEMPTS = 6
-MIP_SOLVER_RETRY_DELAY = 5.0  # seconds before the 2nd attempt, doubled after each further one
-MIP_SOLVER_RETRY_DELAY_MAX = 60.0  # seconds
+from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.util.exception import FINNMissingMappingError
+from finn.util.resources import (
+    ResourceEstimates,
+    available_resources_on_platform,
+    get_estimated_model_resources,
+)
 
 
 class Partitioner(ABC):
-    """Models a linear problem that can be used to solve Multi-FPGA partitioning. The idea to solve
-    this in general using an LP was first devised by the AMD team for Elastic-DF and implemented as
-    a prototype in finn-experimental.
-    (https://github.com/Xilinx/finn-experimental/blob/main/src/finnexperimental/analysis/partitioning.py)
+    """Base class for partitioners. Partitioners only need to implement the interfacing methods
+    to other parts of FINN. Partitioners should inherit and implement their necessary machinery.
+    """
 
-    We use a slightly different approach to modelling the problem and the objective function,
-    however the partitioner from finn-experimental should be relativly easy to swap in
-    if needed.
-    """  # noqa
-
-    def init_model(self, solver: MIPSolver | None) -> mip.Model:
-        """Initialize the LP model, considering the Multi-FPGA configuration."""
-        if solver is None:
-            try:
-                return Model()
-            except OSError:
-                log.warning(
-                    "Creation of mip.Model failed. This might be known bug "
-                    "(LD_LIBRARY_PATH only modified at runtime to point to "
-                    "libgurobi instead of before). Falling back to CBC."
-                )  # See finn-plus issue #67
-                return Model(name="finn_partition", solver_name=mip.CBC)
-            except mip.exceptions.InterfacingError as e:
-                log.warning(
-                    f"Could not create a default-initialized mip.Model. "
-                    f"The error encountered was: {e}. Trying to fallback to a CBC based model."
-                )
-                return Model(name="finn_partition", solver_name=mip.CBC)
-        else:
-            return self.create_model(solver.value)
-
-    @staticmethod
-    def create_model(solver_name: str, name: str = "finn_partition") -> mip.Model:
-        """Create the ``mip.Model`` for the given solver, retrying transient failures.
-
-        Creating the model fails transiently for Gurobi when its floating license token server
-        is out of tokens or unreachable (see the module comment). Such failures are retried with
-        an exponential backoff and a bit of jitter so that many parallel processes do not all hit
-        the server again at the same moment. Any other failure, and a transient failure that
-        persists for all attempts, raises a ``FINNMultiFPGAUserError`` that includes Gurobi's
-        own reason when it can be determined.
-        """
-        try:
-            max_attempts = max(1, int(os.environ.get(MIP_SOLVER_MAX_ATTEMPTS_ENV, "")))
-        except ValueError:
-            max_attempts = MIP_SOLVER_MAX_ATTEMPTS
-        delay = MIP_SOLVER_RETRY_DELAY
-        for attempt in range(1, max_attempts + 1):
-            try:
-                return Model(name=name, solver_name=solver_name)
-            except mip.exceptions.InterfacingError as e:
-                # Only a failed Gurobi environment creation can disappear on retry (no token or
-                # no answer from the token server right now). A missing solver library or a
-                # failed model creation is a persistent setup problem.
-                transient = "environment could not be loaded" in str(e)
-                if transient and attempt < max_attempts:
-                    log.warning(
-                        f"Creating the {solver_name} solver environment failed (attempt "
-                        f"{attempt}/{max_attempts}): {e} Retrying in {delay:.1f}s."
-                    )
-                    time.sleep(delay)
-                    # Exponential backoff with +-25% jitter, capped.
-                    delay = min(delay * 2, MIP_SOLVER_RETRY_DELAY_MAX) * random.uniform(0.75, 1.25)
-                    continue
-                message = f"Cannot create mip solver of type {solver_name}"
-                if transient:
-                    # Now that we give up anyway, ask Gurobi once for the actual reason.
-                    reason = None
-                    if solver_name == mip.GUROBI:
-                        reason = Partitioner._gurobi_environment_error()
-                    details = f" ({reason})" if reason else ""
-                    message += (
-                        f" after {attempt} attempt(s). Original error: {e}{details} If this "
-                        f"is a floating license, the token server may be out of tokens or "
-                        f"unreachable; the number of attempts can be set with "
-                        f"{MIP_SOLVER_MAX_ATTEMPTS_ENV}."
-                    )
-                else:
-                    message += f". Original error: {e}"
-                raise FINNMultiFPGAUserError(message) from e
-        raise AssertionError("unreachable")  # pragma: no cover
-
-    # The extra Gurobi functions used by _gurobi_environment_error are declared in python-mip's
-    # cffi binding once per process.
-    _gurobi_diagnostics_declared = False
-
-    @staticmethod
-    def _gurobi_environment_error() -> str | None:
-        """Ask Gurobi why creating an environment currently fails.
-
-        python-mip reports every failed environment creation as "check your license", which
-        hides the real reason (out of tokens, token server unreachable, expired license, ...).
-        This creates an empty environment through the same cffi binding python-mip uses, starts
-        it, and returns Gurobi's own error message with its error code. Starting the environment
-        requests a token like any other attempt, which is why this is only done once, when
-        giving up. Returns ``None`` if the environment starts fine (the failure was transient and
-        is already gone) or if the diagnostics cannot be collected at all.
-        """
-        try:
-            from mip import gurobi as mip_gurobi
-
-            if not mip_gurobi.has_gurobi:
-                return None
-            ffi = mip_gurobi.ffi
-            lib = mip_gurobi.grblib
-            if not Partitioner._gurobi_diagnostics_declared:
-                ffi.cdef(
-                    """
-                    int GRBemptyenv(GRBenv **envP);
-                    int GRBstartenv(GRBenv *env);
-                    const char *GRBgeterrormsg(GRBenv *env);
-                    """
-                )
-                Partitioner._gurobi_diagnostics_declared = True
-            env_ptr = ffi.new("GRBenv **")
-            status = lib.GRBemptyenv(env_ptr)
-            if status != 0:
-                return f"Gurobi error {status} while creating an empty environment"
-            env = env_ptr[0]
-            try:
-                # A failed GRBstartenv leaves the environment as it was, so the error message
-                # can be read from it and it must still be freed.
-                status = lib.GRBstartenv(env)
-                if status == 0:
-                    return None
-                message = ffi.string(lib.GRBgeterrormsg(env)).decode("utf-8", errors="replace")
-                return f"Gurobi error {status}: {message.strip()}"
-            finally:
-                lib.GRBfreeenv(env)
-        except Exception as e:  # noqa: BLE001 - diagnostics must never mask the original error
-            log.debug(f"Could not collect Gurobi diagnostics: {e}")
-            return None
-
-    def __init__(self, cfg: DataflowBuildConfig) -> None:
-        """Initialize a new partitioner. This involves creating the mip model."""
+    def __init__(self, model: ModelWrapper, cfg: DataflowBuildConfig) -> None:
+        """Initialize a partitioner by providing it with ModelWrapper and DataflowBuildConfig."""
         assert cfg.multifpga_configuration is not None
+        assert cfg.board is not None
+        self.modelwrapper = model
         self.cfg = cfg
         self.mfcfg = cfg.multifpga_configuration
-        self.verbosity = cfg.multifpga_configuration.verbosity
-
-        # Store locale. Necessary to avoid a bug, where a failed Gurobi model instantiation
-        # causes the default locale/encoding to switch away from UTF8, causing file
-        # IO errors later on.
-        current_locale = locale.getlocale(locale.LC_CTYPE)
-
-        # Initialize the model. The solution values are cached by solve() so that they remain
-        # available after the solver was released by close().
-        self.status: mip.OptimizationStatus | None = None
-        self.objective_value: float | None = None
-        self._resource_use_relative_cache: dict[int, dict[str, Any]] | None = None
-        self.model = self.init_model(cfg.multifpga_configuration.partition_solver)
-        self.model.emphasis = cfg.multifpga_configuration.partition_solver_emphasis
-
-        # Restore locale, as mentioned above.
-        locale.setlocale(locale.LC_CTYPE, current_locale)
-
-    def close(self) -> None:
-        """Release the solver behind this partitioner right away, returning its license token.
-
-        python-mip frees the Gurobi model and environment in the solver's ``__del__``, but
-        ``Model`` and its solver reference each other, so that only runs once the cyclic garbage
-        collector gets around to them. In a long-lived process with a large heap (a pytest worker
-        of the CI suite) this happens rarely, and every Gurobi environment that is still alive
-        keeps its floating license token: a running test suite was observed holding several
-        hundred tokens at once. Safe to call more than once; also happens when the partitioner is
-        used as a context manager or dropped. Afterwards the mip model must not be used any more,
-        only the values cached by ``solve()`` (status, objective value, resource use) remain.
-        """
-        solver = getattr(getattr(self, "model", None), "solver", None)
-        if solver is None:
-            return
-        try:
-            from mip import gurobi as mip_gurobi
-
-            if not (mip_gurobi.has_gurobi and isinstance(solver, mip_gurobi.SolverGurobi)):
-                return
-            if not solver._ownsModel:  # noqa: SLF001
-                return
-            # Mirrors SolverGurobi.__del__, which then finds nothing left to free.
-            if solver._model:  # noqa: SLF001
-                mip_gurobi.GRBfreemodel(solver._model)  # noqa: SLF001
-                solver._model = mip_gurobi.ffi.NULL  # noqa: SLF001
-            if solver._env and solver._venv_loaded:  # noqa: SLF001
-                mip_gurobi.GRBfreeenv(solver._env)  # noqa: SLF001
-                solver._env = mip_gurobi.ffi.NULL  # noqa: SLF001
-        except Exception as e:  # noqa: BLE001 - never fail because cleanup failed
-            log.debug(f"Could not release the mip solver: {e}")
-
-    def __enter__(self) -> Partitioner:
-        """Enter a ``with`` block that releases the solver at its end."""
-        return self
-
-    def __exit__(self, *exc_info: object) -> None:
-        """Release the solver when the ``with`` block ends."""
-        self.close()
-
-    def __del__(self) -> None:
-        """Release the solver once the partitioner is dropped.
-
-        The partitioner is not part of a reference cycle, so this runs as soon as the last
-        reference is dropped and returns the Gurobi license token right away.
-        """
-        try:
-            self.close()
-        except Exception:  # noqa: BLE001, S110 - never raise from __del__
-            pass
+        self.board = cfg.board
+        self.mapping: dict[str, int] | None = None
+        self.solve_seconds: float | None = None
 
     @abstractmethod
-    def create_result(self) -> dict[str, int]:
-        """Method that is used to generate a uniform solution type from the internal model.
-        Any model / solver can implement its constraints and variables differently and overwrite
-        this method, so that any class inheriting from the base can have a uniform result type.
-        This type should map node-names to devices.
-        The method should also error, if it is called before a solution was found.
-        """  # noqa
+    def _solve(self) -> dict[str, int]:
+        """Solve the partitioning problem and return a mapping between node-names and devices.
+        This method MUST raise a FINNMultiFPGAUnsolvableError in case no solution can be found."""
 
-    def dump_model_definition(self, dir_prefix: str = "model_definition") -> Path:
-        """Write the model definition to a new temporary directory for debugging."""
-        p = Path(make_build_dir(dir_prefix + "_")) / "model.lp"
-        self.model.write(str(p))
+    def solve(self) -> dict[str, int]:
+        """Solve the model/problem and return a mapping between node-names and devices. If
+        the model was already solved immediately return the cached result.
+        """
+        if self.mapping is None:
+            start = time.time()
+            self.mapping = self._solve()
+            self.solve_seconds = time.time() - start
+        return self.mapping
+
+    @cached_property
+    def resource_estimates(self) -> ResourceEstimates:
+        """Estimated resources per node for all considered resource types."""
+        return get_estimated_model_resources(
+            self.modelwrapper,
+            self.cfg._resolve_fpga_part(),  # noqa: SLF001
+            self.mfcfg.considered_resources,
+            True,
+        )
+
+    def get_resource_use_relative(self) -> dict[int, dict[str, float]]:
+        """Given the found mapping return the relative resource utilization
+        per device and resource type. Raises an error if no mapping was found yet.
+        """
+        if self.mapping is None:
+            raise FINNMissingMappingError(
+                "Cannot retrieve relative resource usage since no mapping was calculated yet."
+            )
+        available = available_resources_on_platform(self.board, self.mfcfg.considered_resources)
+        used = {
+            device: dict.fromkeys(self.mfcfg.considered_resources, 0.0)
+            for device in sorted(set(self.mapping.values()))
+        }
+        for nodename, device in self.mapping.items():
+            for restype in self.mfcfg.considered_resources:
+                used[device][restype] += self.resource_estimates[nodename][restype]
+        return {
+            device: {restype: amount / available[restype] for restype, amount in usage.items()}
+            for device, usage in used.items()
+        }
+
+    def generate_partitioning_report(self) -> str:
+        """Generate a report in which the required resources, the resources available per device,
+        and much more are listed. Works even if no solution was found.
+        """
+        s = ""
+
+        # General information
+        s += f"{' Model and Configuration ':=^80}\n"
+        s += "=" * 80 + "\n"
+        s += f"{'Layers: ' + str(len(self.modelwrapper.graph.node)):<10}\n"
+        s += f"{'Devices: ' + str(self.mfcfg.num_fpgas):<10}\n"
+        if self.solve_seconds is not None:
+            s += f"{'Time elapsed: ' + str(int(self.solve_seconds)) + 's':<10}\n"
+
+        # Resources
+        resource_estimates = self.resource_estimates
+        device_resources = available_resources_on_platform(
+            self.board, self.mfcfg.considered_resources
+        )
+        maxutil = self.mfcfg.max_utilization
+
+        s += f"\n{' Required Resources by the Model ':=^80}\n"
+        s += "=" * 80 + "\n"
+        for restype in self.mfcfg.considered_resources:
+            total_required = sum(rv[restype] for rv in resource_estimates.values())
+            factor = total_required / (maxutil * device_resources[restype])
+            s += (
+                f"{restype:<15}{total_required:<15_}   ({factor:.2f}x  "
+                f"on  {self.board}  at  {maxutil:.2%}  max utilization)\n"
+            )
+
+        s += f"\n{' Available Resources on Devices at Utilization Percentages ':=^80}\n"
+        s += "=" * 80 + "\n"
+        maxutil_percent = f"{maxutil:.2%}"
+        devices = self.mfcfg.num_fpgas
+        s += (
+            " " * 15 + f"{'1x @ ' + maxutil_percent:^15}"
+            f"{'1x @ 100%':^15}"
+            f"{str(devices) + 'x @ ' + maxutil_percent + '(!)':^15}"
+            f"{str(devices) + 'x @ 100%':^15}\n"
+        )
+        for restype in self.mfcfg.considered_resources:
+            res = int(device_resources[restype])
+            s += (
+                f"{restype:<15}"
+                f"{int(res * maxutil):^15_}"
+                f"{res:^15_}"
+                f"{int(maxutil * res * devices):^15_}"
+                f"{devices * res:^15_}\n"
+            )
+
+        s += f"\n{' Largest Nodes by Resource Type ':=^80}\n"
+        s += "=" * 80 + "\n"
+        for restype in self.mfcfg.considered_resources:
+            largest = max(resource_estimates, key=lambda layer: resource_estimates[layer][restype])
+            largest_amount = int(resource_estimates[largest][restype])
+            s += f"{restype:<15}{largest_amount:<12_}{largest:<25}\n"
+
+        # Return early if no solution was found
+        if self.mapping is None:
+            return s
+
+        s += f"\n{' Nodes per Device ':=^80}\n"
+        s += "=" * 80 + "\n"
+        counter = Counter(self.mapping.values())
+        for device in sorted(counter):
+            s += f"{'Device ' + str(device) + ': ':<10}{str(counter[device]) + ' nodes':<10}\n"
+
+        s += f"\n{' Resources per Device ':=^80}\n"
+        for device, usage in self.get_resource_use_relative().items():
+            s += f"{' Device ' + str(device) + ' ':-^40}\n"
+            for restype, relative in usage.items():
+                s += f"{restype:<15}{relative:<15.2%}\n"
+
+        return s
+
+    def write_mapping(self, path: Path | None = None) -> Path:
+        """Write the mapping to either the configured output reports directory
+        or the provided path. Errors if the mapping is not yet solved.
+        """
+        if self.mapping is None:
+            raise FINNMissingMappingError("Cannot write non-existent mapping.")
+        p = self.cfg.get_report_directory() / "device_mapping.yaml" if path is None else path
+        with p.open("w") as f:
+            yaml.safe_dump(self.mapping, f)
         return p
 
-    def solve(
-        self,
-        solver_timeout: int,
-    ) -> dict[str, int] | None:
-        """Try to optimize the objective function. If no feasible solution is found
-        return None, otherwise return a mapping of nodes to their device. After trying
-        to solve, creates a snapshot description of the model in a temp build dir, as well
-        as a solution in the same dir, if one was found.
+    def write_report(self, path: Path | None = None) -> Path:
+        """Write the partitioning report to either the configured output reports directory
+        or the provided path. Works even if no solution was found.
         """
-        self.status = self.model.optimize(solver_timeout)  # type: ignore
-        if self.status == mip.OptimizationStatus.ERROR:
-            model_definition_file = self.dump_model_definition()
-            raise FINNMultiFPGAError(
-                f"The solver returned an ERROR optimization status! "
-                f"Please check the model definition file "
-                f"at: {model_definition_file.absolute()}"
-            )
-        if self.status in [
-            mip.OptimizationStatus.INFEASIBLE,
-            mip.OptimizationStatus.NO_SOLUTION_FOUND,
-        ]:
-            return None
-        result = self.create_result()
-        # Cache what is reported after solving, so that the solver can be released early.
-        self.objective_value = self.model.objective_value
-        self.get_resource_use_relative()
-        return result
-
-    def write_results(self, p: Path) -> None:
-        """Write the partition results as a YAML to the given directory."""
-        results = self.create_result()
-        with p.open("w+") as f:
-            yaml.dump(results, f, yaml.Dumper)
-
-    @abstractmethod
-    def _get_resource_use_relative(self) -> dict[int, dict[str, Any]]:
-        """Get resources used by the device in percent. Must fail if no
-        partition was calculated yet.
-        """
-        pass  # noqa
-
-    def get_resource_use_relative(self) -> dict[int, dict[str, Any]] | None:
-        """Return the resources used by a device. This only works if the optimization goal was
-        resource usage. If no optimization was done, the dict will contain None's
-        Actual implementation is left to the subclasses.
-        """
-        if self.mfcfg.partition_strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
-            if self._resource_use_relative_cache is None:
-                self._resource_use_relative_cache = self._get_resource_use_relative()
-            return self._resource_use_relative_cache
-        return None
+        p = self.cfg.get_report_directory() / "partitioning_report.txt" if path is None else path
+        p.write_text(self.generate_partitioning_report())
+        return p

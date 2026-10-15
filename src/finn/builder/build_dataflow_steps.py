@@ -152,8 +152,8 @@ from finn.transformation.fpgadataflow.multifpga.create_multi_sdp import (
 )
 from finn.transformation.fpgadataflow.multifpga.create_network_metadata import CreateNetworkMetadata
 from finn.transformation.fpgadataflow.multifpga.partition_model import (
-    ApplyPartitioning,
-    PartitionForMultiFPGA,
+    ApplyDeviceMapping,
+    FindMultiFPGADeviceMapping,
 )
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
@@ -1974,6 +1974,18 @@ def step_out_of_context_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig)
 
 
 @register_build_dataflow_step()
+def step_partition_model(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Only partition the model. This does _not_ automatically insert DWCs and IODMAs. This step
+    should only be used for testing."""
+    log.warning(
+        "step_partition_model should only be used for testing. "
+        "This is normally handled in 'step_prepare_synthesis'!"
+    )
+    model = model.transform(FindMultiFPGADeviceMapping(cfg))
+    return model
+
+
+@register_build_dataflow_step()
 def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Prepare synthesis. For Zynq this currently does nothing.
     This does everything required for Multi-FPGA.
@@ -2034,9 +2046,9 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                 )
                 mfcfg = cfg.multifpga_configuration
                 if mfcfg.partitioning is not None:
-                    model = model.transform(ApplyPartitioning(mfcfg.partitioning))
+                    model = model.transform(ApplyDeviceMapping(mfcfg.partitioning))
                 else:
-                    model = model.transform(PartitionForMultiFPGA(cfg))
+                    model = model.transform(FindMultiFPGADeviceMapping(cfg))
                 model = model.transform(
                     CreateMultiFPGAStreamingDataflowPartition(
                         mfcfg.separate_iodmas, sdp_partition_dir, mfcfg.verbosity

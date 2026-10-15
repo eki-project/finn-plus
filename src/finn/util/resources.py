@@ -4,9 +4,9 @@ from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.res_estimation import res_estimation
-from finn.util.exception import FINNUserError
+from finn.util.exception import FINNConfigurationError, FINNUserError
 from finn.util.logging import log
-from finn.util.platforms import Platform
+from finn.util.platforms import Platform, platforms
 
 ResourceEstimates = dict[str, dict[str, int | float]]
 """Short alias for a resource dict."""
@@ -128,24 +128,36 @@ def _resources_per_device_per_slr(p: Platform) -> dict[int, dict[str, int]]:
     return new
 
 
-def available_resources_on_platform(p: Platform, considered_resources: list[str]) -> dict[str, int]:
-    """Return the total resources per device. Normally,
-    these values are split by SLR.
+def available_resources_on_platform(
+    board: str, considered_resources: list[str] | None
+) -> dict[str, int]:
+    """Return the total resources of a single device of the given board (summed over its SLRs)
+    for all considered resource types. Raises an error if a considered resource type does not
+    exist on the board, since callers would otherwise divide by the zero available resources of
+    that type. If `considered_resources` is None, all resource types are returned (with 0 for
+    the ones that do not exist on the board) without raising.
     """
-    resources_per_device = _resources_per_device_per_slr(p)
-    if resources_per_device is None:
-        return {}
-    acc = {}
-    for restype in considered_resources:
-        acc[restype] = 0
-        for slr in resources_per_device:
-            acc[restype] += resources_per_device[slr][restype]
-    return acc
+    resources_per_slr = _resources_per_device_per_slr(platforms[board]())
+    available = {
+        restype: sum(resources_per_slr[slr][restype] for slr in resources_per_slr)
+        for restype in PLATFORM_RESOURCE_TYPES
+    }
+    if considered_resources is None:
+        return available
+    missing = [res for res in considered_resources if available.get(res, 0) <= 0]
+    if len(missing) > 0:
+        existing = {res: amount for res, amount in available.items() if amount > 0}
+        raise FINNConfigurationError(
+            f"The resource type(s) {', '.join(missing)} do not exist on board {board}. Resource "
+            f"types available on this board: {existing}. For Multi-FPGA partitioning, remove "
+            f"the missing resource type(s) from 'considered_resources'."
+        )
+    return {res: available[res] for res in considered_resources}
 
 
 def get_model_device_resource_factors(
     model: ModelWrapper,
-    platform: Platform,
+    board: str,
     fpga_part: str,
     considered_resources: list[str],
     max_utilization: float,
@@ -154,8 +166,8 @@ def get_model_device_resource_factors(
     per resource to fit the model. For example, {"LUT": 2.4} would mean that
     2.4 of the given devices are required to fit the model (lower bound).
 
-    In case that a device or the model estimate does not have the requested
-    resource, None is returned.
+    In case that the model estimate does not have the requested resource, None is returned.
+    If the device does not have it, an error is raised.
     """
     estimated = get_estimated_model_resources(model, fpga_part, considered_resources, True)
     total_estimated = dict.fromkeys(considered_resources, 0)
@@ -164,10 +176,8 @@ def get_model_device_resource_factors(
             if restype not in resource:
                 return None
             total_estimated[restype] += resource[restype]
-    device = available_resources_on_platform(platform, considered_resources)
-    factors = {}
-    for restype in considered_resources:
-        if restype not in device:
-            return None
-        factors[restype] = total_estimated[restype] / (device[restype] * max_utilization)
-    return factors
+    device = available_resources_on_platform(board, considered_resources)
+    return {
+        restype: total_estimated[restype] / (device[restype] * max_utilization)
+        for restype in considered_resources
+    }

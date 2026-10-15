@@ -42,7 +42,7 @@ class NetworkBackend:
     """The type of network backend (communication kernel) this entry implements."""
 
     partitioner: Callable[[DataflowBuildConfig, ModelWrapper], Partitioner]
-    """Create the partitioner for the given model. Used by `PartitionForMultiFPGA`."""
+    """Create the partitioner for the given model. Used by `FindMultiFPGADeviceMapping`."""
 
     metadata_type: type[NetworkMetadata]
     """Metadata class. Used by `CreateNetworkMetadata` and to load the metadata later on."""

@@ -116,6 +116,25 @@ class FINNMultiFPGAPartitionerError(FINNUserError):
         super().__init__(*args)
 
 
+class FINNMultiFPGAUnsolvableError(FINNMultiFPGAPartitionerError):
+    """(User) Multi-FPGA Error raised by any partitioner if the partitioning problem has no
+    solution for the given configuration (e.g. too few devices or too many nodes per device).
+    Automatic partitioning catches it to retry with a different number of devices.
+    """
+
+    def __init__(self, *args: object) -> None:
+        """Create a new FINNMultiFPGAUnsolvableError."""
+        super().__init__(*args)
+
+
+class FINNMissingMappingError(FINNInternalError):
+    """(User) Multi-FPGA Error raised if no mapping was calculated yet."""
+
+    def __init__(self, *args: object) -> None:
+        """Create a new FINNMissingMappingError."""
+        super().__init__(*args)
+
+
 class FINNVitisLinkConfigError(FINNInternalError):
     """(Internal) An error appearing in a vitis link configuration when trying to
     generate a script or config. May happen in both single- and multifpga cases.

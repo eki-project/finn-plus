@@ -11,11 +11,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from finn.transformation.fpgadataflow.multifpga.metadata import DataDirection, NetworkMetadata
-from finn.util.basic import get_metadata_prop_path
 from finn.util.exception import FINNInternalError, FINNMultiFPGAConfigError
 
 if TYPE_CHECKING:
-    from qonnx.core.modelwrapper import ModelWrapper
+    from typing import Self
 
     from finn.builder.build_dataflow_config import MultiFPGAConfiguration
 
@@ -68,26 +67,12 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         """Create an empty metadata object, using the configured number of links per device."""
         return cls(links_per_device=mfcfg.links_per_device)
 
-    @staticmethod
-    def load_from_model(model: ModelWrapper) -> AuroraNetworkMetadata:
-        """Load metadata from the model."""
-        p = get_metadata_prop_path(
-            model,
-            "network_metadata",
-            must_exist=True,
-            custom_error=(
-                "Cannot load metadata from model, since no 'network_metadata' prop was set. "
-                "Did you forget to run the 'AssignMetadata' transformation before this?"
-            ),
-        )
-        return AuroraNetworkMetadata.load(p)
-
-    @staticmethod
-    def load(p: Path) -> AuroraNetworkMetadata:
+    @classmethod
+    def load(cls, p: Path) -> Self:
         """Load from a YAML file. Afterwards, `save()` without a path stores to the same file."""
         if not p.exists():
             raise FINNInternalError(f"Tried loading Aurora metadata from non-existing path: {p}")
-        meta = AuroraNetworkMetadata.from_yaml(p.read_text())
+        meta = cls.from_yaml(p.read_text())
         meta.loaded_from_path = p
         return meta
 
