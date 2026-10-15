@@ -6,7 +6,6 @@ import onnx.helper as oh
 import os
 import random
 from copy import deepcopy
-from fpgadataflow.multifpga.utils import TestingNode
 from onnx import TensorProto
 from pathlib import Path
 from qonnx.core.datatype import DataType
@@ -15,14 +14,13 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.util.basic import qonnx_make_model
 from random import randint
-from typing import Literal, cast
+from typing import cast
 
 from finn.builder.build_dataflow_config import MFVerbosity
 from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.multifpga.create_multi_sdp import (
     ClusterByNodeattribute,
     CreateMultiFPGAStreamingDataflowPartition,
-    ResolveCircularPartitionIDs,
     get_device_id,
 )
 from finn.transformation.qonnx.give_unique_node_names_recursive import GiveUniqueNodeNamesRecursive
@@ -412,8 +410,7 @@ def create_sdp_ready_model_no_branches(
     """Create a simple SDP ready model without branches. The device_id is
     set according to the passed assignment arguments.
 
-    Parameters
-    ----------
+    Args:
         node_count: Number of nodes. Nodes will be numbered 0-node_count.
         device_count: Number of devices to map the nodes to.
         assignment_type: How to assign which nodes belong to devices. Can be 'random'

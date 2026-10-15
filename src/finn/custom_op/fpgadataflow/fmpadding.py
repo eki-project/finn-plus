@@ -26,25 +26,45 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for fmpadding."""
-import numpy as np
-from qonnx.core.datatype import DataType
+"""Feature-map zero-padding hardware custom operator."""
 
+import numpy as np
+from onnx import NodeProto
+from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from typing import TYPE_CHECKING, cast
+
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
+if TYPE_CHECKING:
+    from onnx import GraphProto
 
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
+
+
+@register_custom_op
 class FMPadding(HWCustomOp):
-    """Abstraction layer for HW impplementation of FMPadding.
-    Pads input image by given amount."""
+    """Abstraction layer for HW implementation of FMPadding.
 
-    def __init__(self, onnx_node, **kwargs):
+    Pads the input image by the given amount.
+    """
+
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             # spatial size of input images
             "ImgDim": ("ints", True, []),  # [H, W] = [Y, X]
             # total padding (per dimension) to apply
@@ -65,103 +85,121 @@ class FMPadding(HWCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_padded_odim(self):
+    @property
+    def img_dim(self) -> list[int]:
+        """Get the input image spatial dimensions [H, W]."""
+        return cast("list[int]", self.get_nodeattr("ImgDim"))
+
+    @property
+    def padding(self) -> list[int]:
+        """Get the total padding [H_begin, W_begin, H_end, W_end]."""
+        return cast("list[int]", self.get_nodeattr("Padding"))
+
+    @property
+    def num_channels(self) -> int:
+        """Get the number of channels."""
+        return cast("int", self.get_nodeattr("NumChannels"))
+
+    @property
+    def simd(self) -> int:
+        """Get the SIMD parallelism."""
+        return cast("int", self.get_nodeattr("SIMD"))
+
+    @property
+    def num_input_vectors(self) -> int:
+        """Get the batch size (input vectors per execution)."""
+        return cast("int", self.get_nodeattr("numInputVectors"))
+
+    def get_padded_odim(self) -> list[int]:
         """Return the padded spatial size of the output."""
-        idim_h, idim_w = self.get_nodeattr("ImgDim")
-        pad = self.get_nodeattr("Padding")
+        idim_h, idim_w = self.img_dim
+        pad = self.padding
         pad_h = pad[0] + pad[2]
         pad_w = pad[1] + pad[3]
-        odim_h = idim_h + pad_h
-        odim_w = idim_w + pad_w
-        return [odim_h, odim_w]
+        return [idim_h + pad_h, idim_w + pad_w]
 
-    def get_exp_cycles(self):
+    def get_exp_cycles(self) -> int:
         """Return exp cycles."""
         odim_h, odim_w = self.get_padded_odim()
-        channels = self.get_nodeattr("NumChannels")
-        simd = self.get_nodeattr("SIMD")
-        batch_size = self.get_nodeattr("numInputVectors")
-        exp_cycles = (channels / simd) * batch_size * odim_h * odim_w
+        exp_cycles = (self.num_channels / self.simd) * self.num_input_vectors * odim_h * odim_w
         return int(exp_cycles)
 
-    def get_normal_input_shape(self, ind=0):
+    def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal input shape."""
-        idim_h, idim_w = self.get_nodeattr("ImgDim")
-        num_ch = self.get_nodeattr("NumChannels")
-        ishape = (1, idim_h, idim_w, num_ch)
-        return ishape
+        idim_h, idim_w = self.img_dim
+        return (1, idim_h, idim_w, self.num_channels)
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal output shape."""
         odim_h, odim_w = self.get_padded_odim()
-        num_ch = self.get_nodeattr("NumChannels")
+        return (1, odim_h, odim_w, self.num_channels)
 
-        oshape = (1, odim_h, odim_w, num_ch)
-        return oshape
-
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
         normal_ishape = list(self.get_normal_input_shape())
-        ifm_ch = self.get_nodeattr("NumChannels")
-        simd = self.get_nodeattr("SIMD")
-        assert ifm_ch % simd == 0, "SIMD must divide input channels"
-        fold = int(normal_ishape[-1] / simd)
-        folded_ishape = normal_ishape[:-1] + [fold, simd]
-        return tuple(folded_ishape)
+        if self.num_channels % self.simd != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: SIMD ({self.simd}) must divide "
+                f"input channels ({self.num_channels})"
+            )
+        fold = normal_ishape[-1] // self.simd
+        return (*normal_ishape[:-1], fold, self.simd)
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded output shape."""
         normal_oshape = list(self.get_normal_output_shape())
-        ifm_ch = self.get_nodeattr("NumChannels")
-        simd = self.get_nodeattr("SIMD")
-        assert ifm_ch % simd == 0, "SIMD must divide input channels"
-        fold = int(normal_oshape[-1] / simd)
-        folded_oshape = normal_oshape[:-1] + [fold, simd]
-        return tuple(folded_oshape)
+        if self.num_channels % self.simd != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: SIMD ({self.simd}) must divide "
+                f"input channels ({self.num_channels})"
+            )
+        fold = normal_oshape[-1] // self.simd
+        return (*normal_oshape[:-1], fold, self.simd)
 
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
         """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
-            warn_str = "inputDataType changing for %s: %s -> %s " % (
-                node.name,
-                str(self.get_input_datatype()),
-                str(idt),
+            log.warning(
+                f"inputDataType changing for {node.name}: "
+                f"{self.get_input_datatype()!s} -> {idt!s} "
             )
-            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
         model.set_tensor_datatype(node.output[0], idt)
 
-    def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
-        ret = DataType[self.get_nodeattr("inputDataType")]
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of input."""
+        ret = DataType[cast("str", self.get_nodeattr("inputDataType"))]
         # the hlslib op always pads with zeros, so ensure that the DataType
         # is able to represent zeros
-        assert ret.allowed(0), "FMPadding_Batch DataType must support zero"
+        if not ret.allowed(0):
+            raise FINNUserError(
+                f"{self.onnx_node.name}: FMPadding DataType ({ret}) must support zero"
+            )
         return ret
 
-    def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output. (Same as input datatype)"""
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of output (same as input datatype)."""
         return self.get_input_datatype()
 
-    def get_instream_width(self, ind=0):
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return instream width."""
-        ibits = self.get_input_datatype().bitwidth()
-        simd = self.get_nodeattr("SIMD")
-        return ibits * simd
+        return self.get_input_datatype().bitwidth() * self.simd
 
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return outstream width."""
-        obits = self.get_output_datatype().bitwidth()
-        simd = self.get_nodeattr("SIMD")
-        return obits * simd
+        return self.get_output_datatype().bitwidth() * self.simd
 
-    def execute_node(self, context, graph):
-        # simulate behavior with Python functionality
-        """Execute node."""
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
+        """Execute node.
+
+        Simulates the behavior with plain Python.
+        """
         node = self.onnx_node
-        pad = self.get_nodeattr("Padding")
+        pad = self.padding
         inp_values = context[node.input[0]]
         oshape = context[node.output[0]].shape
         result = np.pad(

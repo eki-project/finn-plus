@@ -31,11 +31,13 @@ import math
 import numpy as np
 from onnx import TensorProto
 from onnx import helper as oh
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import SortGraph
 from qonnx.util.basic import get_by_name
 
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.fpgadataflow import get_device_id
 
 
@@ -45,21 +47,22 @@ class InsertIODMA(Transformation):
 
     def __init__(
         self,
-        max_intfwidth=32,
-        insert_input=True,
-        insert_output=True,
-        insert_extmemw=True,
-    ):
+        max_intfwidth: int = 32,
+        insert_input: bool = True,
+        insert_output: bool = True,
+        insert_extmemw: bool = True,
+    ) -> None:
         """Initialize the transformation with insertion options."""
         super().__init__()
         self.insert_input = insert_input
         self.insert_output = insert_output
         self.insert_extmemw = insert_extmemw
-        assert 2 ** math.log2(max_intfwidth) == max_intfwidth, "max_intfwidth must be a power of 2"
+        if 2 ** math.log2(max_intfwidth) != max_intfwidth:
+            raise FINNUserError(f"max_intfwidth must be a power of 2, got {max_intfwidth}")
         self.max_intfwidth = max_intfwidth
 
-    def get_mem_init(self, weights, pe, simd):
-        """Returns matrix ready for pack_innermost_dim_as_hex_string with
+    def get_mem_init(self, weights: np.ndarray, pe: int, simd: int) -> np.ndarray:
+        """Return a matrix ready for pack_innermost_dim_as_hex_string with
         reverse=False (finn.util.data_packing) to return the memory init file
         little endian packed.
         That is, get_mem_init returns:
@@ -72,11 +75,16 @@ class InsertIODMA(Transformation):
         # make_weight_file except it doesn't write a file but returns a npy
         # array instead
         w_shape = weights.shape
-        assert len(w_shape) == 2, "weights with incorrect number of dims"
+        if len(w_shape) != 2:
+            raise FINNInternalError(f"weights with incorrect number of dims: {len(w_shape)}")
         inp_w, out_w = w_shape
 
-        assert out_w % pe == 0, "Malformed weight matrix"
-        assert inp_w % simd == 0, "Malformed weight matrix"
+        if out_w % pe != 0:
+            raise FINNUserError(f"Malformed weight matrix: MH ({out_w}) not divisible by PE ({pe})")
+        if inp_w % simd != 0:
+            raise FINNUserError(
+                f"Malformed weight matrix: MW ({inp_w}) not divisible by SIMD ({simd})"
+            )
         reshaped_w = np.zeros(inp_w * out_w, dtype=np.float32).reshape(-1, pe * simd)
 
         addr = 0
@@ -95,15 +103,16 @@ class InsertIODMA(Transformation):
         reshaped_w = np.flip(reshaped_w, axis=-1)
         return reshaped_w
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Insert IODMA nodes for inputs, outputs, and external weights."""
         modified = False
         # only makes sense for a pure fpgadataflow graph -- so we check!
         all_nodes = list(model.graph.node)
-        assert all(
+        if not all(
             get_by_name(x.attribute, "backend").s.decode("UTF-8") == "fpgadataflow"
             for x in all_nodes
-        )
+        ):
+            raise FINNInternalError("InsertIODMA only makes sense for a pure fpgadataflow graph")
         # insert IODMAs for graph inputs
         if self.insert_input:
             graph_in_names = [x.name for x in model.graph.input]
@@ -124,7 +133,10 @@ class InsertIODMA(Transformation):
                 # determine the feasible interface width
                 transfer_bits = padded_instream_width * np.prod(in_folded_shape[:-1])
                 intfwidth = math.gcd(transfer_bits, self.max_intfwidth)
-                assert intfwidth % 8 == 0, "No feasible interface width for transfer size"
+                if intfwidth % 8 != 0:
+                    raise FINNUserError(
+                        f"No feasible interface width for transfer size: {intfwidth}"
+                    )
                 # make new buffer
                 first_node_in = oh.make_tensor_value_info(
                     model.make_new_valueinfo_name(), TensorProto.FLOAT, in_shape
@@ -173,7 +185,10 @@ class InsertIODMA(Transformation):
                 # determine the feasible interface width
                 transfer_bits = padded_outstream_width * np.prod(out_folded_shape[:-1])
                 intfwidth = math.gcd(transfer_bits, self.max_intfwidth)
-                assert intfwidth % 8 == 0, "No feasible interface width for transfer size"
+                if intfwidth % 8 != 0:
+                    raise FINNUserError(
+                        f"No feasible interface width for transfer size: {intfwidth}"
+                    )
                 # make new buffer
                 final_node_out = oh.make_tensor_value_info(
                     model.make_new_valueinfo_name(), TensorProto.FLOAT, out_shape
@@ -222,14 +237,17 @@ class InsertIODMA(Transformation):
                 # determine the feasible interface width
                 transfer_bits = np.prod(w_shape) * w_dtype.bitwidth()
                 intfwidth = math.gcd(transfer_bits, self.max_intfwidth)
-                assert intfwidth % 8 == 0, "No feasible interface width for transfer size"
+                if intfwidth % 8 != 0:
+                    raise FINNUserError(
+                        f"No feasible interface width for transfer size: {intfwidth}"
+                    )
                 # calculate width of stream output from DMA
                 pe = get_by_name(fc_node.attribute, "PE").i
                 simd = get_by_name(fc_node.attribute, "SIMD").i
-                streamWidth = fc_inst.get_instream_width_padded(1)
+                stream_width = fc_inst.get_instream_width_padded(1)
                 # make new buffer
-                W = model.get_initializer(fc_w_name)
-                iodma_mem = self.get_mem_init(W, pe, simd)
+                weights = model.get_initializer(fc_w_name)
+                iodma_mem = self.get_mem_init(weights, pe, simd)
                 model.set_initializer(fc_w_name, iodma_mem)
 
                 fc_node_in = oh.make_tensor_value_info(
@@ -237,7 +255,7 @@ class InsertIODMA(Transformation):
                 )
                 model.graph.value_info.append(fc_node_in)
                 model.set_tensor_datatype(fc_node_in.name, w_dtype)
-                model.set_initializer(fc_node_in.name, W)
+                model.set_initializer(fc_node_in.name, weights)
                 # Copy device ID of the node we are attaching to
                 other_node_device = get_device_id(fc_node)
                 iodma_device = other_node_device if other_node_device is not None else 0
@@ -249,7 +267,7 @@ class InsertIODMA(Transformation):
                     NumChannels=pe * simd,
                     dataType=str(w_dtype.name),
                     intfWidth=intfwidth,
-                    streamWidth=streamWidth,
+                    streamWidth=stream_width,
                     direction="in",
                     burstMode="wrap",
                     domain="finn.custom_op.fpgadataflow.hls",

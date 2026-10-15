@@ -4,7 +4,7 @@ import networkx as nx
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import Any
 
-from finn.util.exception import FINNMultiFPGAError
+from finn.util.exception import FINNInternalError, FINNMultiFPGAError
 
 
 def onnx_to_networkx(model: ModelWrapper) -> nx.DiGraph:
@@ -49,7 +49,8 @@ def _split_nodes_from_nx(g: nx.DiGraph, source_node_name: str, art_points: list[
     >>> sorted(_split_nodes_from_nx(g, 2, nx.articulation_points(g.to_undirected())))
     [2, 3, 4, 5, 6, 8, 9]
     """  # noqa
-    assert len(g.out_edges(source_node_name)) > 1
+    if not (len(g.out_edges(source_node_name)) > 1):
+        raise FINNInternalError("Expected the source node to have more than one outgoing edge")
     ap = list(art_points)
     for node in nx.dfs_preorder_nodes(g, source_node_name):
         if node in ap and node != source_node_name:

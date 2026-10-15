@@ -10,7 +10,7 @@ from finn.util.logging import log
 
 class InferPixelPaddingDeconv(Transformation):
     """Lowering and conversion of ConvTranspose (NCHW) nodes to
-    FMPadding_Pixel + Im2Col + MatMul (NHWC) surrounded by Transpose nodes
+    InputDilation + Im2Col + MatMul (NHWC) surrounded by Transpose nodes
     note: this transformation produces a mix of hw layers and non hw layers
     to implement this on an FPGA the Im2Col and MatMul nodes need to be converted to hw layers
     after applying this transformation and the resulting transpose nodes need to be streamlined.
@@ -30,7 +30,7 @@ class InferPixelPaddingDeconv(Transformation):
                 if group != 1:
                     log.warning(
                         f"{n.name} : Only group=1 is currently supported.\
-                            Can't infer PixelPaddingDeconv."
+                            Can't infer input-dilation deconv lowering."
                     )
                     continue
                 deconv_input = n.input[0]
@@ -108,17 +108,17 @@ class InferPixelPaddingDeconv(Transformation):
                     TensorProto.FLOAT,
                     (1, ifm_dim_h, ifm_dim_w, ifm_ch),  # NHWC
                 )
-                padding_pixel_out = helper.make_tensor_value_info(
+                dilation_out = helper.make_tensor_value_info(
                     model.make_new_valueinfo_name(),
                     TensorProto.FLOAT,
                     (1, padded_odim_h, padded_odim_w, ifm_ch),  # NHWC
                 )
                 graph.value_info.append(inp_trans_out)
-                graph.value_info.append(padding_pixel_out)
+                graph.value_info.append(dilation_out)
                 inp_trans_out = inp_trans_out.name
-                padding_pixel_out = padding_pixel_out.name
+                dilation_out = dilation_out.name
                 model.set_tensor_datatype(inp_trans_out, idt)
-                model.set_tensor_datatype(padding_pixel_out, idt)
+                model.set_tensor_datatype(dilation_out, idt)
 
                 need_im2col = True
                 if all(p == 0 for p in conv_padding):
@@ -153,11 +153,11 @@ class InferPixelPaddingDeconv(Transformation):
                 inp_trans_node = helper.make_node(
                     "Transpose", [deconv_input], [inp_trans_out], perm=[0, 2, 3, 1]
                 )
-                # Pixel Padding
-                fmpadding_pixel_node = helper.make_node(
-                    "FMPadding_Pixel",
+                # Input dilation (interior zero-padding)
+                input_dilation_node = helper.make_node(
+                    "InputDilation",
                     [inp_trans_out],
-                    [padding_pixel_out],
+                    [dilation_out],
                     domain="finn.custom_op.fpgadataflow",
                     backend="fpgadataflow",
                     ImgDim=(ifm_dim_h, ifm_dim_w),
@@ -168,12 +168,12 @@ class InferPixelPaddingDeconv(Transformation):
                     SIMD=1,
                 )
                 # lower input tensor
-                matmul_input = padding_pixel_out
+                matmul_input = dilation_out
                 if need_im2col:
                     matmul_input = im2col_out
                     im2col_node = helper.make_node(
                         "Im2Col",
-                        [padding_pixel_out],
+                        [dilation_out],
                         [im2col_out],
                         domain="qonnx.custom_op.general",
                         stride=[1, 1],
@@ -193,12 +193,12 @@ class InferPixelPaddingDeconv(Transformation):
                 # insert nodes where the conv is to preserve topological ordering
                 graph.node.insert(node_ind, inp_trans_node)
                 if need_im2col:
-                    graph.node.insert(node_ind + 1, fmpadding_pixel_node)
+                    graph.node.insert(node_ind + 1, input_dilation_node)
                     graph.node.insert(node_ind + 2, im2col_node)
                     graph.node.insert(node_ind + 3, matmul_node)
                     graph.node.insert(node_ind + 4, out_trans_node)
                 else:
-                    graph.node.insert(node_ind + 1, fmpadding_pixel_node)
+                    graph.node.insert(node_ind + 1, input_dilation_node)
                     graph.node.insert(node_ind + 2, matmul_node)
                     graph.node.insert(node_ind + 3, out_trans_node)
                 # remove old nodes

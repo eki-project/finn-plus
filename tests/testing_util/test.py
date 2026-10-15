@@ -26,24 +26,24 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Shared helpers for the FINN test-suite: model loading, build envs and image utils."""
+
 import pytest
 
 import numpy as np
 import onnx
-import onnx.helper as oh
 import onnx.numpy_helper as nph
-import os
 import torch
 import torchvision.transforms.functional as torchvision_util
 import warnings
 from brevitas_examples import bnn_pynq, imagenet_classification
 from pathlib import Path
+from PIL import Image
 from pkgutil import get_data
 from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.custom_op.registry import getCustomOp
+from typing import Protocol, cast
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, VitisOptStrategy
-from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild
 from finn.util.basic import (
@@ -53,6 +53,7 @@ from finn.util.basic import (
     pynq_part_map,
     robust_rmtree,
 )
+from finn.util.exception import FINNUserError
 
 # map of (wbits,abits) -> model
 example_map = {
@@ -80,53 +81,69 @@ def get_test_model(netname: str, wbits: int, abits: int, pretrained: bool) -> to
     return fc.eval()
 
 
-def get_test_model_trained(netname, wbits, abits):
-    """get_test_model with pretrained=True"""
+def get_test_model_trained(netname: str, wbits: int, abits: int) -> torch.nn.Module:
+    """Return get_test_model with pretrained=True."""
     return get_test_model(netname, wbits, abits, pretrained=True)
 
 
-def get_test_model_untrained(netname, wbits, abits):
-    "get_test_model with pretrained=False"
+def get_test_model_untrained(netname: str, wbits: int, abits: int) -> torch.nn.Module:
+    """Return get_test_model with pretrained=False."""
     return get_test_model(netname, wbits, abits, pretrained=False)
 
 
-def get_topk(vec, k):
-    "Return indices of the top-k values in given array vec (treated as 1D)."
+def get_topk(vec: np.ndarray, k: int) -> np.ndarray:
+    """Return indices of the top-k values in given array vec (treated as 1D)."""
     return np.flip(vec.flatten().argsort())[:k]
 
 
-def soft_verify_topk(invec, idxvec, k):
-    """Check that the topK indices provided actually point to the topK largest
-    values in the input vector"""
+def soft_verify_topk(invec: np.ndarray, idxvec: np.ndarray, k: int) -> bool:
+    """Check that the topK indices point to the topK largest values in the input vector."""
     np_topk = np.flip(invec.flatten().argsort())[:k]
     soft_expected = invec.flatten()[np_topk.astype(np.int_).flatten()]
     soft_produced = invec.flatten()[idxvec.astype(np.int_).flatten()]
     return (soft_expected == soft_produced).all()
 
 
-def load_test_checkpoint_or_skip(filename):
-    "Try to load given .onnx and return ModelWrapper, else skip current test."
-    if os.path.isfile(filename):
-        model = ModelWrapper(filename)
-        return model
-    else:
-        warnings.warn(filename + " not found from previous test step, skipping")
-        pytest.skip(filename + " not found from previous test step, skipping")
+def load_test_checkpoint_or_skip(filename: str | Path) -> ModelWrapper:
+    """Try to load given .onnx and return ModelWrapper, else skip current test."""
+    if Path(filename).is_file():
+        return ModelWrapper(str(filename))
+    warnings.warn(f"{filename} not found from previous test step, skipping", stacklevel=2)
+    pytest.skip(f"{filename} not found from previous test step, skipping")
 
 
-def make_runtime_weight_stream(op_inst, weights):
-    """Write runtime weights in FINN's standard format and return the parsed stream."""
+class _RuntimeWeightOp(Protocol):
+    """Any op that can write its weights in FINN's runtime-weight file format."""
+
+    def make_weight_file(self, weights: np.ndarray, mode: str, path: str, /) -> None:
+        """Write ``weights`` to the file ``path`` in the given file ``mode``."""
+        ...
+
+
+def make_runtime_weight_stream(op_inst: _RuntimeWeightOp, weights: np.ndarray) -> list[int]:
+    """Write runtime weights in FINN's standard format and return the parsed stream.
+
+    The scratch directory is only removed on success, so a failing parse leaves the
+    weight file behind for inspection.
+
+    Args:
+        op_inst: Custom op instance that implements ``make_weight_file``.
+        weights: Weight tensor to write.
+
+    Returns:
+        The weight stream as a list of integers (one per line of the weight file).
+    """
     weight_dir = make_build_dir("test_runtime_weights_")
-    weight_path = os.path.join(weight_dir, "weights.dat")
-    op_inst.make_weight_file(weights, "decoupled_runtime", weight_path)
-    with open(weight_path) as f:
-        weight_stream = [int(x, 16) for x in f.read().strip().split("\n")]
+    weight_path = Path(weight_dir) / "weights.dat"
+    op_inst.make_weight_file(weights, "decoupled_runtime", str(weight_path))
+    weight_stream = [int(x, 16) for x in weight_path.read_text().strip().split("\n")]
     robust_rmtree(weight_dir)
     return weight_stream
 
 
-def get_build_env(board, target_clk_ns):
+def get_build_env(board: str, target_clk_ns: float) -> dict:
     """Get board-related build environment for testing.
+
     - board = any from pynq_part_map or alveo_part_map
     """
     ret = {}
@@ -147,18 +164,17 @@ def get_build_env(board, target_clk_ns):
         ret["cfg"] = cfg
         ret["build_fxn"] = VitisBuild(cfg)
     else:
-        raise Exception("Unknown board specified")
+        raise FINNUserError(f"Unknown board specified: {board}")
     return ret
 
 
-def get_example_input(topology):
-    "Get example numpy input tensor for given topology."
-
+def get_example_input(topology: str) -> np.ndarray:
+    """Get example numpy input tensor for given topology."""
     if "fc" in topology:
         raw_i = get_data("qonnx.data", "onnx/mnist-conv/test_data_set_0/input_0.pb")
         onnx_tensor = onnx.load_tensor_from_string(raw_i)
         return nph.to_array(onnx_tensor)
-    elif topology == "cnv":
+    if topology == "cnv":
         cifar_path = (
             Path(__file__).parent.parent
             / "example_data"
@@ -167,8 +183,7 @@ def get_example_input(topology):
         )
         input_tensor = np.load(cifar_path)["arr_0"].astype(np.float32)
         return input_tensor
-    else:
-        raise Exception("Unknown topology, can't return example input")
+    raise FINNUserError(f"Unknown topology, can't return example input: {topology}")
 
 
 def get_trained_network_and_ishape(
@@ -185,12 +200,15 @@ def get_trained_network_and_ishape(
     return (model, ishape)
 
 
-def resize_smaller_side(target_pixels, img):
-    """Resizes smallest side of image to target pixels and resizes larger side with
-    same ratio. Expects a PIL image."""
-    return torchvision_util.resize(img, target_pixels)
+def resize_smaller_side(target_pixels: int, img: Image.Image) -> Image.Image:
+    """Resize the smallest side of a PIL image to target pixels, keeping the aspect ratio."""
+    # torchvision only annotates Tensor, but its functional API also accepts PIL images
+    resized = torchvision_util.resize(img, target_pixels)  # pyright: ignore[reportArgumentType]
+    return cast("Image.Image", resized)
 
 
-def crop_center(size, img):
+def crop_center(size: int, img: Image.Image) -> Image.Image:
     """Crop central size*size window out of a PIL image."""
-    return torchvision_util.center_crop(img, size)
+    # torchvision only annotates Tensor, but its functional API also accepts PIL images
+    cropped = torchvision_util.center_crop(img, size)  # pyright: ignore[reportArgumentType]
+    return cast("Image.Image", cropped)

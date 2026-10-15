@@ -94,7 +94,8 @@ class CreateVitisXO(Transformation):
         # NOTE: this assumes the graph is Vitis-compatible: max one axi lite interface
         # developed from instructions in UG1393 (v2019.2) and package_xo documentation
         # package_xo is responsible for generating the kernel xml
-        assert len(interfaces["axilite"]) <= 1, "CreateVitisXO supports max 1 AXI lite interface"
+        if not (len(interfaces["axilite"]) <= 1):
+            raise FINNInternalError("CreateVitisXO supports max 1 AXI lite interface")
         if len(interfaces["axilite"]) > 1:
             raise FINNInternalError(
                 f"Error building xo: cannot create vitis-compatible "

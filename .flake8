@@ -11,3 +11,6 @@ per-file-ignores =
      tests/*: F401
      # CI scripts add src/ to sys.path before importing finn.qor
      ci/qor/*: E402
+ignore =
+    E128
+    W503

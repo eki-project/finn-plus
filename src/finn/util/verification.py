@@ -52,7 +52,7 @@ def despecialize_model(model: ModelWrapper) -> ModelWrapper:
         node.op_type = base_op_type
         node.domain = HW_DOMAIN
         # The node-level exec_mode ("cppsim"/"rtlsim") was set for the simulation and is kept
-        # by the attribute copy. Ops whose execute_node dispatches on it (ReplicateStream,
+        # by the attribute copy. Ops whose execute_node dispatches on it (SplitMultiHeads,
         # attention, ...) would then simulate instead of executing in Python, or fail on
         # missing code generation directories: select the Python mode where the op offers
         # one, and clear the attribute otherwise (those ops always execute in Python).

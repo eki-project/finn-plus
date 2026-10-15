@@ -1,12 +1,8 @@
 """Utils for Multi-FPGA testing."""
-import pytest
 
 import brevitas.nn as qnn
 import configparser
-import hashlib
-import logging
 import onnx.helper as oh
-import random
 import torch
 from brevitas.export import export_qonnx
 from brevitas_examples.bnn_pynq.models.resnet import quant_resnet18
@@ -25,7 +21,7 @@ from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
 from testing_util.test import get_test_model
-from typing import Any, cast
+from typing import Any
 
 import finn.transformation.streamline.absorb as absorb
 from finn.builder.build_dataflow import resolve_build_steps
@@ -51,7 +47,6 @@ from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC, MoveScalarLinearPastInvariants
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.util.basic import make_build_dir
 
 # ---- MOCK MODEL CLASSES ----
 
@@ -178,12 +173,12 @@ def generate_mobilenet(
 # ---- BASIC MODELS ----
 
 
-def fold_tfc(model):
+def fold_tfc(model: ModelWrapper) -> ModelWrapper:
     """Apply folding configuration for TFC topology."""
     fc_layers = model.get_nodes_by_op_type("MVAU_hls")
     # (PE, SIMD, ramstyle) for each layer
     config = [(16, 49, "block"), (8, 8, "auto"), (8, 8, "auto"), (10, 8, "distributed")]
-    for fcl, (pe, simd, ramstyle) in zip(fc_layers, config):
+    for fcl, (pe, simd, ramstyle) in zip(fc_layers, config, strict=False):
         fcl_inst = getCustomOp(fcl)
         fcl_inst.set_nodeattr("PE", pe)
         fcl_inst.set_nodeattr("SIMD", simd)
@@ -198,7 +193,7 @@ def fold_tfc(model):
     return model
 
 
-def fold_lfc(model):
+def fold_lfc(model: ModelWrapper) -> ModelWrapper:
     """Apply folding configuration for LFC topology."""
     fc_layers = model.get_nodes_by_op_type("MVAU_hls")
     # (PE, SIMD, ramstyle) for each layer
@@ -208,7 +203,7 @@ def fold_lfc(model):
         (32, 64, "auto"),
         (10, 8, "distributed"),
     ]
-    for fcl, (pe, simd, ramstyle) in zip(fc_layers, config):
+    for fcl, (pe, simd, ramstyle) in zip(fc_layers, config, strict=False):
         fcl_inst = getCustomOp(fcl)
         fcl_inst.set_nodeattr("PE", pe)
         fcl_inst.set_nodeattr("SIMD", simd)
@@ -223,7 +218,7 @@ def fold_lfc(model):
     return model
 
 
-def fold_cnv_large(model):
+def fold_cnv_large(model: ModelWrapper) -> ModelWrapper:
     """Apply large folding configuration for CNV topology."""
     fc_layers = model.get_nodes_by_op_type("MVAU_hls")
     # each tuple is (PE, SIMD) for a layer
@@ -238,7 +233,7 @@ def fold_cnv_large(model):
         (1, 8),
         (5, 1),
     ]
-    for fcl, (pe, simd) in zip(fc_layers, folding):
+    for fcl, (pe, simd) in zip(fc_layers, folding, strict=False):
         fcl_inst = getCustomOp(fcl)
         fcl_inst.set_nodeattr("PE", pe)
         fcl_inst.set_nodeattr("SIMD", simd)
@@ -255,7 +250,7 @@ def fold_cnv_large(model):
     return model
 
 
-def fold_cnv_small(model):
+def fold_cnv_small(model: ModelWrapper) -> ModelWrapper:
     """Apply small folding configuration for CNV topology."""
     fc_layers = model.get_nodes_by_op_type("MVAU_hls")
     # each tuple is (PE, SIMD) for a layer
@@ -270,7 +265,7 @@ def fold_cnv_small(model):
         (2, 2, "auto"),
         (5, 1, "distributed"),
     ]
-    for fcl, (pe, simd, ramstyle) in zip(fc_layers, folding):
+    for fcl, (pe, simd, ramstyle) in zip(fc_layers, folding, strict=False):
         fcl_inst = getCustomOp(fcl)
         fcl_inst.set_nodeattr("PE", pe)
         fcl_inst.set_nodeattr("SIMD", simd)
@@ -292,19 +287,19 @@ def fold_cnv_small(model):
     return model
 
 
-def get_folding_function(topology, wbits, abits):
+def get_folding_function(
+    topology: str, wbits: int, abits: int
+) -> Callable[[ModelWrapper], ModelWrapper]:
     """Get appropriate folding function for topology and quantization."""
     if "tfc" in topology:
         return fold_tfc
-    elif "lfc" in topology:
+    if "lfc" in topology:
         return fold_lfc
-    elif "cnv" in topology:
+    if "cnv" in topology:
         if wbits == 1 and abits == 1:
             return fold_cnv_large
-        else:
-            return fold_cnv_small
-    else:
-        raise Exception("Unknown topology/quantization combo for predefined folding")
+        return fold_cnv_small
+    raise Exception("Unknown topology/quantization combo for predefined folding")
 
 
 def bnn_make_step_streamline_bnn_pynq(
@@ -526,7 +521,7 @@ def get_model(  # noqa
     # Run all steps until the given step
     cfg.steps = cfg.steps[: cfg.steps.index(until_step) + 1]
     steps = resolve_build_steps(cfg)
-    for i, step in enumerate(steps):
+    for step in steps:
         modelwrapper = step(modelwrapper, cfg)
     return modelwrapper, cfg
 
@@ -552,22 +547,28 @@ class TestingNode(CustomOp):
             "network_connections": ("strings", False, []),
         }
 
-    def get_folded_input_shape(self, i: int = 0) -> tuple:
+    def get_folded_input_shape(self, i: int = 0) -> tuple:  # noqa: ARG002
+        """Return the folded input shape."""
         return (1, 32)
 
-    def get_folded_output_shape(self, i: int = 0) -> tuple:
+    def get_folded_output_shape(self, i: int = 0) -> tuple:  # noqa: ARG002
+        """Return the folded output shape."""
         return (1, 32)
 
-    def get_normal_input_shape(self, i: int = 0) -> tuple:
+    def get_normal_input_shape(self, i: int = 0) -> tuple:  # noqa: ARG002
+        """Return the normal input shape."""
         return (1, 32)
 
-    def get_normal_output_shape(self, i: int = 0) -> tuple:
+    def get_normal_output_shape(self, i: int = 0) -> tuple:  # noqa: ARG002
+        """Return the normal output shape."""
         return (1, 32)
 
-    def get_instream_width_padded(self, i: int = 0) -> int:
+    def get_instream_width_padded(self, i: int = 0) -> int:  # noqa: ARG002
+        """Return the padded input stream width."""
         return 32
 
-    def get_outstream_width_padded(self, i: int = 0) -> int:
+    def get_outstream_width_padded(self, i: int = 0) -> int:  # noqa: ARG002
+        """Return the padded output stream width."""
         return 32
 
     def make_shape_compatible_op(self, model):  # noqa

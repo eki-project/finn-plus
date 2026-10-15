@@ -825,14 +825,21 @@ def partition(
             # connectivity information
             graph_edges.append((dep, node_idx))
             # edge weights
-            inst = cast("HWCustomOp", getCustomOp(model.graph.node[dep]))
-            nwires = max_sll + 1 if nbranches > 0 else inst.get_outstream_width_padded()
+            dep_node = model.graph.node[dep]
+            inst = cast("HWCustomOp", getCustomOp(dep_node))
+            # index of dep's output stream that feeds this edge's consumer
+            edge_tensor = next((t for t in dep_node.output if t in n.input), None)
+            out_ind = list(dep_node.output).index(edge_tensor) if edge_tensor is not None else 0
+            nwires = max_sll + 1 if nbranches > 0 else inst.get_outstream_width_padded(out_ind)
             if nbranches > 0 or inst.get_exp_cycles() == 0:
                 nbps = max_bps
             else:
                 nbps = int(
                     10**9
-                    * (inst.get_outstream_width_padded() * inst.get_number_output_values())
+                    * (
+                        inst.get_outstream_width_padded(out_ind)
+                        * inst.get_number_output_values_for_stream(out_ind)
+                    )
                     / (target_clk_ns * inst.get_exp_cycles())
                 )
             edge_costs.append((nwires, nbps))
