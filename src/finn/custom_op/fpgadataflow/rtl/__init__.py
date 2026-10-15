@@ -67,3 +67,8 @@ import finn.custom_op.fpgadataflow.rtl.streamingdatawidthconverter_rtl
 import finn.custom_op.fpgadataflow.rtl.streamingfifo_rtl
 import finn.custom_op.fpgadataflow.rtl.thresholding_rtl
 import finn.custom_op.fpgadataflow.rtl.vectorvectoractivation_rtl
+
+# qonnx.custom_op.registry.get_ops_in_domain discovers ops by scanning the package
+# namespace, not the custom_op dictionary, so expose every registered class as a
+# package attribute (as the explicit imports of the old hand-maintained lists did).
+globals().update(custom_op)

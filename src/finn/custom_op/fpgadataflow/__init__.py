@@ -87,3 +87,8 @@ import finn.custom_op.fpgadataflow.thresholding
 import finn.custom_op.fpgadataflow.unsqueeze
 import finn.custom_op.fpgadataflow.upsampler
 import finn.custom_op.fpgadataflow.vectorvectoractivation
+
+# qonnx.custom_op.registry.get_ops_in_domain discovers ops by scanning the package
+# namespace, not the custom_op dictionary, so expose every registered class as a
+# package attribute (as the explicit imports of the old hand-maintained lists did).
+globals().update(custom_op)
