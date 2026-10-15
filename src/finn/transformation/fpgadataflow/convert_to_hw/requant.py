@@ -36,9 +36,12 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.onnx import nchw_to_nhwc
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from qonnx.custom_op.general.intquant import IntQuant
 
 
 def _check_uniform_thresholds(
@@ -235,7 +238,7 @@ class InferRequantLayer(Transformation):
             elif node.op_type == "Quant":
                 # Handle Quant nodes with scale=1 and zeropt=0
                 # (typically after ExtractQuantScaleZeroPt transformation)
-                node_inst = getCustomOp(node)
+                node_inst = cast("IntQuant", getCustomOp(node))
 
                 # Check rounding mode
                 rmode = cast("str", node_inst.get_nodeattr("rounding_mode"))

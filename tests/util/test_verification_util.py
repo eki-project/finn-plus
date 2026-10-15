@@ -5,7 +5,7 @@ import pytest
 import numpy as np
 from onnx import TensorProto, helper
 from pathlib import Path
-from qonnx.core.datatype import DataType
+from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
@@ -26,7 +26,7 @@ from finn.util.verification import (
 
 def make_two_layer_mvau_model(
     rng: np.random.Generator, mw: int = 8, mh: int = 4, pe: int = 2, simd: int = 4
-) -> tuple[ModelWrapper, DataType]:
+) -> tuple[ModelWrapper, BaseDataType]:
     """Two MVAU layers (with thresholding activation) as a hardware abstraction layer graph."""
     idt = DataType["UINT4"]
     wdt = DataType["INT4"]
@@ -108,26 +108,26 @@ def test_despecialize_model_restores_python_execution(impl_style: str) -> None:
 def test_despecialize_model_resets_exec_mode() -> None:
     """Ops that dispatch on exec_mode must execute in Python after de-specialization.
 
-    ReplicateStream keeps the simulation mode otherwise and fails on the missing cppsim
-    code generation directory (seen on the transformer benchmark model).
+    SplitMultiHeads keeps the simulation mode otherwise and fails, as its abstraction layer
+    does not implement cppsim (the removed ReplicateStream showed this on the transformer
+    benchmark model, failing on the missing cppsim code generation directory).
     """
     node = helper.make_node(
-        "ReplicateStream_hls",
+        "SplitMultiHeads_hls",
         ["inp"],
         ["out0", "out1"],
         domain="finn.custom_op.fpgadataflow.hls",
         backend="fpgadataflow",
-        num=2,
+        heads=2,
+        packed=0,
         dtype="UINT4",
         num_elems=8,
-        PE=1,
         num_inputs=[1],
         exec_mode="cppsim",
     )
-    shape = [1, 8]
-    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, shape)
-    outs = [helper.make_tensor_value_info(o, TensorProto.FLOAT, shape) for o in ("out0", "out1")]
-    graph = helper.make_graph([node], "replicate", inputs=[inp], outputs=outs)
+    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [1, 8])
+    outs = [helper.make_tensor_value_info(o, TensorProto.FLOAT, [1, 4]) for o in ("out0", "out1")]
+    graph = helper.make_graph([node], "split_heads", inputs=[inp], outputs=outs)
     model = ModelWrapper(qonnx_make_model(graph, producer_name="test"))
     for tensor in ("inp", "out0", "out1"):
         model.set_tensor_datatype(tensor, DataType["UINT4"])
@@ -135,12 +135,12 @@ def test_despecialize_model_resets_exec_mode() -> None:
     model = model.transform(GiveReadableTensorNames())
 
     despec = despecialize_model(model)
-    assert despec.graph.node[0].op_type == "ReplicateStream"
+    assert despec.graph.node[0].op_type == "SplitMultiHeads"
     assert getCustomOp(despec.graph.node[0]).get_nodeattr("exec_mode") == "python"
     x = gen_finn_dt_tensor(DataType["UINT4"], (1, 8))
     ctx = execute_onnx(despec, {despec.graph.input[0].name: x}, return_full_exec_context=True)
-    for out in despec.graph.output:
-        assert (ctx[out.name] == x).all()
+    for out, expected in zip(despec.graph.output, np.split(x, 2, axis=-1), strict=True):
+        assert (ctx[out.name] == expected).all()
 
     # ops without a Python mode (MVAU) get the attribute cleared instead
     hw_model, _ = make_two_layer_mvau_model(np.random.default_rng(0))
@@ -183,7 +183,9 @@ def test_compare_execution_contexts_and_report(tmp_path: Path) -> None:
     assert rows[1]["num_mismatch"] == 1
     assert rows[1]["max_abs_err"] == 2.0
     assert rows[1]["mean_abs_err"] == 0.5
-    assert first_deviation(rows)["node"] == "MVAU_1"
+    deviation = first_deviation(rows)
+    assert deviation is not None
+    assert deviation["node"] == "MVAU_1"
 
     # missing tensors and shape mismatches are reported but never raise
     rows = compare_execution_contexts(hw_model, {}, ref_ctx)
@@ -226,7 +228,9 @@ def test_nodewise_verification_end_to_end(tmp_path: Path) -> None:
         sim_name_map=name_map,
     )
     assert rows is not None
-    assert first_deviation(rows)["tensor"] == "global_out"
+    deviation = first_deviation(rows)
+    assert deviation is not None
+    assert deviation["tensor"] == "global_out"
     assert rows[0]["status"] == "ok"
     assert report.is_file()
 

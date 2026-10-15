@@ -1,3 +1,5 @@
+"""Tests for the resource-estimation helpers in finn.util.resources."""
+
 from finn.util.resources import _merge_resource_estimations
 
 # TODO: Test: modelwrapper method, available resources, etc.

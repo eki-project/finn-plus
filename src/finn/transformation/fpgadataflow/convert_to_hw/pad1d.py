@@ -29,11 +29,14 @@
 """Convert Concat-based 1D padding / CLS token insertion into Pad1D HW layers."""
 
 import numpy as np
-from onnx import helper, numpy_helper
+from onnx import GraphProto, helper, numpy_helper
+from qonnx.core.datatype import BaseDataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
+from typing import cast
 
 
 class InferPad1DLayer(Transformation):
@@ -43,7 +46,9 @@ class InferPad1DLayer(Transformation):
     as well as constant left/right 1D padding around one streamed tensor.
     """
 
-    def _make_pad_initializer(self, model, graph, values, idt):
+    def _make_pad_initializer(
+        self, model: ModelWrapper, graph: GraphProto, values: np.ndarray, idt: BaseDataType
+    ) -> str:
         """Create a new float32 initializer holding the pad values and return its name."""
         values = np.asarray(values, dtype=np.float32)
         pad_name = model.make_new_valueinfo_name()
@@ -51,13 +56,20 @@ class InferPad1DLayer(Transformation):
         model.set_tensor_datatype(pad_name, idt)
         return pad_name
 
-    def _make_or_reuse_pad_initializer(self, model, graph, values, tensor_names, idt):
+    def _make_or_reuse_pad_initializer(
+        self,
+        model: ModelWrapper,
+        graph: GraphProto,
+        values: np.ndarray,
+        tensor_names: list[str],
+        idt: BaseDataType,
+    ) -> str:
         """Return the single existing pad tensor name or create a new pad initializer."""
         if len(tensor_names) == 1:
             return tensor_names[0]
         return self._make_pad_initializer(model, graph, values, idt)
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Replace Concat nodes that pad one streamed tensor with constants by Pad1D nodes."""
         graph = model.graph
         node_ind = 0
@@ -95,7 +107,7 @@ class InferPad1DLayer(Transformation):
             const_values = []
             valid_const_inputs = True
             for inp in node.input:
-                init = model.get_initializer(inp)
+                init = cast("np.ndarray | None", model.get_initializer(inp))
                 if init is None:
                     const_values.append(None)
                     continue

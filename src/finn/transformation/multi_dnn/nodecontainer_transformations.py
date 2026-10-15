@@ -1,28 +1,45 @@
+# ruff: noqa: SLF001  (DataflowBuildConfig._resolve_* are private by name only)
+
 """Transformations for generating and naming NodeContainer stitched IP blocks."""
+
 from onnx import TensorProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import qonnx_make_model
+from typing import TYPE_CHECKING, cast
 
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
+from finn.util.exception import FINNInternalError
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.rtl.nodecontainer import NodeContainer
+
+
+def _require_metadata_prop(model: ModelWrapper, key: str) -> str:
+    """Return a required metadata prop, raising if it was not set."""
+    value = model.get_metadata_prop(key)
+    if value is None:
+        raise FINNInternalError(f"Model is missing required metadata prop {key!r}")
+    return value
 
 
 class GenerateNodeContainerStitched(Transformation):
     """Generate stitched HLS/RTL IP for each NodeContainer in the model."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: DataflowBuildConfig) -> None:
         """Initialize with the DataflowBuildConfig used for IP generation."""
         self.cfg = cfg
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Generate stitched IP for selectable-weights and PR NodeContainer nodes."""
         for node in model.graph.node:
             if node.op_type == "NodeContainer":
-                node_inst = getCustomOp(node)
+                node_inst = cast("NodeContainer", getCustomOp(node))
                 if node_inst.get_nodeattr("multi_dnn_type") == "selectable_weights":
                     inshape = list(node_inst.get_folded_input_shape())
                     oshape = list(node_inst.get_folded_output_shape())
@@ -44,12 +61,14 @@ class GenerateNodeContainerStitched(Transformation):
                         )
                     )
                     inner_node_inst = getCustomOp(node_model.graph.node[0])
-                    vivado_stitch_proj_dir = node_model.get_metadata_prop("vivado_stitch_proj")
-                    wrapper_filename = node_model.get_metadata_prop("wrapper_filename")
-                    block_vlnv = node_model.get_metadata_prop("vivado_stitch_vlnv")
+                    vivado_stitch_proj_dir = _require_metadata_prop(
+                        node_model, "vivado_stitch_proj"
+                    )
+                    wrapper_filename = _require_metadata_prop(node_model, "wrapper_filename")
+                    block_vlnv = _require_metadata_prop(node_model, "vivado_stitch_vlnv")
                     node_inst.set_nodeattr("ipgen_path", wrapper_filename)
                     node_inst.set_nodeattr("ip_path", vivado_stitch_proj_dir + "/ip")
-                    node_inst.set_nodeattr("gen_top_module", "%s_wrapper" % node.name)
+                    node_inst.set_nodeattr("gen_top_module", f"{node.name}_wrapper")
                     node_inst.set_nodeattr("ip_vlnv", block_vlnv)
                     node_inst.set_nodeattr(
                         "code_gen_dir_ipgen", inner_node_inst.get_nodeattr("code_gen_dir_ipgen")
@@ -59,11 +78,10 @@ class GenerateNodeContainerStitched(Transformation):
                     # imports GenerateNodeContainerStitched from this module.
                     from finn.builder.build_dataflow_steps import step_set_fifo_depths
 
-                    node_inst = getCustomOp(node)
-                    bodies = node_inst.get_nodeattr("bodies")
-                    for id in range(bodies):
-                        body_attr = f"body_{id}"
-                        node_model = node_inst.get_nodeattr(body_attr)
+                    bodies = cast("int", node_inst.get_nodeattr("bodies"))
+                    for body_idx in range(bodies):
+                        body_attr = f"body_{body_idx}"
+                        node_model = cast("ModelWrapper", node_inst.get_nodeattr(body_attr))
                         # Give each PR body the same FIFO treatment as the top-level flow.
                         # GiveUniqueNodeNamesRecursive (used inside step_set_fifo_depths)
                         # already inserts a "_" between prefix and node name, so the prefix
@@ -76,7 +94,8 @@ class GenerateNodeContainerStitched(Transformation):
                         )
                         node_model = node_model.transform(
                             PrepareIP(
-                                self.cfg._resolve_fpga_part(), self.cfg._resolve_hls_clk_period()
+                                self.cfg._resolve_fpga_part(),
+                                self.cfg._resolve_hls_clk_period(),
                             )
                         )
                         node_model = node_model.transform(HLSSynthIP(self.cfg._resolve_fpga_part()))
@@ -84,22 +103,24 @@ class GenerateNodeContainerStitched(Transformation):
                             CreateStitchedIP(
                                 self.cfg._resolve_fpga_part(),
                                 self.cfg.synth_clk_period_ns,
-                                ip_name=f"{node.name}_{id}",
+                                ip_name=f"{node.name}_{body_idx}",
                                 run_synth=False,
                                 nodecontainer=True,
                             )
                         )
                         node_inst.set_nodeattr(body_attr, node_model)
                         # Set Nodecontainer attributes for stitiched IP generation
-                        if id == 0:
-                            vivado_stitch_proj_dir = node_model.get_metadata_prop(
-                                "vivado_stitch_proj"
+                        if body_idx == 0:
+                            vivado_stitch_proj_dir = _require_metadata_prop(
+                                node_model, "vivado_stitch_proj"
                             )
-                            wrapper_filename = node_model.get_metadata_prop("wrapper_filename")
-                            block_vlnv = node_model.get_metadata_prop("vivado_stitch_vlnv")
+                            wrapper_filename = _require_metadata_prop(
+                                node_model, "wrapper_filename"
+                            )
+                            block_vlnv = _require_metadata_prop(node_model, "vivado_stitch_vlnv")
                             node_inst.set_nodeattr("ipgen_path", wrapper_filename)
                             node_inst.set_nodeattr("ip_path", vivado_stitch_proj_dir + "/ip")
-                            node_inst.set_nodeattr("gen_top_module", "%s_wrapper" % node.name)
+                            node_inst.set_nodeattr("gen_top_module", f"{node.name}_wrapper")
                             node_inst.set_nodeattr("ip_vlnv", block_vlnv)
                             node_inst.set_nodeattr("code_gen_dir_ipgen", vivado_stitch_proj_dir)
         return (model, False)
@@ -108,25 +129,25 @@ class GenerateNodeContainerStitched(Transformation):
 class NameNodeContainerNodes(Transformation):
     """Assign unique names to nodes inside partial-reconfiguration NodeContainer bodies."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Rename all nodes inside PR NodeContainer bodies with unique prefixed names."""
         for node in model.graph.node:
             if node.op_type != "NodeContainer":
                 continue
-            node_inst = getCustomOp(node)
+            node_inst = cast("NodeContainer", getCustomOp(node))
             if node_inst.get_nodeattr("multi_dnn_type") == "partial_reconfiguration":
-                bodies = node_inst.get_nodeattr("bodies")
-                for id in range(bodies):
-                    body_attr = f"body_{id}"
-                    body_model = node_inst.get_nodeattr(body_attr)
-                    prefix = f"{node.name}_body_{id}_"
+                bodies = cast("int", node_inst.get_nodeattr("bodies"))
+                for body_idx in range(bodies):
+                    body_attr = f"body_{body_idx}"
+                    body_model = cast("ModelWrapper", node_inst.get_nodeattr(body_attr))
+                    prefix = f"{node.name}_body_{body_idx}_"
 
                     optype_count = {}
                     for n in body_model.graph.node:
-                        if n.op_type not in optype_count.keys():
+                        if n.op_type not in optype_count:
                             optype_count[n.op_type] = 0
                         if not n.name.startswith(prefix):
-                            n.name = "%s%s_%d" % (prefix, n.op_type, optype_count[n.op_type])
+                            n.name = f"{prefix}{n.op_type}_{optype_count[n.op_type]}"
                         optype_count[n.op_type] += 1
 
                     node_inst.set_nodeattr(body_attr, body_model)

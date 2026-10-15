@@ -37,6 +37,8 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import calculate_signed_dot_prod_range, gen_finn_dt_tensor, qonnx_make_model
 from typing import Any
 
+from finn.util.exception import FINNInternalError
+
 
 def hls_random_mlp_maker(layer_spec: list[dict[str, Any]]) -> ModelWrapper:
     """Create an MLP of given specification using HLSCustomOp instances.
@@ -74,7 +76,8 @@ def hls_random_mlp_maker(layer_spec: list[dict[str, Any]]) -> ModelWrapper:
                 threshold_dtype = DataType["UINT32"]
                 # bias thresholds to be positive
                 thresholds = np.ceil((thresholds + mw) / 2)
-                assert (thresholds >= 0).all()
+                if not (thresholds >= 0).all():
+                    raise FINNInternalError("Biased thresholds must be non-negative")
             else:
                 threshold_dtype = DataType["INT32"]
         lyr["T"] = thresholds

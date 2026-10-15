@@ -93,12 +93,10 @@ def execute_onnx(
     if model_exec_mode == "rtlsim":
         # check sanity of model and then use stitched IP for rtlsim
         if not model.check_all_tensor_shapes_specified():
-            raise Exception("Found unspecified tensor shapes, try infer_shapes")
+            raise FINNUserError("Found unspecified tensor shapes, try infer_shapes")
         ret = model.analysis(ta.nodes_topologically_sorted)
-        assert (
-            ret["nodes_topologically_sorted"] is True
-        ), """Nodes must be
-        topologically sorted."""
+        if ret["nodes_topologically_sorted"] is not True:
+            raise FINNInternalError("Nodes must be topologically sorted.")
 
         graph = model.graph
         # first, we need to make sure that every variable required by the graph has

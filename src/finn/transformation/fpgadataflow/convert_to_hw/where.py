@@ -29,8 +29,9 @@
 """Convert Where nodes into HWWhere HW layers."""
 
 import numpy as np
-from onnx import AttributeProto, helper
+from onnx import AttributeProto, NodeProto, helper
 from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
@@ -42,12 +43,12 @@ class InferWhereLayer(Transformation):
     """Convert ONNX Where(condition, X, Y) into a streaming HWWhere layer."""
 
     @staticmethod
-    def _warn_skip(node, reason):
+    def _warn_skip(node: NodeProto, reason: str) -> None:
         """Log a warning that the given Where node is skipped for the given reason."""
         node_name = node.name if node.name else "<unnamed Where>"
-        log.warning("%s: %s. Can't infer HWWhere layer." % (node_name, reason))
+        log.warning(f"{node_name}: {reason}. Can't infer HWWhere layer.")
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Replace supported Where nodes by HWWhere nodes."""
         graph = model.graph
         node_ind = 0
@@ -69,7 +70,7 @@ class InferWhereLayer(Transformation):
             x_shape = model.get_tensor_shape(x_name)
             y_shape = model.get_tensor_shape(y_name)
             out_shape = model.get_tensor_shape(node.output[0])
-            if any(s is None for s in [cond_shape, x_shape, y_shape, out_shape]):
+            if cond_shape is None or x_shape is None or y_shape is None or out_shape is None:
                 self._warn_skip(node, "Input and output shapes must be known")
                 continue
             all_dims = list(cond_shape) + list(x_shape) + list(y_shape) + list(out_shape)
@@ -97,7 +98,7 @@ class InferWhereLayer(Transformation):
                 or x_dt in [DataType["FLOAT32"], DataType["FLOAT16"]]
             )
             if not supported_dt:
-                self._warn_skip(node, "X and Y datatype %s is not supported" % str(x_dt))
+                self._warn_skip(node, f"X and Y datatype {x_dt!s} is not supported")
                 continue
             out_dt = model.get_tensor_datatype(node.output[0])
             if out_dt is not None and out_dt != x_dt:

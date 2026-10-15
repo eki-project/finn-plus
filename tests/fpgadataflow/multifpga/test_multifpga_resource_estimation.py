@@ -1,7 +1,8 @@
+"""Tests for resource estimation across a multi-FPGA partitioning."""
+
 import pytest
 
 from fpgadataflow.multifpga.utils import get_model
-from typing import TYPE_CHECKING, cast
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
@@ -11,9 +12,6 @@ from finn.builder.build_dataflow_config import (
 )
 from finn.util.basic import make_build_dir
 from finn.util.resources import get_estimated_model_resources
-
-if TYPE_CHECKING:
-    from numbers import Real
 
 
 @pytest.mark.multifpga
@@ -41,7 +39,7 @@ if TYPE_CHECKING:
 def test_resource_est_for_all_layers(
     model_type: tuple[str, int, int, bool],
     platform: tuple[str, ShellFlowType],
-    pytestconfig: pytest.Config,
+    pytestconfig: pytest.Config,  # noqa: ARG001
 ) -> None:
     """Test that resource estimtates for all layers can be found."""
     board, shell = platform
@@ -89,9 +87,9 @@ def test_resource_est_for_all_layers(
             assert type(est) in [int, float]  # Efficiency measures use floats
 
         # Assert that every layer uses any resource at all
-        assert any(est > 0 for est in estimates[node.name].values()), (
-            f"Layer {node.name} does not use " f"any resources at all: {estimates[node.name]}"
-        )
+        assert any(
+            est > 0 for est in estimates[node.name].values()
+        ), f"Layer {node.name} does not use any resources at all: {estimates[node.name]}"
 
     # Check that resource estimates were added if resource type was not used in a layer
     if model_name == "CNV" and wbits == 2 and abits == 2:

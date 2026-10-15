@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from onnx import NodeProto
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
@@ -16,6 +15,7 @@ from finn.util.fpgadataflow import get_device_id, get_submodel, set_device_id
 from finn.util.logging import log
 
 if TYPE_CHECKING:
+    from onnx import NodeProto
     from pathlib import Path
     from qonnx.core.modelwrapper import ModelWrapper
 
@@ -87,8 +87,8 @@ class ClusterByNodeattribute(Transformation):
                 neighbor_op = getCustomOp(neighbor)
                 node_comp = node_op.get_nodeattr(self.comp)
                 neighbor_comp = neighbor_op.get_nodeattr(self.comp)
-                node_part = node_op.get_nodeattr(self.part)
-                neighbor_part = neighbor_op.get_nodeattr(self.part)
+                node_part = cast("int", node_op.get_nodeattr(self.part))
+                neighbor_part = cast("int", neighbor_op.get_nodeattr(self.part))
 
                 # By changing both attributes to the lower common one,
                 # the transformation avoids an endless loop in which
@@ -121,7 +121,7 @@ class ResolveCircularPartitionIDs(Transformation):
         self.part = partition_attribute
 
     def get_id(self, node: NodeProto) -> int:
-        """Utility."""
+        """Return the partition id stored on the given node."""
         return cast("int", getCustomOp(node).get_nodeattr(self.part))
 
     def get_successors_with_id(
@@ -268,7 +268,9 @@ class CreateMultiFPGAStreamingDataflowPartition(Transformation):
         )
 
         # Create separate IODMAs
-        all_ids = [getCustomOp(node).get_nodeattr("partition_id") for node in model.graph.node]
+        all_ids = [
+            cast("int", getCustomOp(node).get_nodeattr("partition_id")) for node in model.graph.node
+        ]
         if self.separate_iodmas:
             for node in model.graph.node:
                 if node.op_type == "IODMA_hls":
@@ -287,6 +289,7 @@ class CreateMultiFPGAStreamingDataflowPartition(Transformation):
         # Set the SDP's device_id
         for node in model.graph.node:
             device_id = get_device_id(get_submodel(node)[0].graph.node[0])
-            assert device_id is not None
+            if not (device_id is not None):
+                raise FINNInternalError("Node is missing the device_id attribute")
             set_device_id(node, device_id)
         return model, False

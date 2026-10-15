@@ -15,22 +15,27 @@
 
 """Module for extracting norm scale bias."""
 import numpy as np
+import numpy.typing as npt
 from onnx import TensorProto
 from onnx import helper as oh
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueParameterTensors, SortGraph
 from qonnx.transformation.remove import RemoveIdentityOps
+from typing import Any, cast
+
+from finn.util.exception import FINNInternalError
 
 
 class ExtractNormScaleBias(Transformation):
     """Extract LayerNormalization scale and bias into separate nodes
     and set initializers to 1 or 0 respectively."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize instance."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply transformation."""
         graph = model.graph
         for node in graph.node:
@@ -39,21 +44,20 @@ class ExtractNormScaleBias(Transformation):
                 input_ln = node.input[0]
                 scale_tensor = node.input[1]
                 # bias input is optional input
-                if len(node.input) > 2:
-                    bias_tensor = node.input[2]
-                    bias = model.get_initializer(bias_tensor)
-                else:
-                    bias = None
+                bias_tensor = node.input[2] if len(node.input) > 2 else None
+                bias = model.get_initializer(bias_tensor) if bias_tensor is not None else None
                 scale = model.get_initializer(scale_tensor)
                 extract_scale = False
                 extract_bias = False
-                if (scale != 1).any():
+                if scale is not None and (cast("npt.NDArray[Any]", scale) != 1).any():
                     extract_scale = True
-                if bias is not None and np.any(bias):
+                if bias is not None and np.any(cast("npt.NDArray[Any]", bias)):
                     extract_bias = True
                 if (not extract_scale) and (not extract_bias):
                     continue
                 act_shape = model.get_tensor_shape(input_ln)
+                if act_shape is None:
+                    raise FINNInternalError(f"Could not determine shape of tensor {input_ln}")
                 last_node = ln_node
                 final_output = ln_node.output[0]
                 if extract_scale:
@@ -80,6 +84,10 @@ class ExtractNormScaleBias(Transformation):
                     model.set_initializer(new_scale_name, np.ones(act_shape[-1], dtype=np.float32))
                     ln_node.input[1] = new_scale_name
                 if extract_bias:
+                    if bias_tensor is None:
+                        raise FINNInternalError(
+                            "extract_bias set without a bias tensor on the LayerNormalization node"
+                        )
                     # create new Add node that applies bias
                     # create new tensor
                     bias_act_in_name = model.make_new_valueinfo_name()

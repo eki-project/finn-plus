@@ -32,13 +32,14 @@ from collections.abc import Callable
 from numpy._typing._array_like import NDArray
 from onnx import NodeProto
 from pathlib import Path
-from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from typing import TYPE_CHECKING, Any, cast
 
 from finn.util.exception import FINNInternalError
 
 if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
+
     from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
     from finn.xsi import SimEngine
 
@@ -159,7 +160,9 @@ def mlo_prehook_func_factory(node: NodeProto) -> Callable[["SimEngine"], None]:
             mvau_mlo_weights[idx]["value"] = dat_file_to_numpy_array(datfile)
             mvau_mlo_weights[idx]["extern_idx"] = extern_idx
             mvau_mlo_weights[idx]["extern_name"] = f"m_axi_MVAU_id_{idx}"
-            mvau_mlo_weights[idx]["offset"] = getCustomOp(downstream).get_nodeattr("address_offset")
+            mvau_mlo_weights[idx]["offset"] = cast(
+                "int", getCustomOp(downstream).get_nodeattr("address_offset")
+            )
             extern_idx += 1
 
     def mlo_rtlsim_prehook(sim: "SimEngine") -> None:

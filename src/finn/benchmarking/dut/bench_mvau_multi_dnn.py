@@ -1,10 +1,12 @@
 """Benchmark DUT for multi-DNN MVAU configurations."""
+
 import json
 import numpy as np
 import os
 from copy import deepcopy
 from onnx import TensorProto, helper
-from qonnx.core.datatype import DataType
+from pathlib import Path
+from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
@@ -16,35 +18,45 @@ from finn.benchmarking.bench_base import bench
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
+from finn.util.exception import FINNUserError
 
 
 class bench_mvau_multi_dnn(bench):
     """Benchmark class for multi-DNN MVAU hardware configurations."""
 
-    def __init__(self, params, task_id, run_id, work_dir, artifacts_dir, save_dir, debug=False):
+    def __init__(
+        self,
+        params: dict,
+        task_id: int,
+        run_id: int,
+        work_dir: str,
+        artifacts_dir: str,
+        save_dir: str,
+        debug: bool = False,
+    ) -> None:
         """Initialize benchmark with parameters and output directories."""
         super().__init__(params, task_id, run_id, work_dir, artifacts_dir, save_dir, debug=debug)
 
     def _make_single_mvau_model(
         self,
-        W,
-        numInputVectors,
-        pe,
-        simd,
-        m,
-        wdt,
-        idt,
-        odt,
-        T=None,
-        tdt=None,
-        mem_mode="const",
-        ram_style="auto",
-        ram_style_thresholds="auto",
-        backend="hls",
-    ):
+        weights: np.ndarray,
+        num_input_vectors: list[int],
+        pe: int,
+        simd: int,
+        m: int,
+        wdt: BaseDataType,
+        idt: BaseDataType,
+        odt: BaseDataType,
+        thresholds: np.ndarray | None = None,
+        tdt: BaseDataType | None = None,
+        mem_mode: str = "const",
+        ram_style: str = "auto",
+        ram_style_thresholds: str = "auto",
+        backend: str = "hls",
+    ) -> ModelWrapper:
         """Build and return a single MVAU ONNX model with the given parameters."""
-        mw = W.shape[0]
-        mh = W.shape[1]
+        mw = weights.shape[0]
+        mh = weights.shape[1]
 
         if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
             export_wdt = DataType["BINARY"]
@@ -55,15 +67,12 @@ class bench_mvau_multi_dnn(bench):
             export_idt = idt
             binary_xnor_mode = 0
 
-        inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, numInputVectors + [mw])
-        outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, numInputVectors + [mh])
-        if T is not None:
+        inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [*num_input_vectors, mw])
+        outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [*num_input_vectors, mh])
+        if thresholds is not None:
             no_act = 0
             node_inp_list = ["inp", "weights", "thresh"]
-            if odt == DataType["BIPOLAR"]:
-                actval = 0
-            else:
-                actval = odt.min()
+            actval = 0 if odt == DataType["BIPOLAR"] else odt.min()
         else:
             node_inp_list = ["inp", "weights"]
             actval = 0
@@ -72,11 +81,13 @@ class bench_mvau_multi_dnn(bench):
         if backend == "hls":
             customop_name = "MVAU_hls"
             domain = "finn.custom_op.fpgadataflow.hls"
-            resType = "lut"
+            res_type = "lut"
         elif backend == "rtl":
             customop_name = "MVAU_rtl"
             domain = "finn.custom_op.fpgadataflow.rtl"
-            resType = "dsp"
+            res_type = "dsp"
+        else:
+            raise FINNUserError(f"Unsupported backend: {backend} (supported: 'hls', 'rtl')")
 
         mvau_node = helper.make_node(
             customop_name,
@@ -89,14 +100,14 @@ class bench_mvau_multi_dnn(bench):
             SIMD=simd,
             PE=pe,
             M=m,
-            numInputVectors=numInputVectors,
+            numInputVectors=num_input_vectors,
             inputDataType=export_idt.name,
             weightDataType=export_wdt.name,
             outputDataType=odt.name,
             ActVal=actval,
             binaryXnorMode=binary_xnor_mode,
             noActivation=no_act,
-            resType=resType,
+            resType=res_type,
             mem_mode=mem_mode,
             ram_style=ram_style,
             ram_style_thresholds=ram_style_thresholds,
@@ -114,41 +125,39 @@ class bench_mvau_multi_dnn(bench):
         model.set_tensor_datatype("weights", wdt)
         if binary_xnor_mode:
             # convert bipolar to binary
-            model.set_initializer("weights", (W + 1) / 2)
+            model.set_initializer("weights", (weights + 1) / 2)
         else:
-            model.set_initializer("weights", W)
-        if T is not None:
+            model.set_initializer("weights", weights)
+        if thresholds is not None:
             model.set_tensor_datatype("thresh", tdt)
-            model.set_initializer("thresh", T)
+            model.set_initializer("thresh", thresholds)
 
         model = model.transform(MinimizeWeightBitWidth())
         model = model.transform(MinimizeAccumulatorWidth())
         model = model.transform(InferDataTypes())
         return model
 
-    def _apply_sparsity(self, W, mw, mh):
-        """Apply random sparsity to weight matrix W."""
+    def _apply_sparsity(self, weights: np.ndarray, mw: int, mh: int) -> np.ndarray:
+        """Apply random sparsity to the weight matrix."""
         sparsity_amount = self._params.get("sparsity_amount", 0)
         if sparsity_amount == 0:
-            return W
-        idx = np.random.choice(mw * mh, size=int(sparsity_amount * mw * mh), replace=False)
-        W = np.reshape(W, -1)
-        W[idx] = 0.0
-        W = np.reshape(W, (mw, mh))
-        return W
+            return weights
+        # NPY002: the benchmark seeds the legacy global RNG explicitly (np.random.seed)
+        # to keep weight matrices reproducible across runs; a Generator would not see it.
+        idx = np.random.choice(  # noqa: NPY002
+            mw * mh, size=int(sparsity_amount * mw * mh), replace=False
+        )
+        weights = np.reshape(weights, -1)
+        weights[idx] = 0.0
+        return np.reshape(weights, (mw, mh))
 
-    def _step_export_onnx(self):
-        """Generate and save multi-DNN ONNX models and config."""
-        result = self._generate_multi_dnn_models_and_config()
-        self._multi_dnn_config_path = result
-
-    def _generate_multi_dnn_models_and_config(self):
+    def _generate_multi_dnn_models_and_config(self) -> str | None:
         """Create two MVAU submodels and their multi-DNN config JSON; return config path."""
         scenario, mem_mode = self._params["scenario_mem_mode"]
         idt = DataType[self._params["idt"]]
         wdt = DataType[self._params["wdt"]]
 
-        numInputVectors = self._params["nhw"]
+        num_input_vectors = self._params["nhw"]
         mw = self._params["mw"]
         mh = self._params["mh"]
         pe, simd = self._params["pe_simd"]
@@ -159,10 +168,10 @@ class bench_mvau_multi_dnn(bench):
         output_dict = {}
         if pe > mh or simd > mw:
             print("Invalid pe/simd configuration, skipping")
-            return
+            return None
         if mw % simd != 0 or mh % pe != 0:
             print("Invalid simd/pe configuration, skipping")
-            return
+            return None
 
         output_dict["simd"] = simd
         output_dict["pe"] = pe
@@ -172,27 +181,27 @@ class bench_mvau_multi_dnn(bench):
         output_dict["idt"] = self._params["idt"]
         output_dict["wdt"] = self._params["wdt"]
         output_dict["m"] = m
-        output_dict["nhw"] = numInputVectors
+        output_dict["nhw"] = num_input_vectors
         output_dict["mem_mode"] = mem_mode
         output_dict["ram_style"] = ram_style
         output_dict["backend"] = backend
         output_dict["scenario"] = scenario
 
-        np.random.seed(123456)
-        W_A = gen_finn_dt_tensor(wdt, (mw, mh))
-        W_A = self._apply_sparsity(W_A, mw, mh)
+        np.random.seed(123456)  # noqa: NPY002  (seeds the legacy global RNG used below)
+        weights_a = gen_finn_dt_tensor(wdt, (mw, mh))
+        weights_a = self._apply_sparsity(weights_a, mw, mh)
 
-        num_zeros = (W_A == 0).sum()
-        output_dict["zero_weights"] = round(num_zeros / W_A.size, 2)
+        num_zeros = (weights_a == 0).sum()
+        output_dict["zero_weights"] = round(num_zeros / weights_a.size, 2)
 
         if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
             odt = DataType["UINT32"]
         else:
             odt = DataType["INT32"]
 
-        model_A = self._make_single_mvau_model(
-            W_A,
-            numInputVectors,
+        model_a = self._make_single_mvau_model(
+            weights_a,
+            num_input_vectors,
             pe,
             simd,
             m,
@@ -204,37 +213,39 @@ class bench_mvau_multi_dnn(bench):
             ram_style_thresholds=ram_style_thr,
             backend=backend,
         )
-        model_A.graph.name = "mvau_A"
-        model_A = model_A.transform(GiveUniqueNodeNames())
+        model_a.graph.name = "mvau_A"
+        model_a = model_a.transform(GiveUniqueNodeNames())
 
-        model_B = deepcopy(model_A)
-        model_B.graph.name = "mvau_B"
+        model_b = deepcopy(model_a)
+        model_b.graph.name = "mvau_B"
 
-        mvau_node_A = model_A.graph.node[0]
-        weight_tensor_name = mvau_node_A.input[1]
-        actual_wdt = model_A.get_tensor_datatype(weight_tensor_name)
+        mvau_node_a = model_a.graph.node[0]
+        weight_tensor_name = mvau_node_a.input[1]
+        actual_wdt = model_a.get_tensor_datatype(weight_tensor_name)
 
-        np.random.seed(654321)
-        W_B = gen_finn_dt_tensor(actual_wdt, (mw, mh))
-        W_B = self._apply_sparsity(W_B, mw, mh)
-        model_B.set_initializer(weight_tensor_name, W_B)
+        np.random.seed(654321)  # noqa: NPY002  (seeds the legacy global RNG used below)
+        weights_b = gen_finn_dt_tensor(actual_wdt, (mw, mh))
+        weights_b = self._apply_sparsity(weights_b, mw, mh)
+        model_b.set_initializer(weight_tensor_name, weights_b)
 
-        model_a_path = os.path.join(self._build_dir, "model_A.onnx")
-        model_b_path = os.path.join(self._build_dir, "model_B.onnx")
-        model_A.save(model_a_path)
-        model_B.save(model_b_path)
+        model_a_path = str(Path(self._build_dir) / "model_A.onnx")
+        model_b_path = str(Path(self._build_dir) / "model_B.onnx")
+        model_a.save(model_a_path)
+        model_b.save(model_b_path)
 
-        with open(os.path.join(self._build_dir, "report", "dut_info.json"), "w") as f:
+        with (Path(self._build_dir) / "report" / "dut_info.json").open("w") as f:
             json.dump(output_dict, f, indent=2)
 
         cfg_dict = self._create_multi_dnn_config_json(scenario, model_a_path, model_b_path, backend)
-        cfg_json_path = os.path.join(self._build_dir, "multi_dnn_config.json")
-        with open(cfg_json_path, "w") as f:
+        cfg_json_path = str(Path(self._build_dir) / "multi_dnn_config.json")
+        with Path(cfg_json_path).open("w") as f:
             json.dump(cfg_dict, f, indent=2)
 
         return cfg_json_path
 
-    def _create_multi_dnn_config_json(self, scenario, model_a_path, model_b_path, backend):
+    def _create_multi_dnn_config_json(
+        self, scenario: int, model_a_path: str, model_b_path: str, backend: str
+    ) -> dict:
         """Return a multi-DNN configuration dict for the given scenario."""
         post_collapse_steps = [
             {"step_minimize_bit_width": "Collapsed_Model"},
@@ -250,7 +261,8 @@ class bench_mvau_multi_dnn(bench):
         steps = [
             {"step_apply_multi_dnn": "Multi_DNN_Wrapper"},
             {"step_collapse_multi_dnn": "Multi_DNN_Wrapper"},
-        ] + post_collapse_steps
+            *post_collapse_steps,
+        ]
 
         if scenario == 0:
             generation = {
@@ -294,7 +306,7 @@ class bench_mvau_multi_dnn(bench):
                 },
             }
         else:
-            raise ValueError(f"Unsupported multi_dnn scenario: {scenario} (supported: 0, 3, 4)")
+            raise FINNUserError(f"Unsupported multi_dnn scenario: {scenario} (supported: 0, 3, 4)")
 
         return {
             "Submodels": {
@@ -305,7 +317,7 @@ class bench_mvau_multi_dnn(bench):
             "Generation": generation,
         }
 
-    def _step_build_setup(self):
+    def _step_build_setup(self) -> DataflowBuildConfig:
         """Return a default DataflowBuildConfig for the multi-DNN build."""
         cfg = build_cfg.DataflowBuildConfig(
             target_fps=None,
@@ -313,11 +325,11 @@ class bench_mvau_multi_dnn(bench):
         )
         return cfg
 
-    def run(self):
+    def run(self) -> None:
         """Run the multi-DNN build flow."""
         return self._steps_multi_dnn_build_flow()
 
-    def _steps_multi_dnn_build_flow(self):
+    def _steps_multi_dnn_build_flow(self) -> None:
         """Execute multi-DNN build flow steps in order."""
         cfg = self._step_build_setup()
         multi_dnn_cfg_path = self._generate_multi_dnn_models_and_config()
@@ -334,7 +346,7 @@ class bench_mvau_multi_dnn(bench):
         cfg.save_intermediate_models = True
         cfg.verify_save_full_context = True
         cfg.enable_instrumentation = True
-        cfg.experiments_config_path = self.experiments_config
+        cfg.experiments_config_path = str(self.experiments_config)
         valid_params = {
             k: v
             for k, v in self._params.items()
@@ -355,4 +367,4 @@ class bench_mvau_multi_dnn(bench):
             setattr(cfg, pk, pv)
         os.environ["LIVENESS_THRESHOLD"] = "10000000"
         build.build_dataflow_cfg(None, cfg)
-        self._step_parse_builder_output(self._build_dir)
+        self._step_parse_builder_output(str(self._build_dir))

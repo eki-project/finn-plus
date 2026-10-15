@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
+from typing import cast
 
 import finn
 from finn.builder.build_dataflow_config import DataflowBuildConfig
@@ -116,7 +117,9 @@ def snapshot_on_exception(
                     if actual_model is not None:
                         for node in model.graph.node:
                             if node.op_type == "StreamingDataflowPartition":
-                                submodel = Path(getCustomOp(node).get_nodeattr("model"))
+                                submodel = Path(
+                                    cast("str", getCustomOp(node).get_nodeattr("model"))
+                                )
                                 if submodel.exists():
                                     submodel_dir = Path(path / "submodels")
                                     submodel_dir.mkdir(exist_ok=True)

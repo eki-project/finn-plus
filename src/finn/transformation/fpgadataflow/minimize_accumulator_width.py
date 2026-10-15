@@ -62,8 +62,10 @@ class MinimizeAccumulatorWidth(Transformation):
             node = model.graph.node[node_id]
             if is_fpgadataflow_node(node):
                 inst = getCustomOp(node)
-                if hasattr(inst, "minimize_accumulator_width"):
-                    inst.minimize_accumulator_width(model, datatype_only=self.datatype_only)
+                # Not every HW op implements this hook, so look it up dynamically
+                minimize = getattr(inst, "minimize_accumulator_width", None)
+                if minimize is not None:
+                    minimize(model, datatype_only=self.datatype_only)
                     # Since this transformation is applied iteratively, we have to ensure that
                     # we propagate the new datatype to other layers
                     model = model.transform(InferDataTypes())

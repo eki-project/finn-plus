@@ -168,7 +168,8 @@ def test_correct_output_count() -> None:
     ],
 )
 def test_onnx_to_networkx(
-    model_type: tuple[str, int, int, bool], pytestconfig: pytest.Config
+    model_type: tuple[str, int, int, bool],
+    pytestconfig: pytest.Config,  # noqa: ARG001
 ) -> None:
     """Test that the conversion between a modelwrapper and a networkx graph is done correctly."""
     model_name, wbits, abits, pretrained = model_type
@@ -258,7 +259,9 @@ def test_inseparable_nodes_qonnx(graph_data: tuple[DiGraph, list[list[str]]]) ->
 @pytest.mark.multifpga
 @pytest.mark.vivado
 @pytest.mark.slow
-def test_resnet18_examples_inseparable_nodes(pytestconfig: pytest.Config) -> None:
+def test_resnet18_examples_inseparable_nodes(
+    pytestconfig: pytest.Config,  # noqa: ARG001
+) -> None:
     """Test that the expected number of inseparable-node groups and
     group-sizes are found for the Resnet18.
     """

@@ -30,42 +30,42 @@
 """Insert hook layers into dataflow graphs based on node attributes."""
 
 import numpy as np
-from onnx import TensorProto
+from onnx import NodeProto, TensorProto
 from onnx import helper as oh
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
+from typing import TYPE_CHECKING, cast
 
+from finn.util.exception import FINNUserError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
-def _is_hook_node(node):
+
+def _is_hook_node(node: NodeProto) -> bool:
     """Return True if the node is a supported hook op."""
-    if node.op_type in ["CheckSum_hls"]:
-        return True
-    return False
+    return node.op_type in ["CheckSum_hls"]
 
 
-def _suitable_node(node):
+def _suitable_node(node: NodeProto | None) -> bool:
     """Return True if the node can have a hook inserted after it."""
-    if node is not None:
-        if is_hls_node(node) or is_rtl_node(node):
-            if not _is_hook_node(node):
-                return True
-            return False
-        return False
+    if node is not None and (is_hls_node(node) or is_rtl_node(node)):
+        return not _is_hook_node(node)
     return False
 
 
 class InsertHook(Transformation):
     """Inserting hook layer after each layer that has the node attribute
-    'output_hook' specified"""
+    'output_hook' specified."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the transformation."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Insert supported hook nodes after eligible operators."""
         list_supported_hooks = ["checksum"]
         graph = model.graph
@@ -76,58 +76,57 @@ class InsertHook(Transformation):
             if _suitable_node(n):
                 for output_name in n.output:
                     consumers = model.find_consumers(output_name)
-                    assert len(consumers) <= 1, (
-                        n.name + ": HLS node with fan-out higher than 1 cannot be stitched"
-                    )
-                    n0 = getCustomOp(n)
+                    if len(consumers) > 1:
+                        raise FINNUserError(
+                            f"{n.name}: HLS node with fan-out higher than 1 cannot be stitched"
+                        )
+                    n0 = cast("HWCustomOp", getCustomOp(n))
                     n0_hook = n0.get_nodeattr("output_hook")
-                    if n0_hook in list_supported_hooks:
-                        if n0_hook == "checksum":
-                            if len(consumers) == 1:
-                                if consumers[0].op_type == "CheckSum_hls":
-                                    continue
-                            n0_normal_oshape = n0.get_normal_output_shape()
-                            n0_folded_oshape = n0.get_folded_output_shape()
-                            n0_odt = n0.get_output_datatype()
-                            items_per_word = n0.get_nodeattr("PE")
-                            words_per_frame = np.prod(n0_folded_oshape[:-1])
-                            chk_otensor = oh.make_tensor_value_info(
-                                model.make_new_valueinfo_name(),
-                                TensorProto.FLOAT,
-                                n0_normal_oshape,
-                            )
-                            chk_result = oh.make_tensor_value_info(
-                                model.make_new_valueinfo_name(),
-                                TensorProto.FLOAT,
-                                [1],
-                            )
-                            chk_node = oh.make_node(
-                                "CheckSum_hls",
-                                [output_name],
-                                outputs=[chk_otensor.name, chk_result.name],
-                                domain="finn.custom_op.fpgadataflow.hls",
-                                backend="fpgadataflow",
-                                words_per_frame=words_per_frame,
-                                items_per_word=items_per_word,
-                                inputDataType=str(n0_odt.name),
-                                folded_shape=n0_folded_oshape,
-                            )
-                            # insert checksum node
-                            graph.node.insert(node_ind + 1, chk_node)
-                            # insert newly-created tensors
-                            graph.value_info.append(chk_otensor)
-                            graph.value_info.append(chk_result)
+                    if n0_hook in list_supported_hooks and n0_hook == "checksum":
+                        if len(consumers) == 1 and consumers[0].op_type == "CheckSum_hls":
+                            continue
+                        n0_normal_oshape = n0.get_normal_output_shape()
+                        n0_folded_oshape = n0.get_folded_output_shape()
+                        n0_odt = n0.get_output_datatype()
+                        items_per_word = n0.get_nodeattr("PE")
+                        words_per_frame = np.prod(n0_folded_oshape[:-1])
+                        chk_otensor = oh.make_tensor_value_info(
+                            model.make_new_valueinfo_name(),
+                            TensorProto.FLOAT,
+                            list(n0_normal_oshape),
+                        )
+                        chk_result = oh.make_tensor_value_info(
+                            model.make_new_valueinfo_name(),
+                            TensorProto.FLOAT,
+                            [1],
+                        )
+                        chk_node = oh.make_node(
+                            "CheckSum_hls",
+                            [output_name],
+                            outputs=[chk_otensor.name, chk_result.name],
+                            domain="finn.custom_op.fpgadataflow.hls",
+                            backend="fpgadataflow",
+                            words_per_frame=words_per_frame,
+                            items_per_word=items_per_word,
+                            inputDataType=str(n0_odt.name),
+                            folded_shape=n0_folded_oshape,
+                        )
+                        # insert checksum node
+                        graph.node.insert(node_ind + 1, chk_node)
+                        # insert newly-created tensors
+                        graph.value_info.append(chk_otensor)
+                        graph.value_info.append(chk_result)
 
-                            # set chk output tensor as new input tensor of second node
-                            if len(consumers) == 1:
-                                consumers[0].input[0] = chk_otensor.name
-                            else:
-                                model.graph.output.pop()
-                                model.graph.output.append(chk_otensor)
-                                model.graph.value_info.remove(chk_otensor)
-                                model = model.transform(GiveUniqueNodeNames())
-                                model = model.transform(GiveReadableTensorNames())
-                            graph_modified = True
-                            return (model, graph_modified)
+                        # set chk output tensor as new input tensor of second node
+                        if len(consumers) == 1:
+                            consumers[0].input[0] = chk_otensor.name
+                        else:
+                            model.graph.output.pop()
+                            model.graph.output.append(chk_otensor)
+                            model.graph.value_info.remove(chk_otensor)
+                            model = model.transform(GiveUniqueNodeNames())
+                            model = model.transform(GiveReadableTensorNames())
+                        graph_modified = True
+                        return (model, graph_modified)
 
         return (model, graph_modified)

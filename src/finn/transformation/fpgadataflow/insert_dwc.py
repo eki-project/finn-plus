@@ -28,41 +28,44 @@
 
 """Insert StreamingDataWidthConverter nodes between mismatched layers."""
 
+from onnx import NodeProto
 from onnx import helper as oh
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from typing import TYPE_CHECKING, cast
 
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
-def _is_dwc_node(node):
+
+def _is_dwc_node(node: NodeProto) -> bool:
     """Return True if the node is a data width converter."""
     return node.op_type.startswith("StreamingDataWidthConverter")
 
 
-def _suitable_node(node):
+def _suitable_node(node: NodeProto | None) -> bool:
     """Return True if the node can participate in DWC insertion."""
-    if node is not None:
-        if is_fpgadataflow_node(node):
-            if _is_dwc_node(node):
-                # no DWC for DWCs
-                return False
-            if node.op_type == "IODMA_hls":
-                # IODMA data shapes/widths need special handling
-                return False
-            return True
-        return False
+    if node is not None and is_fpgadataflow_node(node):
+        if _is_dwc_node(node):
+            # no DWC for DWCs
+            return False
+        # IODMA data shapes/widths need special handling
+        return node.op_type != "IODMA_hls"
     return False
 
 
 class InsertDWC(Transformation):
     """Add data width converters between layers where necessary."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the transformation."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Insert DWC nodes where stream widths do not match."""
         graph = model.graph
         node_ind = -1
@@ -74,20 +77,22 @@ class InsertDWC(Transformation):
                     consumers = model.find_consumers(output_name)
                     if consumers == []:
                         continue
-                    assert len(consumers) == 1, (
-                        n.name + ": HW node with fan-out higher than 1 cannot be stitched"
-                    )
+                    if len(consumers) != 1:
+                        raise FINNUserError(
+                            f"{n.name}: HW node with fan-out higher than 1 cannot be stitched"
+                        )
                     consumer = consumers[0]
                     if _suitable_node(consumer) is True:
-                        n0 = getCustomOp(n)
-                        n1 = getCustomOp(consumer)
+                        n0 = cast("HWCustomOp", getCustomOp(n))
+                        n1 = cast("HWCustomOp", getCustomOp(consumer))
                         n0_out_shape = n0.get_folded_output_shape(out_idx)
                         # get input idx
                         in_idx = None
                         for idx, n_input in enumerate(consumer.input):
                             if output_name == n_input:
                                 in_idx = idx
-                        assert in_idx is not None, "Malformed model"
+                        if in_idx is None:
+                            raise FINNInternalError("Malformed model")
                         n1_in_shape = n1.get_folded_input_shape(in_idx)
 
                         if n0_out_shape[-1] != n1_in_shape[-1]:
@@ -106,12 +111,16 @@ class InsertDWC(Transformation):
                             dtype = n0.get_output_datatype(out_idx)
                             # determine onnx tensor dtype for dwc
                             n0_otensor = model.get_tensor_valueinfo(output_name)
+                            if n0_otensor is None:
+                                raise FINNInternalError(
+                                    f"Could not determine value info of tensor {output_name}"
+                                )
                             n0_tensor_dtype = n0_otensor.type.tensor_type.elem_type
 
                             dwc_output_tensor = oh.make_tensor_value_info(
                                 model.make_new_valueinfo_name(),
                                 n0_tensor_dtype,
-                                dwc_out_shape,
+                                list(dwc_out_shape),
                             )
                             graph.value_info.append(dwc_output_tensor)
 

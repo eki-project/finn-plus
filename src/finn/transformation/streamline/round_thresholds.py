@@ -29,11 +29,15 @@
 """Rounding and clipping of thresholds to integer representations."""
 
 import numpy as np
-from qonnx.core.datatype import DataType
+import numpy.typing as npt
+from qonnx.core.datatype import DataType, FixedPointType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
+from typing import Any, cast
+
+from finn.util.exception import FINNInternalError
 
 
 class RoundAndClipThresholds(Transformation):
@@ -43,16 +47,17 @@ class RoundAndClipThresholds(Transformation):
     quantization annotation). Runs InferDataTypes() afterward to propagate any changes to the
     quantization data types."""
 
-    def apply(self, model: ModelWrapper):  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply the rounding and clipping to all thresholds in the model."""
         graph = model.graph
         graph_modified = False
-        for index, node in enumerate(graph.node):
+        for node in graph.node:
             op_type = node.op_type
             if op_type == "MultiThreshold" or op_type.startswith("Thresholding"):
                 thresholds = model.get_initializer(node.input[1])
                 if thresholds is None:
                     continue
+                thresholds = cast("npt.NDArray[Any]", thresholds)
                 dtype = model.get_tensor_datatype(node.input[0])
                 # This transformation only applies to thresholding operations
                 # operating on integer inputs
@@ -86,19 +91,26 @@ class RoundAndClipThresholds(Transformation):
                 elif dtype.is_fixed_point():
                     # Round thresholds up to nearest representable value
                     # of the input datatype
+                    fp_dtype = cast("FixedPointType", dtype)
                     new_thresholds = np.clip(
-                        np.ceil(thresholds / dtype.scale_factor()) * dtype.scale_factor(),
-                        dtype.min(),
-                        dtype.max() + dtype.scale_factor(),
+                        np.ceil(thresholds / fp_dtype.scale_factor()) * fp_dtype.scale_factor(),
+                        fp_dtype.min(),
+                        fp_dtype.max() + fp_dtype.scale_factor(),
                     )
                     new_thresholds = new_thresholds.astype(np.float32)
                     model.set_initializer(node.input[1], new_thresholds)
                     # find smallest underlying integer representation for the thresholds
-                    max_val = dtype.max() / dtype.scale_factor() + 1
+                    max_val = fp_dtype.max() / fp_dtype.scale_factor() + 1
                     tdt_int = DataType.get_smallest_possible(-max_val - 1)
                     tdt = DataType[
-                        f"FIXED<{tdt_int.bitwidth()},{tdt_int.bitwidth() - dtype.frac_bits()}>"
+                        f"FIXED<{tdt_int.bitwidth()},{tdt_int.bitwidth() - fp_dtype.frac_bits()}>"
                     ]
+                else:
+                    # Unreachable: the guard above already restricted dtype to
+                    # integer or fixed-point types
+                    raise FINNInternalError(
+                        f"Unexpected non-integer, non-fixed-point datatype {dtype.name}"
+                    )
 
                 model.set_tensor_datatype(node.input[1], tdt)
                 # If hw op we need to set the weight data type attribute as well
@@ -116,16 +128,17 @@ class RoundAndClipThresholds(Transformation):
                     break
 
             # Handle MVAU and VVAU nodes with thresholds (noActivation=0)
-            elif op_type.startswith("MVAU") or op_type.startswith("VVAU"):
+            elif op_type.startswith(("MVAU", "VVAU")):
                 inst = getCustomOp(node)
                 # Only process if node has thresholds (noActivation=0)
                 if inst.get_nodeattr("noActivation") == 0 and len(node.input) > 2:
                     thresholds = model.get_initializer(node.input[2])
                     if thresholds is None:
                         continue
+                    thresholds = cast("npt.NDArray[Any]", thresholds)
 
                     # Get accumulator datatype (should be set by MinimizeAccumulatorWidth)
-                    acc_dt = DataType[inst.get_nodeattr("accDataType")]
+                    acc_dt = DataType[cast("str", inst.get_nodeattr("accDataType"))]
 
                     # This transformation only applies to integer accumulators
                     if not acc_dt.is_integer():

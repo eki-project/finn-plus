@@ -1,8 +1,7 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""
-PWPolyFunction ONNX custom op for piecewise polynomial activations.
+"""PWPolyFunction ONNX custom op for piecewise polynomial activations.
 
 This module provides the ONNX graph execution layer for PWPolyF, analogous to
 how qonnx.custom_op.general provides execution for Brevitas-exported ops.
@@ -10,9 +9,14 @@ how qonnx.custom_op.general provides execution for Brevitas-exported ops.
 
 import math
 import numpy as np
-from onnx import helper
+from onnx import NodeProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.base import CustomOp
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
+    from qonnx.core.modelwrapper import ModelWrapper
 
 # Constants matching the SystemVerilog pwpolyf module
 NUM_OCTAVES = 5
@@ -31,7 +35,7 @@ CLAMP_CFG = {
 }
 
 
-def _segment_boundaries(K):
+def _segment_boundaries(K: int) -> list[tuple[float, float]]:  # noqa: N803
     """Return (lo, hi) bounds for every PWPolyF segment.
 
     Args:
@@ -67,7 +71,7 @@ def _segment_boundaries(K):
     return bounds
 
 
-def _reference_func_numpy(func_name, x):
+def _reference_func_numpy(func_name: str, x: np.ndarray) -> np.ndarray:
     """Evaluate reference activation function using numpy.
 
     Args:
@@ -80,18 +84,19 @@ def _reference_func_numpy(func_name, x):
     if func_name == "gelu":
         # GELU: x * 0.5 * (1 + erf(x / sqrt(2)))
         return x * 0.5 * (1.0 + np.vectorize(math.erf)(x / np.sqrt(2.0)))
-    elif func_name == "silu":
+    if func_name == "silu":
         # SiLU: x * sigmoid(x)
         return x / (1.0 + np.exp(-x))
-    elif func_name == "sigmoid":
+    if func_name == "sigmoid":
         return 1.0 / (1.0 + np.exp(-x))
-    elif func_name == "tanh":
+    if func_name == "tanh":
         return np.tanh(x)
-    else:
-        raise ValueError(f"Unknown function: {func_name}")
+    raise ValueError(f"Unknown function: {func_name}")
 
 
-def _fit_coefficients(func_name, K, degree=2, num_samples=1000):
+def _fit_coefficients(
+    func_name: str, K: int, degree: int = 2, num_samples: int = 1000  # noqa: N803
+) -> np.ndarray:
     """Fit degree-N polynomials per segment.
 
     Args:
@@ -116,7 +121,9 @@ def _fit_coefficients(func_name, K, degree=2, num_samples=1000):
     return coeffs.astype(np.float32)
 
 
-def _segment_index_numpy(x, K):
+def _segment_index_numpy(
+    x: np.ndarray, K: int  # noqa: N803
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Map each element to its polynomial segment using numpy.
 
     Args:
@@ -154,7 +161,13 @@ def _segment_index_numpy(x, K):
     return seg_idx, is_neg_clamp, is_pos_clamp
 
 
-def _horner_eval_numpy(x, coeffs, seg_idx, degree, func_name):
+def _horner_eval_numpy(
+    x: np.ndarray,
+    coeffs: np.ndarray,
+    seg_idx: np.ndarray,
+    degree: int,
+    func_name: str,  # noqa: ARG001
+) -> np.ndarray:
     """Evaluate piecewise polynomial using Horner's method in numpy.
 
     Args:
@@ -185,7 +198,13 @@ class PWPolyFunction(CustomOp):
     Sigmoid, and Tanh using piecewise polynomials.
     """
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(
+        self,
+    ) -> dict[
+        str,
+        tuple[str, bool, int | float | str | bool | np.ndarray | list]
+        | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+    ]:
         """Return node attribute types for the function name, K and polynomial degree."""
         return {
             "func": ("s", True, ""),
@@ -193,7 +212,7 @@ class PWPolyFunction(CustomOp):
             "degree": ("i", False, 2),
         }
 
-    def make_shape_compatible_op(self, model):
+    def make_shape_compatible_op(self, model: "ModelWrapper") -> NodeProto:  # noqa: ARG002
         """Return a standard op that produces the same output shape.
 
         PWPolyFunction is an element-wise activation, so output shape equals input shape.
@@ -202,19 +221,21 @@ class PWPolyFunction(CustomOp):
         node = self.onnx_node
         return helper.make_node("Identity", [node.input[0]], [node.output[0]])
 
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: "ModelWrapper") -> None:
         """Infer and set output datatype (always FLOAT32)."""
         node = self.onnx_node
         model.set_tensor_datatype(node.output[0], DataType["FLOAT32"])
 
-    def execute_node(self, context, graph):
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
         """Execute the PWPolyF operation using numpy."""
         node = self.onnx_node
         inp = context[node.input[0]]
 
-        func = self.get_nodeattr("func")
-        K = self.get_nodeattr("K")
-        degree = self.get_nodeattr("degree")
+        func = cast("str", self.get_nodeattr("func"))
+        K = cast("int", self.get_nodeattr("K"))  # noqa: N806
+        degree = cast("int", self.get_nodeattr("degree"))
 
         cfg = CLAMP_CFG[func]
 
@@ -240,16 +261,22 @@ class PWPolyFunction(CustomOp):
 
         context[node.output[0]] = y.reshape(orig_shape).astype(np.float32)
 
-    def verify_node(self):
-        """Verify node attributes are valid."""
+    def verify_node(self) -> list[str]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Verify node attributes are valid.
+
+        Note: the qonnx ``CustomOp.verify_node`` base is annotated ``-> None`` but
+        the FINN verification passes expect a list of messages.
+
+        Returns:
+            A list of info messages describing the verification results.
+
+        """
         info_messages = []
 
         func = self.get_nodeattr("func")
         if func in SUPPORTED_FUNCS:
             info_messages.append("Attribute func is set correctly")
         else:
-            info_messages.append(
-                "Attribute func must be one of %s, got %s" % (SUPPORTED_FUNCS, func)
-            )
+            info_messages.append(f"Attribute func must be one of {SUPPORTED_FUNCS}, got {func}")
 
         return info_messages

@@ -60,7 +60,7 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.util.cleanup import cleanup_model
 from shutil import copy
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
@@ -220,6 +220,7 @@ from finn.xsi import SimEngine
 
 if TYPE_CHECKING:
     from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
+    from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
 
 
 BuildDataflowStep = Callable[..., ModelWrapper]
@@ -252,14 +253,14 @@ register_build_dataflow_step()(step_apply_multi_dnn)
 register_build_dataflow_step()(step_collapse_multi_dnn)
 
 
-def _generate_pblock_svg(report_json_path, svg_path):
+def _generate_pblock_svg(report_json_path: str | Path, svg_path: str | Path) -> None:
     """Generate an SVG floorplan diagram from a pr_region_resources JSON report.
 
     The SVG shows the SLICE-coordinate footprint of each auto-placed pblock
     against the full device SLICE array. Y-axis is flipped so that FPGA Y=0
     (bottom of die) appears at the bottom of the image.
     """
-    with open(report_json_path) as f:
+    with Path(report_json_path).open() as f:
         report = json.load(f)
 
     regions = report.get("pr_regions", {})
@@ -282,12 +283,12 @@ def _generate_pblock_svg(report_json_path, svg_path):
     if not pblocks:
         return  # Nothing to draw (manual mode or no SLICE ranges found)
 
-    SCALE = 3  # pixels per SLICE unit
-    PAD = 30  # border padding in pixels
-    FONT = 11
+    scale = 3  # pixels per SLICE unit
+    pad = 30  # border padding in pixels
+    font = 11
 
-    canvas_w = (dev_max_x + 1) * SCALE + 2 * PAD
-    canvas_h = (dev_max_y + 1) * SCALE + 2 * PAD
+    canvas_w = (dev_max_x + 1) * scale + 2 * pad
+    canvas_h = (dev_max_y + 1) * scale + 2 * pad
 
     # Palette: distinct colours for up to 8 regions
     palette = [
@@ -302,26 +303,32 @@ def _generate_pblock_svg(report_json_path, svg_path):
     ]
 
     lines = [
-        f'<svg xmlns="http://www.w3.org/2000/svg"' f' width="{canvas_w}" height="{canvas_h}">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{canvas_w}" height="{canvas_h}">',
         # Background = full device SLICE array
-        f'<rect x="{PAD}" y="{PAD}"'
-        f' width="{(dev_max_x + 1) * SCALE}" height="{(dev_max_y + 1) * SCALE}"'
-        f' fill="#d8d8d8" stroke="#555" stroke-width="1"/>',
+        (
+            f'<rect x="{pad}" y="{pad}"'
+            f' width="{(dev_max_x + 1) * scale}" height="{(dev_max_y + 1) * scale}"'
+            f' fill="#d8d8d8" stroke="#555" stroke-width="1"/>'
+        ),
         # Y-axis label (rotated)
-        f'<text transform="rotate(-90)" x="-{canvas_h//2}" y="{PAD - 6}"'
-        f' text-anchor="middle" font-size="{FONT}" font-family="sans-serif">SLICE Y</text>',
+        (
+            f'<text transform="rotate(-90)" x="-{canvas_h//2}" y="{pad - 6}"'
+            f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE Y</text>'
+        ),
         # X-axis label
-        f'<text x="{canvas_w // 2}" y="{canvas_h - 4}"'
-        f' text-anchor="middle" font-size="{FONT}" font-family="sans-serif">SLICE X</text>',
+        (
+            f'<text x="{canvas_w // 2}" y="{canvas_h - 4}"'
+            f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE X</text>'
+        ),
     ]
 
     for i, (x0, y0, x1, y1, name) in enumerate(pblocks):
         color = palette[i % len(palette)]
         # Flip Y: FPGA Y=0 is at bottom; SVG Y=0 is top
-        svg_y_top = PAD + (dev_max_y - y1) * SCALE
-        svg_x_left = PAD + x0 * SCALE
-        w = (x1 - x0 + 1) * SCALE
-        h = (y1 - y0 + 1) * SCALE
+        svg_y_top = pad + (dev_max_y - y1) * scale
+        svg_x_left = pad + x0 * scale
+        w = (x1 - x0 + 1) * scale
+        h = (y1 - y0 + 1) * scale
         cx = svg_x_left + w // 2
         cy = svg_y_top + h // 2
         # Pblock rectangle
@@ -331,37 +338,37 @@ def _generate_pblock_svg(report_json_path, svg_path):
         )
         # Label — region name (strip the pblock_Hier_ prefix), two lines if tall enough
         label = name.replace("pblock_Hier_", "")
-        if h >= FONT * 2 + 4:
+        if h >= font * 2 + 4:
             lines.append(
-                f'<text x="{cx}" y="{cy - FONT//2}" text-anchor="middle"'
-                f' font-size="{FONT}" font-family="sans-serif" font-weight="bold">{label}</text>'
+                f'<text x="{cx}" y="{cy - font//2}" text-anchor="middle"'
+                f' font-size="{font}" font-family="sans-serif" font-weight="bold">{label}</text>'
             )
             lines.append(
-                f'<text x="{cx}" y="{cy + FONT}" text-anchor="middle"'
-                f' font-size="{FONT - 1}" font-family="sans-serif">'
+                f'<text x="{cx}" y="{cy + font}" text-anchor="middle"'
+                f' font-size="{font - 1}" font-family="sans-serif">'
                 f"X{x0}:{x1} Y{y0}:{y1}</text>"
             )
         else:
             lines.append(
-                f'<text x="{cx}" y="{cy + FONT//3}" text-anchor="middle"'
-                f' font-size="{FONT}" font-family="sans-serif" font-weight="bold">{label}</text>'
+                f'<text x="{cx}" y="{cy + font//3}" text-anchor="middle"'
+                f' font-size="{font}" font-family="sans-serif" font-weight="bold">{label}</text>'
             )
         # Corner coordinate labels (small monospace text)
         lines.append(
-            f'<text x="{svg_x_left + 2}" y="{svg_y_top + FONT}"'
-            f' font-size="{max(FONT - 3, 7)}" font-family="monospace" fill="#444">'
+            f'<text x="{svg_x_left + 2}" y="{svg_y_top + font}"'
+            f' font-size="{max(font - 3, 7)}" font-family="monospace" fill="#444">'
             f"({x0},{y1})</text>"
         )
         lines.append(
             f'<text x="{svg_x_left + w - 2}" y="{svg_y_top + h - 3}"'
-            f' text-anchor="end" font-size="{max(FONT - 3, 7)}"'
+            f' text-anchor="end" font-size="{max(font - 3, 7)}"'
             f' font-family="monospace" fill="#444">'
             f"({x1},{y0})</text>"
         )
 
     lines.append("</svg>")
 
-    with open(svg_path, "w") as f:
+    with Path(svg_path).open("w") as f:
         f.write("\n".join(lines))
 
 
@@ -395,7 +402,8 @@ def verify_step(
     )
     bsize_in = in_npy_all.shape[0]
     bsize_out = exp_out_npy_all.shape[0]
-    assert bsize_in == bsize_out, "Batch sizes don't match for verification IO pair"
+    if not (bsize_in == bsize_out):
+        raise FINNInternalError("Batch sizes don't match for verification IO pair")
     all_res = True
     out_dict: dict[str, np.ndarray] = {}
     parent_model = None
@@ -404,7 +412,8 @@ def verify_step(
         in_npy = np.expand_dims(in_npy_all[b], axis=0)
         exp_out_npy = np.expand_dims(exp_out_npy_all[b], axis=0)
         if need_parent:
-            assert cfg.save_intermediate_models, "Enable save_intermediate_models for verification"
+            if not (cfg.save_intermediate_models):
+                raise FINNInternalError("Enable save_intermediate_models for verification")
             parent_model_fn = intermediate_models_dir / "dataflow_parent.onnx"
             child_model_fn = intermediate_models_dir / f"verify_{step_name}.onnx"
             model.save(child_model_fn)
@@ -416,7 +425,7 @@ def verify_step(
                     f"Unable to determine expected input shape for verification. "
                     f"Shape of tensor {parent_model.get_first_global_in()} is None."
                 )
-            target_ishape = (in_npy.shape[0],) + tuple(exp_ishape)[1:]
+            target_ishape = (in_npy.shape[0], *tuple(exp_ishape)[1:])
             if in_npy.shape != target_ishape:
                 log.warning(
                     f"Verification input has shape {in_npy.shape} while model expects "
@@ -469,7 +478,7 @@ def verify_step(
                     f"Unable to determine expected input shape for verification. "
                     f"Shape of tensor {model.get_first_global_in()} is None."
                 )
-            target_ishape = (in_npy.shape[0],) + tuple(exp_ishape)[1:]
+            target_ishape = (in_npy.shape[0], *tuple(exp_ishape)[1:])
             if in_npy.shape != target_ishape:
                 log.warning(
                     f"Verification input has shape {in_npy.shape} while model expects "
@@ -506,7 +515,7 @@ def verify_step(
         res_str = res_to_str[bool(res)]
         if cfg.verify_save_full_context and (rtlsim_pre_hook is None):
             verification_output_fn = verify_out_dir / f"verify_{step_name}_{b}_{res_str}.npz"
-            np.savez(verification_output_fn, **out_dict)
+            np.savez(verification_output_fn, **out_dict)  # type: ignore[arg-type]
 
             # Log tensor statistics for debugging (only output tensors, in topological order)
             tensors_to_log = ["global_in"]
@@ -889,14 +898,14 @@ def step_set_fifo_depths(
     # at "auto" (an explicit ram_style from a fifo_config_file or folding config wins).
     if cfg.large_fifo_mem_style != LargeFIFOMemStyle.AUTO:
         for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
-            node_inst = getHWCustomOp(node)
+            node_inst = cast("StreamingFIFO", getHWCustomOp(node))
             if node_inst.get_nodeattr("ram_style") != "auto":
                 continue
             if node_inst.resolve_ram_style() in ("block", "ultra"):
                 node_inst.set_nodeattr("ram_style", cfg.large_fifo_mem_style.value)
 
     # Generate a dedicated report about final FIFO sizes.
-    fifo_info = {
+    fifo_info: dict[str, Any] = {
         "fifo_depths": {},
         "fifo_sizes": {},
         "fifo_sizes_effective": {},
@@ -1349,7 +1358,8 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
         )
     )
     sdp_nodes = parent_model.get_nodes_by_op_type("StreamingDataflowPartition")
-    assert len(sdp_nodes) == 1, "Only a single StreamingDataflowPartition supported."
+    if not (len(sdp_nodes) == 1):
+        raise FINNInternalError("Only a single StreamingDataflowPartition supported.")
     sdp_node = sdp_nodes[0]
     sdp_node = getCustomOp(sdp_node)
     dataflow_model_filename = cast("str", sdp_node.get_nodeattr("model"))
@@ -1608,7 +1618,7 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
 
 @register_build_dataflow_step()
 def step_minimize_bit_width_datatype_only(
-    model: ModelWrapper, cfg: DataflowBuildConfig
+    model: ModelWrapper, cfg: DataflowBuildConfig  # noqa: ARG001
 ) -> ModelWrapper:
     """Datatype-based bit width minimization, upstream's first pass (Xilinx#1700): uses
     the worst-case bounds of the annotated datatypes instead of the actual values.
@@ -1877,7 +1887,6 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
 def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Create a driver that can be used to interface the generated accelerator.
     Use DataflowBuildConfig to select PYNQ Python or C++ driver."""
-
     if DataflowOutputType.CPP_DRIVER in cfg.generate_outputs:
         # generate C++ Driver
         model = model.transform(
@@ -1888,7 +1897,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
             )
         )
         shutil.copytree(
-            model.get_metadata_prop("cpp_driver_dir"),
+            get_metadata_prop_path(model, "cpp_driver_dir", must_exist=True),
             str(cfg.get_driver_directory() / "cpp"),
             dirs_exist_ok=True,
             copy_function=shutil.copyfile,
@@ -1914,7 +1923,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
         experiment_info = cfg.experiments_config_path
 
         if cfg.multi_dnn_config_path is not None:
-            with open(cfg.multi_dnn_config_path, "r") as f:
+            with Path(cfg.multi_dnn_config_path).open() as f:
                 multi_dnn_config = json.load(f)
             multidnn_mode = multi_dnn_config["Generation"]["mode"]
         else:
@@ -1933,7 +1942,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
         )
 
         shutil.copytree(
-            model.get_metadata_prop("pynq_driver_dir"),
+            get_metadata_prop_path(model, "pynq_driver_dir", must_exist=True),
             cfg.get_driver_directory(),
             dirs_exist_ok=True,
         )
@@ -1946,7 +1955,8 @@ def step_out_of_context_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig)
     """Run out-of-context synthesis and generate reports.
     Depends on the DataflowOutputType.STITCHED_IP output product."""
     if DataflowOutputType.OOC_SYNTH in cfg.generate_outputs:
-        assert DataflowOutputType.STITCHED_IP in cfg.generate_outputs, "OOC needs stitched IP"
+        if DataflowOutputType.STITCHED_IP not in cfg.generate_outputs:
+            raise FINNInternalError("OOC needs stitched IP")
         model = model.transform(
             SynthOutOfContext(part=cfg._resolve_fpga_part(), clk_period_ns=cfg.synth_clk_period_ns)
         )
@@ -1997,18 +2007,17 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
         return model
     if cfg.partitioning_configuration is not None and cfg.board is None:
         raise FINNMultiFPGAUserError(
-            "Cannot do Multi-FPGA without " "'board' being specified in the config!"
+            "Cannot do Multi-FPGA without 'board' being specified in the config!"
         )
     # Commonly used config variables
     part = cfg._resolve_fpga_part()
-    platform = (
-        cfg._resolve_vitis_platform() if cfg.shell_flow_type is ShellFlowType.VITIS_ALVEO else None
-    )
     clk_ns = cfg.synth_clk_period_ns
 
     # Differentiate preparation by flow type
     match cfg.shell_flow_type:
         case ShellFlowType.VITIS_ALVEO:
+            # Resolved up front so that a missing platform fails before any synthesis work.
+            platform = cfg._resolve_vitis_platform()
             # Insert IODMAs
             model = model.transform(InsertIODMA(max_intfwidth=cfg.vitis_iodma_intf_max_width))
             model = model.transform(GiveUniqueNodeNamesRecursive())
@@ -2035,7 +2044,7 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
             else:
                 # Multi FPGA
                 log.info(
-                    "Detected a Multi-FPGA configuration. " "Running Multi-FPGA specific steps..."
+                    "Detected a Multi-FPGA configuration. Running Multi-FPGA specific steps..."
                 )
                 pc = cfg.partitioning_configuration
                 if pc.partitioning is not None:
@@ -2212,13 +2221,13 @@ def copy_partial_reconfiguration_artifacts(
 ) -> None:
     """Copy DFX partial bitstreams and PR region resource reports, if the build produced any."""
     partial_bitfiles_dir = model.get_metadata_prop("partial_bitfiles_dir")
-    if partial_bitfiles_dir is not None and os.path.isdir(partial_bitfiles_dir):
+    if partial_bitfiles_dir is not None and Path(partial_bitfiles_dir).is_dir():
         partial_bitfile_out_dir = bitfile_dir / "partial_bitstreams"
         shutil.copytree(partial_bitfiles_dir, partial_bitfile_out_dir, dirs_exist_ok=True)
         log.info(f"Partial bitstreams copied into {partial_bitfile_out_dir}")
 
     pr_resources_json = model.get_metadata_prop("pr_region_resources_json")
-    if pr_resources_json is not None and os.path.isfile(pr_resources_json):
+    if pr_resources_json is not None and Path(pr_resources_json).is_file():
         dest_json = report_dir / "pr_region_resources.json"
         copy(pr_resources_json, dest_json)
         _generate_pblock_svg(dest_json, report_dir / "pr_region_floorplan.svg")
@@ -2261,7 +2270,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
             raise FINNUserError("Please specify the 'board' parameter for Zynq builds.")
         if cfg.instrumentation_no_dma is None:
             raise FINNUserError(
-                "Please specify the " "'instrumentation_no_dma' parameter for Zynq builds."
+                "Please specify the 'instrumentation_no_dma' parameter for Zynq builds."
             )
 
         model = model.transform(
@@ -2279,7 +2288,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
     elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
         model = model.transform(VitisBuild(cfg))
     else:
-        raise Exception("Unrecognized shell_flow_type: " + str(cfg.shell_flow_type))
+        raise FINNUserError(f"Unrecognized shell_flow_type: {cfg.shell_flow_type}")
     log.info("Synthesis done. Post-processing reports and generated files...")
 
     # SYNTHESIS POST-PROCESSING
@@ -2373,6 +2382,8 @@ def step_loop_rolling(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWra
             template_path = Path(cfg.output_dir) / "loop-body-template.onnx"
             loop_extraction = LoopExtraction(cfg.loop_body_hierarchy, template_path)
             model = model.transform(loop_extraction)
+            if loop_extraction.loop_body_template is None:
+                raise FINNInternalError("LoopExtraction did not produce a loop body template")
             model = model.transform(LoopRolling(loop_extraction.loop_body_template))
     else:
         log.info("MLO not selected, skipping step_loop_rolling.")

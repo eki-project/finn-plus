@@ -196,15 +196,9 @@ def resolve_build_steps(
         steps_as_fxns = expanded
 
     if partial and list_as_input is None:
-        step_names = list(map(lambda x: x.__name__, steps_as_fxns))
-        if cfg.start_step is None:
-            start_ind = 0
-        else:
-            start_ind = step_names.index(cfg.start_step)
-        if cfg.stop_step is None:
-            stop_ind = len(step_names) - 1
-        else:
-            stop_ind = step_names.index(cfg.stop_step)
+        step_names = [x.__name__ for x in steps_as_fxns]
+        start_ind = 0 if cfg.start_step is None else step_names.index(cfg.start_step)
+        stop_ind = len(step_names) - 1 if cfg.stop_step is None else step_names.index(cfg.stop_step)
         steps_as_fxns = steps_as_fxns[start_ind : (stop_ind + 1)]
 
     # Add the exception snapshot decorator if needed
@@ -382,14 +376,16 @@ def create_model_wrapper(model_filename: str | Path, cfg: DataflowBuildConfig) -
     return ModelWrapper(str(intermediate_model_filename))
 
 
-def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> int:
+def build_dataflow_cfg(model_filename: str | Path | None, cfg: DataflowBuildConfig) -> int:
     """Build a dataflow accelerator using the given configuration.
 
     Main entry point for building FINN dataflow accelerators. Handles step execution,
     logging, error handling, and intermediate model saving.
 
     Args:
-        model_filename: ONNX model filename to build
+        model_filename: ONNX model filename to build. Ignored (may be None) when
+            cfg.multi_dnn_config_path is set, since models are then loaded from the
+            multi-DNN config instead.
         cfg: Build configuration specifying steps and options
 
     Returns:
@@ -418,34 +414,16 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
     # Setup done, start build flow
     time_per_step: dict[str, float] = {}
     try:
-        if cfg.multi_dnn_config_path is None:
-            multidnn = False
-        else:
-            multidnn = True
-            print("Multi-DNN Mode Active")
-
-        # If start_step is specified, override the input model
-        if multidnn:
-            assert cfg.start_step is None, "Multi-DNN Mode currently does not support start_step"
-            mdnn_config = MultiDNNConfig(cfg.multi_dnn_config_path)
-            mdnn = MultiDNNWrapper(
-                {
-                    name: model
-                    for name, model in zip(
-                        mdnn_config.submodel_names,
-                        [
-                            mdnn_config.get_submodel_model(name)
-                            for name in mdnn_config.submodel_names
-                        ],
-                    )
-                }
-            )
-        else:
+        multi_dnn_config_path = cfg.multi_dnn_config_path
+        if multi_dnn_config_path is None:
+            if model_filename is None:
+                raise FINNUserError(
+                    "model_filename must be set unless cfg.multi_dnn_config_path is provided"
+                )
             model = create_model_wrapper(model_filename, cfg)
 
-        time_per_step = dict()
-        step_num = 1
-        if multidnn is False:
+            time_per_step = {}
+            step_num = 1
             # Start processing
             build_dataflow_steps = resolve_build_steps(cfg)
 
@@ -460,13 +438,25 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
                 time_per_step[step_name] = round(step_end - step_start)
                 chkpt_name = f"{step_name}.onnx"
                 if cfg.save_intermediate_models:
-                    intermediate_model_dir = os.path.join(cfg.output_dir, "intermediate_models")
-                    if not os.path.exists(intermediate_model_dir):
-                        os.makedirs(intermediate_model_dir)
-                    model.save(os.path.join(intermediate_model_dir, chkpt_name))
+                    intermediate_model_dir = Path(cfg.output_dir) / "intermediate_models"
+                    intermediate_model_dir.mkdir(parents=True, exist_ok=True)
+                    model.save(str(intermediate_model_dir / chkpt_name))
                 step_num += 1
         else:
+            print("Multi-DNN Mode Active")
+            # If start_step is specified, override the input model
+            if cfg.start_step is not None:
+                raise FINNUserError("Multi-DNN Mode currently does not support start_step")
+            mdnn_config = MultiDNNConfig(multi_dnn_config_path)
+            mdnn = MultiDNNWrapper(
+                {name: mdnn_config.get_submodel_model(name) for name in mdnn_config.submodel_names}
+            )
+
+            time_per_step = {}
+            step_num = 1
             steps = mdnn_config.get_steps()
+            if steps is None:
+                raise FINNUserError("Multi-DNN config must specify a 'Steps' entry")
             for step, targets in steps:
                 step_name = step
                 print(f"Running step: {step_name} [{step_num}/{len(steps)}] on targets {targets}")
@@ -483,10 +473,9 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
                 time_per_step[step_name] = round(step_end - step_start)
                 chkpt_name = f"{'_'.join(targets)}_{step_name}.onnx"
                 if cfg.save_intermediate_models:
-                    intermediate_model_dir = os.path.join(cfg.output_dir, "intermediate_models")
-                    if not os.path.exists(intermediate_model_dir):
-                        os.makedirs(intermediate_model_dir)
-                    mdnn.multi_model.save(os.path.join(intermediate_model_dir, chkpt_name))
+                    intermediate_model_dir = Path(cfg.output_dir) / "intermediate_models"
+                    intermediate_model_dir.mkdir(parents=True, exist_ok=True)
+                    mdnn.multi_model.save(str(intermediate_model_dir / chkpt_name))
                 step_num += 1
     except KeyboardInterrupt:
         print("KeyboardInterrupt detected. Aborting...")

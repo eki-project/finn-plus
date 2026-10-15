@@ -30,16 +30,18 @@
 
 import numpy as np
 from onnx import helper
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
+from typing import cast
 
 
 class InferSelectTokenLayer(Transformation):
     """Convert a scalar Gather on the token axis into SelectToken."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Replace scalar Gather nodes on the token axis by SelectToken nodes."""
         graph = model.graph
         graph_modified = False
@@ -56,7 +58,7 @@ class InferSelectTokenLayer(Transformation):
             if axis != 1 or seq_shape[0] != 1:
                 continue
 
-            indices = model.get_initializer(node.input[1])
+            indices = cast("np.ndarray | None", model.get_initializer(node.input[1]))
             if indices is None or indices.ndim != 0 or not np.issubdtype(indices.dtype, np.integer):
                 continue
             token_index = int(indices.item())
