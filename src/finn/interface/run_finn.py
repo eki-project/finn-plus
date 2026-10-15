@@ -643,7 +643,7 @@ def read_model_path(flowconfig: Path) -> Path | None:
     """Try to read the model path from the flow config."""
     if flowconfig.suffix in [".yaml", ".yml"]:
         with flowconfig.open() as f:
-            data: dict = yaml.load(f, yaml.Loader)
+            data: dict = yaml.safe_load(f)
     elif flowconfig.suffix == ".json":
         data: dict = json.loads(flowconfig.read_text())
     else:
@@ -1041,23 +1041,38 @@ def bench(
     "-v",
     help=(
         "Which test to execute (quick, quicktest_ci, full_ci, doctest, custom)."
-        "'custom' ignores all parameters expect for --args ..."
+        "'custom' ignores all parameters expect for --test, -q and --collect-only ..."
     ),
     default="quick",
     show_default=True,
     type=click.Choice(["quick", "quicktest_ci", "full_ci", "custom", "doctest", "doctest"]),
 )
 @click.option(
-    "--args",
-    default="",
-    required=False,
-    help="Arguments to pass to pytest. Only usable with '--variant custom'. ",
+    "--test",
+    "tests",
+    multiple=True,
+    help="Test file, directory or node ID to run (e.g. 'fpgadataflow/test_x.py::test_y'), "
+    "relative to the current directory or the FINN+ tests directory. Can be repeated. "
+    "Only usable with '--variant custom'.",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    count=True,
+    help="Decrease pytest verbosity. Can be repeated (-qq). Only usable with '--variant custom'.",
+)
+@click.option(
+    "--collect-only",
+    is_flag=True,
+    help="Only collect tests in pytest, don't run them. Only usable with '--variant custom'.",
 )
 @click.option("--num-test-workers", "-t", default="auto", show_default=True)
 @batch
 def test(
     variant: str,
-    args: str,
+    tests: tuple[str, ...],
+    quiet: int,
+    collect_only: bool,
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     num_default_workers: int,
@@ -1067,6 +1082,8 @@ def test(
     batch: bool,
 ) -> None:
     """Run a selected subset of the FINN(+) testsuite."""
+    if variant != "custom" and (tests or quiet or collect_only):
+        raise click.UsageError("--test, -q and --collect-only require '--variant custom'.")
     if finn_build_dir is None:
         finn_build_dir = Path("/tmp/FINN_TEST_BUILD_DIR")
     finn_build_dir = finn_build_dir.expanduser().absolute()
@@ -1100,7 +1117,7 @@ def test(
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
-    run_test(variant, num_test_workers, args)
+    run_test(variant, num_test_workers, tests, quiet, collect_only)
 
 
 @click.group(help="Dependency management")
@@ -1179,7 +1196,7 @@ def deps_show(finn_deps_definitions: Path | None) -> None:
         error(f"FINN dependency definition file does not exist: {settings.finn_deps_definitions}")
         sys.exit(1)
     with settings.finn_deps_definitions.open() as f:
-        data = yaml.load(f, yaml.Loader)
+        data = yaml.safe_load(f)
         for dep, depdata in data.get("git_deps", {}).items():
             rich.print(
                 f"[bold green]{dep:<20}[/bold green] {depdata['url']:<60} ({depdata['commit']:>30})"

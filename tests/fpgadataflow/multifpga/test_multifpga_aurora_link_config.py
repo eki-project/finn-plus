@@ -20,6 +20,7 @@ from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNet
 from finn.transformation.fpgadataflow.multifpga.create_network_metadata import CreateNetworkMetadata
 from finn.transformation.fpgadataflow.vitis_linking_configuration import VitisLinkConfiguration
 from finn.util.basic import make_build_dir
+from finn.util.exception import FINNInternalError
 from finn.util.fpgadataflow import get_device_id
 
 
@@ -50,6 +51,69 @@ def test_link_config_shared_aurora_kernel(monkeypatch: pytest.MonkeyPatch) -> No
             oh.make_graph(nodes, inputs=[tensors[0]], outputs=[tensors[-1]], name="graph")
         )
     )
+    configs = _add_aurora_to_link_config(model, build_dir, monkeypatch)
+
+    # Each device has a single Aurora kernel, instantiated and connected to its QSFP port once
+    for config in configs.values():
+        assert config.cu.count("aurora_flow_0") == 1
+        assert config.connects.count(("aurora_flow_0/gt_port", "io_gt_qsfp0_00")) == 1
+        assert not any(cu.startswith("vdk_") for cu in config.cu)
+
+    # Both directions of the kernel on device 0 are connected to different SDPs
+    assert configs[0].sc["n0.m_axis_0"] == "aurora_flow_0.tx_axis"
+    assert configs[0].sc["aurora_flow_0.rx_axis"] == "n2.s_axis_0"
+    assert configs[1].sc["aurora_flow_0.rx_axis"] == "n1.s_axis_0"
+    assert configs[1].sc["n1.m_axis_0"] == "aurora_flow_0.tx_axis"
+
+
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
+def test_link_config_rejects_multiple_streams_per_sdp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that an SDP sending to two devices raises an error, since its output stream can
+    only be connected to a single Aurora kernel.
+    """
+    build_dir = Path(make_build_dir("test_aurora_link_config_"))
+
+    # n0 (device 0) forks to n1 (device 1) and n2 (device 2)
+    t_in = oh.make_tensor_value_info("t_in", TensorProto.FLOAT, [1, 1])
+    t_0 = oh.make_tensor_value_info("t_0", TensorProto.FLOAT, [1, 1])
+    t_out = [oh.make_tensor_value_info(f"t_out{i}", TensorProto.FLOAT, [1, 1]) for i in (1, 2)]
+    nodes = [
+        oh.make_node(
+            "StreamingDataflowPartition",
+            ["t_in"],
+            ["t_0"],
+            name="n0",
+            domain="finn.custom_op.fpgadataflow",
+            device_id=0,
+        ),
+        *[
+            oh.make_node(
+                "StreamingDataflowPartition",
+                ["t_0"],
+                [f"t_out{i}"],
+                name=f"n{i}",
+                domain="finn.custom_op.fpgadataflow",
+                device_id=i,
+            )
+            for i in (1, 2)
+        ],
+    ]
+    model = ModelWrapper(
+        qonnx_make_model(
+            oh.make_graph(nodes, inputs=[t_in], outputs=t_out, value_info=[t_0], name="graph")
+        )
+    )
+    with pytest.raises(FINNInternalError, match=r"n0\.m_axis_0"):
+        _add_aurora_to_link_config(model, build_dir, monkeypatch)
+
+
+def _add_aurora_to_link_config(
+    model: ModelWrapper, build_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> dict[int, VitisLinkConfiguration]:
+    """Create the metadata and basic link configs for the given SDP model, run
+    AddAuroraToLinkConfig and return the resulting link configs.
+    """
     mfcfg = MultiFPGAConfiguration(
         network_backend=MFNetworkBackendType.AURORAFLOW, verbosity=MFVerbosity.NONE
     )
@@ -86,16 +150,4 @@ def test_link_config_shared_aurora_kernel(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(VitisLinkConfiguration, "_get_kerneldefs", lambda _: {})
 
     model = model.transform(AddAuroraToLinkConfig("U280", "xcu280-fsvh2892-2L-e"))
-    configs = VitisLinkConfiguration.load_from_model(model)
-
-    # Each device has a single Aurora kernel, instantiated and connected to its QSFP port once
-    for config in configs.values():
-        assert config.cu.count("aurora_flow_0") == 1
-        assert config.connects.count(("aurora_flow_0/gt_port", "io_gt_qsfp0_00")) == 1
-        assert not any(cu.startswith("vdk_") for cu in config.cu)
-
-    # Both directions of the kernel on device 0 are connected to different SDPs
-    assert configs[0].sc["n0.m_axis_0"] == ["aurora_flow_0.tx_axis"]
-    assert configs[0].sc["aurora_flow_0.rx_axis"] == ["n2.s_axis_0"]
-    assert configs[1].sc["aurora_flow_0.rx_axis"] == ["n1.s_axis_0"]
-    assert configs[1].sc["n1.m_axis_0"] == ["aurora_flow_0.tx_axis"]
+    return VitisLinkConfiguration.load_from_model(model)

@@ -33,7 +33,7 @@ execution environment with driver testing.
 #         pytest.param(
 #             2, 10.0, 100, 412, True, 0.85, MFNetworkBackendType.AURORAFLOW,
 #             MFTopology.SIMPLEX_CHAIN,
-#             PartitioningStrategy.RESOURCE_UTILIZATION, id="slow_linear_aurora_resource"
+#             PartitioningStrategy.BALANCE_RESOURCE, id="slow_linear_aurora_resource"
 #         )
 #     ]
 # )
@@ -54,7 +54,6 @@ execution environment with driver testing.
 #             network_backend=network_backend,
 #             communication_kernel_arguments={},
 #             max_utilization=max_util,
-#             ideal_utilization=max_util - 0.05,
 #             considered_resources=["LUT", "FF", "DSP", "BRAM_18K"],
 #             partition_solver_timeout=1200,
 #             partition_solver=None,

@@ -43,17 +43,18 @@ from finn.transformation.fpgadataflow.multifpga.create_multi_sdp import (
     CreateMultiFPGAStreamingDataflowPartition,
 )
 from finn.transformation.fpgadataflow.multifpga.create_network_metadata import CreateNetworkMetadata
-from finn.transformation.fpgadataflow.multifpga.partition_model import PartitionForMultiFPGA
+from finn.transformation.fpgadataflow.multifpga.partition_model import FindMultiFPGADeviceMapping
+from finn.transformation.fpgadataflow.multifpga.partitioner import Partitioner
 from finn.util.basic import make_build_dir
 from finn.util.exception import (
     FINNError,
     FINNMultiFPGAConfigError,
     FINNMultiFPGAError,
     FINNMultiFPGAPartitionerError,
+    FINNMultiFPGAUnsolvableError,
     FINNMultiFPGAUserError,
 )
 from finn.util.fpgadataflow import get_device_id
-from finn.util.platforms import platforms
 from finn.util.resources import (
     ResourceEstimates,
     available_resources_on_platform,
@@ -203,7 +204,6 @@ class TestAuroraFlowPreparationAndMetadata:
 @pytest.mark.auroraflow
 @pytest.mark.multifpga
 @pytest.mark.parametrize("board", ["U55C", "Pynq-Z1"])
-@pytest.mark.parametrize("topology", [MFTopology.SIMPLEX_CHAIN])
 class TestAuroraFlowPartitioning:
     """Tests regarding the partitioning using the AuroraFlow kernel and partitioner class."""
 
@@ -234,7 +234,7 @@ class TestAuroraFlowPartitioning:
             True,
         )
         device_resources = available_resources_on_platform(
-            platforms[cfg.board](), cfg.multifpga_configuration.considered_resources
+            cfg.board, cfg.multifpga_configuration.considered_resources
         )
         for restype in cfg.multifpga_configuration.considered_resources:
             total_required = sum([rv[restype] for rv in resource_estimates.values()])
@@ -249,6 +249,7 @@ class TestAuroraFlowPartitioning:
 
     @pytest.mark.vivado
     @pytest.mark.slow
+    @pytest.mark.parametrize("topology", [MFTopology.SIMPLEX_CHAIN, MFTopology.DUPLEX_CHAIN])
     @pytest.mark.parametrize(
         "model_type",
         [
@@ -267,10 +268,14 @@ class TestAuroraFlowPartitioning:
     )
     @pytest.mark.parametrize("devices", [2, 3, 4, 10])
     @pytest.mark.parametrize("max_util", [0.95, 0.85])
-    @pytest.mark.parametrize("ideal_util", [0.80, 0.75])
     @pytest.mark.parametrize(
         "partition_strategy",
-        [PartitioningStrategy.LAYER_COUNT, PartitioningStrategy.RESOURCE_UTILIZATION],
+        [
+            PartitioningStrategy.LAYER_COUNT,
+            PartitioningStrategy.BALANCE_RESOURCE,
+            PartitioningStrategy.BALANCE_RESOURCE_WEIGHTED,
+            PartitioningStrategy.MINIMIZE_MAX_RESOURCE,
+        ],
     )
     def test_partitioning(
         self,
@@ -280,7 +285,6 @@ class TestAuroraFlowPartitioning:
         topology: MFTopology,
         board: str,
         max_util: float,
-        ideal_util: float,
         pytestconfig: pytest.Config,
     ) -> None:
         """Test some known model - fpga combinations that should
@@ -289,7 +293,7 @@ class TestAuroraFlowPartitioning:
         typename, wbits, abits, pretrained = model_type
         test_identifier = (
             f"test_partitioning_{typename}_{wbits}_{abits}_{pretrained}_"
-            f"{devices}_{partition_strategy.name}_{topology.name}_{board}_{max_util}_{ideal_util}"
+            f"{devices}_{partition_strategy.name}_{topology.name}_{board}_{max_util}"
         )
 
         # Skip tests for models that don't fit on certain devices
@@ -321,7 +325,6 @@ class TestAuroraFlowPartitioning:
                 network_backend=MFNetworkBackendType.AURORAFLOW,
                 partition_strategy=partition_strategy,
                 max_utilization=max_util,
-                ideal_utilization=ideal_util,
                 links_per_device=2,
                 separate_iodmas=True,
                 partition_solver=MIPSolver.GUROBI,
@@ -359,7 +362,7 @@ class TestAuroraFlowPartitioning:
         # despite the model being feasible. The current timeout should prevent this from happening.
         with context:
             assert cfg.multifpga_configuration is not None
-            part = PartitionForMultiFPGA(cfg)
+            part = FindMultiFPGADeviceMapping(cfg)
             model = model.transform(part)
 
         # If there are more devices than nodes, we are done here, since we already tested,
@@ -379,28 +382,32 @@ class TestAuroraFlowPartitioning:
         solution = part.mapping
         assert solution is not None
 
-        # Test that only apply for resource utilization strategy
-        if partition_strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
+        # Test that only apply for resource based strategies
+        if partition_strategy in (
+            PartitioningStrategy.BALANCE_RESOURCE,
+            PartitioningStrategy.BALANCE_RESOURCE_WEIGHTED,
+            PartitioningStrategy.MINIMIZE_MAX_RESOURCE,
+        ):
             # Get the resource of the partitioned design.
             # maps: device -> {LUT: 0.3, BRAM: 0.5, ...}, ...
             usage = part.partitioner.get_resource_use_relative()
             assert usage is not None
-
-            # Available resources on this device
-            res_per_device = available_resources_on_platform(
-                platforms[board](), cfg.multifpga_configuration.considered_resources
-            )
 
             # Every device is utilized
             for device in usage.keys():
                 # Only one resource type has to be above 0
                 assert any(usage[device][restype] > 0 for restype in usage[device].keys())
 
-            # max_utilization not overstepped
+            # max_utilization not overstepped. The usage is relative (0-1), so it is compared
+            # to max_util directly, with the solver's feasibility tolerance.
             # This was formerly its own test "enforce_utilization_limit"
             for device in usage.keys():
-                for restype, res in usage[device].items():
-                    assert res <= max_util * res_per_device[restype]
+                for res in usage[device].values():
+                    assert res <= max_util + 1e-6
+        elif partition_strategy == PartitioningStrategy.LAYER_COUNT:
+            pass
+        else:
+            raise NotImplementedError(f"No checks for partition strategy {partition_strategy}")
 
         # Atleast 2 different device IDs (to catch the qonnx nodeattr bug)
         if devices >= 2:
@@ -451,6 +458,7 @@ class TestAuroraFlowPartitioning:
 
     @pytest.mark.vivado
     @pytest.mark.slow
+    @pytest.mark.parametrize("topology", [MFTopology.SIMPLEX_CHAIN, MFTopology.DUPLEX_CHAIN])
     @pytest.mark.parametrize(
         "model_type",
         [
@@ -459,7 +467,13 @@ class TestAuroraFlowPartitioning:
         ],
     )
     @pytest.mark.parametrize(
-        "strategy", [PartitioningStrategy.LAYER_COUNT, PartitioningStrategy.RESOURCE_UTILIZATION]
+        "strategy",
+        [
+            PartitioningStrategy.LAYER_COUNT,
+            PartitioningStrategy.BALANCE_RESOURCE,
+            PartitioningStrategy.BALANCE_RESOURCE_WEIGHTED,
+            PartitioningStrategy.MINIMIZE_MAX_RESOURCE,
+        ],
     )
     def test_objective_regression(
         self,
@@ -490,7 +504,6 @@ class TestAuroraFlowPartitioning:
         # flow for every configuration
         DEVICES: Final[list[int]] = [2, 4, 6, 8, 9, 10]  # noqa
         MAX_UTIL: Final[list[float]] = [0.7, 0.8, 0.9]  # noqa
-        IDEAL_UTIL: Final[list[float]] = [0.6, 0.7, 0.8]  # noqa
         SOLVER: Final[MIPSolver] = MIPSolver.GUROBI  # noqa
         TIMEOUT: Final[int] = 120  # noqa
 
@@ -516,7 +529,6 @@ class TestAuroraFlowPartitioning:
                 network_backend=MFNetworkBackendType.AURORAFLOW,
                 partition_strategy=strategy,
                 max_utilization=0.8,
-                ideal_utilization=0.7,
                 links_per_device=2,
                 separate_iodmas=True,
                 partition_solver=SOLVER,
@@ -547,75 +559,69 @@ class TestAuroraFlowPartitioning:
 
             # Read existing regression data
             with filepath.open("r") as f:
-                expected_data = yaml.load(f, Loader=yaml.Loader)
+                expected_data = yaml.safe_load(f)
 
         # Partition
         found_data = {}
         for device in DEVICES:
             for maxutil in MAX_UTIL:
-                for idealutil in IDEAL_UTIL:
-                    if idealutil > maxutil:
-                        continue
-                    thisconfig = deepcopy(cfg)
-                    assert thisconfig.multifpga_configuration is not None
-                    thisconfig.multifpga_configuration.num_fpgas = device
-                    thisconfig.multifpga_configuration.max_utilization = maxutil
-                    thisconfig.multifpga_configuration.ideal_utilization = idealutil
-                    thismodel = deepcopy(model)
+                thisconfig = deepcopy(cfg)
+                assert thisconfig.multifpga_configuration is not None
+                thisconfig.multifpga_configuration.num_fpgas = device
+                thisconfig.multifpga_configuration.max_utilization = maxutil
+                thismodel = deepcopy(model)
 
-                    # Identifier string for lookup of results
-                    identifier: str = (
-                        f"{SOLVER.name}_device{device}_maxutil{maxutil}"
-                        f"_idealutil{idealutil}_timeout{TIMEOUT}"
+                # Identifier string for lookup of results
+                identifier: str = f"{SOLVER.name}_device{device}_maxutil{maxutil}_timeout{TIMEOUT}"
+
+                # Create the partitioner transformation and object
+                partition_transform = FindMultiFPGADeviceMapping(thisconfig)
+
+                # Run partitioning
+                thismodel = thismodel.transform(partition_transform)
+
+                # Check that we in fact used the solver assigned and not the fallback
+                partitioner = cast("AuroraPartitioner", partition_transform.partitioner)
+                assert partitioner.model.solver_name == SOLVER.value, (
+                    f"Solver was set to {SOLVER.value}, but "
+                    f"{partitioner.model.solver_name} was used. "
+                    f"(Is {SOLVER.name} not available?)"
+                )
+
+                # Get the objective function value out of the transformation
+                value = partitioner.objective_value
+                found_data[identifier] = value
+
+                # Run checks (only if no new values should be generated)
+                if not generation_mode:
+                    assert identifier in expected_data, (
+                        f"Identifier not found in existing data: {identifier}. "
+                        f"If a test parameter was changed or added, run this "
+                        f"test with FINN_TESTS_MF_REGRESSION_GENERATE=1 to "
+                        f"generate new values for this parametrization."
                     )
 
-                    # Create the partitioner transformation and object
-                    partition_transform = PartitionForMultiFPGA(thisconfig)
-
-                    # Run partitioning
-                    thismodel = thismodel.transform(partition_transform)
-
-                    # Check that we in fact used the solver assigned and not the fallback
-                    partitioner = cast("AuroraPartitioner", partition_transform.partitioner)
-                    assert partitioner.model.solver_name == SOLVER.value, (
-                        f"Solver was set to {SOLVER.value}, but "
-                        f"{partitioner.model.solver_name} was used. "
-                        f"(Is {SOLVER.name} not available?)"
+                    lower_bound = expected_data[identifier] * (1 - tolerance)
+                    upper_bound = expected_data[identifier] * (1 + tolerance)
+                    assert value >= lower_bound, (
+                        f"Objective function value below lower bound {value} "
+                        f"< {lower_bound} (Tolerance: {tolerance:.2%})"
                     )
-
-                    # Get the objective function value out of the transformation
-                    value = partitioner.objective_value
-                    found_data[identifier] = value
-
-                    # Run checks (only if no new values should be generated)
-                    if not generation_mode:
-                        assert identifier in expected_data, (
-                            f"Identifier not found in existing data: {identifier}. "
-                            f"If a test parameter was changed or added, run this "
-                            f"test with FINN_TESTS_MF_REGRESSION_GENERATE=1 to "
-                            f"generate new values for this parametrization."
-                        )
-
-                        lower_bound = expected_data[identifier] * (1 - tolerance)
-                        upper_bound = expected_data[identifier] * (1 + tolerance)
-                        assert value >= lower_bound, (
-                            f"Objective function value below lower bound {value} "
-                            f"< {lower_bound} (Tolerance: {tolerance:.2%})"
-                        )
-                        assert value <= upper_bound, (
-                            f"Objective function value above upper bound {value}"
-                            f" > {upper_bound} (Tolerance: {tolerance:.2%})"
-                        )
+                    assert value <= upper_bound, (
+                        f"Objective function value above upper bound {value}"
+                        f" > {upper_bound} (Tolerance: {tolerance:.2%})"
+                    )
 
         # Generate new data and store it in the correct path
         if generation_mode:
             with filepath.open("w+") as f:
-                yaml.dump(found_data, f, Dumper=yaml.Dumper)
+                yaml.safe_dump(found_data, f)
             with capsys.disabled():
                 print(
                     f"Generated new regression data for {len(list(found_data.keys()))} test cases."
                 )
 
+    @pytest.mark.parametrize("topology", [MFTopology.SIMPLEX_CHAIN])
     @pytest.mark.parametrize(
         "distribution",
         ["equal-LUT", "equal-FF"],
@@ -627,9 +633,8 @@ class TestAuroraFlowPartitioning:
     @pytest.mark.parametrize("devices", [*list(range(1, 10))])
     @pytest.mark.parametrize("considered_resources", [["LUT", "FF", "DSP", "BRAM_18K"]])
     @pytest.mark.parametrize("max_util", [0.85])
-    @pytest.mark.parametrize("ideal_util", [0.75])
     @pytest.mark.parametrize("network_ports", [2])
-    def test_resource_balancing_with_artificial_data(
+    def test_resource_balancing_with_artificial_data_simplex(
         self,
         distribution: str,
         distribution_args: dict,
@@ -637,14 +642,14 @@ class TestAuroraFlowPartitioning:
         devices: int,
         considered_resources: list[str],
         board: str,
-        ideal_util: float,
         max_util: float,
         topology: MFTopology,
         network_ports: int,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test partitioning with the Aurora model based
-        on constructed data instead of real models.
+        on constructed data instead of real models. Only covers the simplex chain topology,
+        since the feasibility predictions and checks below assume it.
         """
         # This specific case creates an infeasible model. The available
         # LUTs per device are ~53k. At 85% utilization, there is overall space for roughly 90k LUTs.
@@ -678,11 +683,9 @@ class TestAuroraFlowPartitioning:
             else:
                 raise NotImplementedError("Unknown distribution type.")
 
-        # Patch the resource estimation function
+        # Patch the partitioner's resource estimates
         monkeypatch.setattr(
-            "finn.transformation.fpgadataflow.multifpga"
-            ".aurora.partitioner.get_estimated_model_resources",
-            lambda _a, _b, _c, _d: resource_estimates,
+            Partitioner, "resource_estimates", property(lambda _: resource_estimates)
         )
 
         # Create the config
@@ -692,14 +695,14 @@ class TestAuroraFlowPartitioning:
             multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=devices,
                 max_utilization=max_util,
-                ideal_utilization=ideal_util,
                 verbosity=MFVerbosity.EXTRA_HIGH,
                 topology=topology,
                 links_per_device=network_ports,
                 single_stream_network=False,
                 considered_resources=considered_resources,
                 partition_solver=MIPSolver.GUROBI,
-                partition_strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
+                partition_solver_timeout=100,
+                partition_strategy=PartitioningStrategy.MINIMIZE_MAX_RESOURCE,
             ),
         )
 
@@ -709,7 +712,7 @@ class TestAuroraFlowPartitioning:
         def find_direct_predecessors(
             self: MockModelWrapper, node: MockNode
         ) -> list[MockNode] | None:
-            for i, n in enumerate(self.graph.node[1:]):
+            for i, n in enumerate(self.graph.node[1:], start=1):
                 if n.name == node.name:
                     return [self.graph.node[i - 1]]
             return None
@@ -732,7 +735,7 @@ class TestAuroraFlowPartitioning:
         # Check if we expect an error regarding usage of resources
         # If more resources than allowed are utilized, the partitioner will
         # raise an error upon intialization. Otherwise we have a nullcontext as a no-op
-        res_per_device = available_resources_on_platform(platforms[board](), considered_resources)
+        res_per_device = available_resources_on_platform(board, considered_resources)
         exception_context = contextlib.nullcontext()
         for estimates in resource_estimates.values():
             for resource in considered_resources:
@@ -761,9 +764,6 @@ class TestAuroraFlowPartitioning:
         if type(exception_context) is not contextlib.nullcontext:
             return
 
-        # Try to solve the model
-        solution = part.solve(100)
-
         # Check if a solution was found
         # If the model is impossible assert that no solution was found
         # and return to skip the rest if the test
@@ -772,10 +772,12 @@ class TestAuroraFlowPartitioning:
         )
         overutilized_per_device = distribution_args["level"] > max_util * res_per_device[dist_res]
         if devices > nodes or overutilized_overall or overutilized_per_device:
-            assert solution is None
+            with pytest.raises(FINNMultiFPGAUnsolvableError):
+                part.solve()
             return
 
-        # Check that a solution was found
+        # Try to solve the model and check that a solution was found
+        solution = part.solve()
         assert solution is not None
 
         # Get the resource of the partitioned design.
@@ -788,10 +790,11 @@ class TestAuroraFlowPartitioning:
             # Only one resource type has to be above 0
             assert any(usage[device][restype] > 0 for restype in usage[device].keys())
 
-        # max_utilization not overstepped
+        # max_utilization not overstepped. The usage is relative (0-1), so it is compared to
+        # max_util directly, with the solver's feasibility tolerance.
         for device in usage.keys():
-            for restype, res in usage[device].items():
-                assert res <= max_util * res_per_device[restype]
+            for res in usage[device].values():
+                assert res <= max_util + 1e-6
 
         # Atleast 2 different device IDs (to catch the qonnx nodeattr bug)
         if devices >= 2:
@@ -816,8 +819,11 @@ class TestAuroraFlowPartitioning:
             for i in range(nodes - 1):
                 if solution[str(i + 1)] != solution[str(i)]:
                     visited.append(solution[str(i + 1)])
-        assert len(set(visited)) == len(visited)
+            assert len(set(visited)) == len(visited)
+        else:
+            raise NotImplementedError(f"No checks for topology {topology}")
 
+    @pytest.mark.parametrize("topology", [MFTopology.SIMPLEX_CHAIN, MFTopology.DUPLEX_CHAIN])
     @pytest.mark.parametrize(
         "fail_type", ["node_larger_than_device", "all_nodes_larger_than_device", "too_many_devices"]
     )
@@ -829,7 +835,7 @@ class TestAuroraFlowPartitioning:
         nodes = 0
         resource_table = {}
         model = MockModelWrapper(MockGraph([]))
-        device_resources = available_resources_on_platform(platforms[board](), ["LUT"])
+        device_resources = available_resources_on_platform(board, ["LUT"])
         max_util = 0.7
 
         # TODO: More fail types
@@ -862,12 +868,8 @@ class TestAuroraFlowPartitioning:
             case _:
                 raise AssertionError(f"Unknown fail_type: {fail_type}")
 
-        # Patch the resource estimator
-        monkeypatch.setattr(
-            "finn.transformation.fpgadataflow.multifpga"
-            ".aurora.partitioner.get_estimated_model_resources",
-            lambda _a, _b, _c, _d: resource_table,
-        )
+        # Patch the partitioner's resource estimates
+        monkeypatch.setattr(Partitioner, "resource_estimates", property(lambda _: resource_table))
 
         # Create the config
         cfg = DataflowBuildConfig(
@@ -876,14 +878,13 @@ class TestAuroraFlowPartitioning:
             multifpga_configuration=MultiFPGAConfiguration(
                 num_fpgas=devices,
                 max_utilization=max_util,
-                ideal_utilization=0.4,
                 verbosity=MFVerbosity.EXTRA_HIGH,
                 topology=topology,
                 links_per_device=2,
                 single_stream_network=False,
                 considered_resources=["LUT"],
                 partition_solver=MIPSolver.GUROBI,
-                partition_strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
+                partition_strategy=PartitioningStrategy.MINIMIZE_MAX_RESOURCE,
             ),
         )
 

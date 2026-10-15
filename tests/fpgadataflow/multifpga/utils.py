@@ -14,6 +14,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from networkx.classes.digraph import DiGraph
+from onnx import TensorProto
 from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
@@ -23,13 +24,22 @@ from qonnx.transformation.bipolar_to_xnor import ConvertBipolarMatMulToXnorPopco
 from qonnx.transformation.general import GiveUniqueNodeNames, RemoveUnusedTensors
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
+from qonnx.util.basic import qonnx_make_model
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
 from testing_util.test import get_test_model
 from typing import Any, cast
 
 import finn.transformation.streamline.absorb as absorb
 from finn.builder.build_dataflow import resolve_build_steps
-from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.builder.build_dataflow_config import (
+    DataflowBuildConfig,
+    MFNetworkBackendType,
+    MFTopology,
+    MFVerbosity,
+    MIPSolver,
+    MultiFPGAConfiguration,
+    PartitioningStrategy,
+)
 from finn.builder.custom_step_library.resnet import (
     step_resnet_convert_to_hw,
     step_resnet_streamline,
@@ -74,6 +84,59 @@ class MockModelWrapper:  # noqa
 def mock_model(nodes: int) -> MockModelWrapper:
     """Return a mock model with `nodes` nodes, with their indices as names."""
     return MockModelWrapper(MockGraph([MockNode(str(i)) for i in range(nodes)]))
+
+
+# ---- PARTITIONING OF CHAINS ----
+
+
+def chain_model(length: int) -> ModelWrapper:
+    """Return a chain of StreamingDataflowPartition nodes n0 -> n1 -> ... of the given length."""
+    tensors = [
+        oh.make_tensor_value_info(f"t_{i}", TensorProto.FLOAT, [1, 1]) for i in range(length + 1)
+    ]
+    nodes = [
+        oh.make_node(
+            "StreamingDataflowPartition",
+            [tensors[i].name],
+            [tensors[i + 1].name],
+            name=f"n{i}",
+            domain="finn.custom_op.fpgadataflow",
+        )
+        for i in range(length)
+    ]
+    return ModelWrapper(
+        qonnx_make_model(
+            oh.make_graph(nodes, inputs=[tensors[0]], outputs=[tensors[-1]], name="graph")
+        )
+    )
+
+
+def make_chain_partitioning_cfg(
+    num_fpgas: int,
+    links_per_device: int = 2,
+    custom_partitioning_constraints: dict[str, int] | None = None,
+    partition_strategy: PartitioningStrategy = PartitioningStrategy.LAYER_COUNT,
+    max_utilization: float = 0.8,
+    topology: MFTopology = MFTopology.SIMPLEX_CHAIN,
+) -> DataflowBuildConfig:
+    """Return a build config for partitioning with CBC, which needs no license."""
+    return DataflowBuildConfig(
+        output_dir=make_build_dir("test_chain_partitioning_"),
+        board="U55C",
+        multifpga_configuration=MultiFPGAConfiguration(
+            num_fpgas=num_fpgas,
+            links_per_device=links_per_device,
+            topology=topology,
+            network_backend=MFNetworkBackendType.AURORAFLOW,
+            single_stream_network=False,
+            custom_partitioning_constraints=custom_partitioning_constraints or {},
+            partition_solver=MIPSolver.CBC,
+            partition_solver_timeout=60,
+            partition_strategy=partition_strategy,
+            max_utilization=max_utilization,
+            verbosity=MFVerbosity.NONE,
+        ),
+    )
 
 
 # ---- RESNET 18 ----

@@ -301,7 +301,7 @@ class DependencyUpdater:
         data = {}
         self.deps: DependencyData
         with self.depfile.open() as f:
-            data = yaml.load(f, yaml.Loader)
+            data = yaml.safe_load(f)
         try:
             self.deps = DependencyData.model_validate(data)
         except ValidationError as e:

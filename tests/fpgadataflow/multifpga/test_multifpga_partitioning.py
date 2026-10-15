@@ -11,7 +11,7 @@ from finn.builder.build_dataflow_config import (
     MultiFPGAConfiguration,
     ShellFlowType,
 )
-from finn.transformation.fpgadataflow.multifpga.partition_model import ApplyPartitioning
+from finn.transformation.fpgadataflow.multifpga.partition_model import ApplyDeviceMapping
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNError
 from finn.util.fpgadataflow import get_device_id
@@ -20,7 +20,7 @@ from finn.util.fpgadataflow import get_device_id
 def _dump(data: dict, name: str, path: Path) -> Path:
     p = path / name
     with p.open("w+") as f:
-        yaml.dump(data, f, yaml.Dumper)
+        yaml.safe_dump(data, f)
     return p
 
 
@@ -88,19 +88,19 @@ def test_apply_partitioning(model_type: tuple[str, int, int, bool]) -> None:
     missing = dump_yaml(partition, "missing.yaml")
 
     # Standard linear partitioning
-    linear_model = deepcopy(model).transform(ApplyPartitioning(linear))
+    linear_model = deepcopy(model).transform(ApplyDeviceMapping(linear))
     for i, node in enumerate(linear_model.graph.node):
         assert get_device_id(node) == i
 
     # All nodes have the same device
-    same_model = deepcopy(model).transform(ApplyPartitioning(same))
+    same_model = deepcopy(model).transform(ApplyDeviceMapping(same))
     for node in same_model.graph.node:
         assert get_device_id(node) == 0
 
     # We don't allow an assignment to a non-existent node
     with pytest.raises(FINNError):
-        _ = deepcopy(model).transform(ApplyPartitioning(unknown))
+        _ = deepcopy(model).transform(ApplyDeviceMapping(unknown))
 
     # We require all nodes to have a device ID assigned
     with pytest.raises(FINNError):
-        _ = deepcopy(model).transform(ApplyPartitioning(missing))
+        _ = deepcopy(model).transform(ApplyDeviceMapping(missing))

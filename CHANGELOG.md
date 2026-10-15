@@ -9,6 +9,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 
 ### Changed
+- `finn test --variant custom` selects tests via the repeatable `--test` option (test files, directories or node IDs) instead of `--args`, and forwards `-q`/`--quiet` and `--collect-only` to pytest. `--args` is removed, `--variant doctest` always runs all doctests (eki-project#289)
 - `PartitioningConfiguration` and the build config field `partitioning_configuration` are renamed to `MultiFPGAConfiguration` and `multifpga_configuration`; configs that still use the old field name are rejected with an error that points to the new name (eki-project#289)
 - Various renames for Multi-FPGA: Details can be found in the matching PR. Breaking configs emit an error with instructions on how to update. (eki-project#289)
 - Multi-FPGA partition strategy `resource_utilization` is replaced by `balance_resource` (new default), `balance_resource_weighted` and `minimize_max_resource`, and `ideal_utilization` is removed (eki-project#289)

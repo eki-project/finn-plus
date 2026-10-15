@@ -24,6 +24,7 @@ def path_repr(dumper, data):  # noqa
 
 
 yaml.add_multi_representer(Path, path_repr)
+yaml.add_multi_representer(Path, path_repr, Dumper=yaml.SafeDumper)
 
 
 def _get_finn_root() -> Path:
@@ -254,7 +255,7 @@ class FINNSettings(BaseModel):
         settings_data = {}
         if settings_path.exists():
             with settings_path.open() as f:
-                settings_data = yaml.load(f, yaml.Loader)
+                settings_data = yaml.safe_load(f)
 
         # Sources for the settings (in order of priority; lowest first)
         data = {
@@ -336,7 +337,8 @@ class FINNSettings(BaseModel):
         """
         if path is None:
             path = self._settings_path
-        data = self.model_dump()
+        # JSON mode turns paths into strings, which the safe dumper can represent
+        data = self.model_dump(mode="json")
         data["finn_build_dir"] = self._finn_build_dir
         data["finn_deps"] = self._finn_deps
         data["finn_deps_definitions"] = self._finn_deps_definitions
@@ -349,7 +351,7 @@ class FINNSettings(BaseModel):
             # Dont save this if its set to automatic detection
             del data["num_default_workers"]
         with path.open("w+") as f:
-            yaml.dump(data, f, yaml.Dumper)
+            yaml.safe_dump(data, f)
 
     @staticmethod
     def get_settings_keys() -> list[str]:

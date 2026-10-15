@@ -95,6 +95,11 @@ graphs = {
         DiGraph([("A", "B"), ("B", "C"), ("C", "D"), ("C", "E")]),
         [["C", "D", "E"]],
     ),
+    # Fork C cannot reach output D, which must not prevent grouping the outputs
+    "three_output_graph_nested_forks": (
+        DiGraph([("A", "B"), ("B", "C"), ("B", "D"), ("C", "E"), ("C", "F")]),
+        [["B", "C", "D", "E", "F"]],
+    ),
 }
 
 
@@ -110,6 +115,7 @@ graphs = {
         graphs["two_output_graph"],
         graphs["two_input_graph_unbalanced"],
         graphs["two_output_graph_unbalanced"],
+        graphs["three_output_graph_nested_forks"],
     ],
 )
 def test_find_split_nodes_networkx(graph_data: tuple[DiGraph, list[list[str]]]) -> None:
@@ -222,6 +228,7 @@ def test_onnx_to_networkx(
         graphs["two_output_graph"],
         graphs["two_input_graph_unbalanced"],
         graphs["two_output_graph_unbalanced"],
+        graphs["three_output_graph_nested_forks"],
     ],
 )
 def test_inseparable_nodes_qonnx(graph_data: tuple[DiGraph, list[list[str]]]) -> None:

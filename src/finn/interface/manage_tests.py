@@ -68,8 +68,18 @@ CI_TEST_TIMEOUT_ARGS = (
 )
 
 
-def run_test(variant: str, num_workers: str, args: str = "") -> None:
-    """Run a given test variant with the given number of workers."""
+def run_test(
+    variant: str,
+    num_workers: str,
+    tests: tuple[str, ...] = (),
+    quiet: int = 0,
+    collect_only: bool = False,
+) -> None:
+    """Run a given test variant with the given number of workers.
+
+    Only for the custom variant: tests are the pytest paths / node IDs to run, quiet (count
+    of -q) and collect_only are forwarded to pytest.
+    """
     original_dir = Path.cwd()
 
     # TODO: Make this optional
@@ -82,37 +92,38 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
     os.chdir(os.environ["FINN_TESTS"])
     match variant:
         case "custom":
-            if args == "":
+            if not tests:
                 raise FINNUserError(
                     "--variant custom was specified, but no test was "
-                    "given (please additionally pass --args "
-                    "<test-name> in pytest syntax)"
+                    "given (please additionally pass --test <test-name> "
+                    "in pytest syntax)"
                 )
-            workers_arg = f"-n {num_workers}" if num_workers not in ["1", ""] else ""
-            subprocess.run(
-                shlex.split(f"{sys.executable} -m  pytest {workers_arg} {args}", posix=IS_POSIX)
-            )
+            # The tests become positional pytest arguments, so they must not look like
+            # options. pytest runs from FINN_TESTS, so a path that exists relative to the
+            # directory FINN+ was started from is made absolute, any other path must exist
+            # in FINN_TESTS.
+            selected: list[str] = []
+            for test in (t.strip() for t in tests):
+                if test == "" or test.startswith("-"):
+                    raise FINNUserError(
+                        f"Invalid test selection '{test}'. Expected a pytest path or node ID."
+                    )
+                path_part, sep, node_part = test.partition("::")
+                path = Path(path_part).expanduser()
+                if not path.is_absolute() and (original_dir / path).exists():
+                    path = original_dir / path
+                if not path.exists():
+                    raise FINNUserError(
+                        f"Test path '{path_part}' of '{test}' exists neither relative to the "
+                        f"current directory nor to the tests directory {Path.cwd()}."
+                    )
+                selected.append(f"{path.resolve()}{sep}{node_part}")
+            pytest_opts = ["-q"] * quiet + (["--collect-only"] if collect_only else [])
+            workers_arg = ["-n", num_workers] if num_workers not in ["1", ""] else []
+            subprocess.run([sys.executable, "-m", "pytest", *workers_arg, *pytest_opts, *selected])
         case "doctest":
-            if args == "":
-                status(
-                    "No test name was specified, running doctests on all relevant FINN submodules."
-                )
-                run_doctests(int(num_workers))
-                return
-            if args.endswith(".py"):
-                raise FINNUserError(
-                    "To run doctests, specify the name as a python module path. "
-                    "Instead of src/finn/interface/manage_tests.py do "
-                    "finn.interface.manage_tests!"
-                )
-            subprocess.run(
-                shlex.split(
-                    f"{sys.executable} -m pytest --doctest-modules "
-                    f"--doctest-continue-on-failure -n {num_workers} "
-                    f"--pyargs {args}",
-                    posix=IS_POSIX,
-                )
-            )
+            status("Running doctests on all relevant FINN submodules.")
+            run_doctests(int(num_workers))
         case "quick":
             subprocess.run(
                 shlex.split(
