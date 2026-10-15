@@ -139,7 +139,7 @@ def step_resnet_tidy(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
     return model
 
 
-def step_resnet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+def step_resnet_streamline(model: ModelWrapper, _cfg: DataflowBuildConfig) -> ModelWrapper:
     """Streamline ResNet models."""
     transform = ComposedTransformation(
         [
@@ -160,7 +160,7 @@ def step_resnet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
     return model
 
 
-def step_resnet_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+def step_resnet_convert_to_hw(model: ModelWrapper, _cfg: DataflowBuildConfig) -> ModelWrapper:
     """Convert ResNet models to hardware-specific operations."""
     # Convert Squeeze and Unsqueeze operators to hardware operations
     model = model.transform(InferDataLayouts())
@@ -189,7 +189,7 @@ def step_resnet_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
 # For backwards compatibility
 
 
-def step_resnet50_tidy(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_resnet50_tidy(model: ModelWrapper, _cfg: DataflowBuildConfig) -> ModelWrapper:
     """Tidy up ResNet-50 models (backwards-compatible legacy step).
 
     Applies shape and datatype inference, constant folding, unique naming, and
@@ -210,7 +210,7 @@ def step_resnet50_tidy(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
-def step_resnet50_streamline_linear(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_resnet50_streamline_linear(model: ModelWrapper, _cfg: DataflowBuildConfig) -> ModelWrapper:
     """Apply linear streamlining transformations to a ResNet-50 model.
 
     Moves and absorbs scalar linear operations (mul, add) past convolutions and
@@ -248,7 +248,9 @@ def step_resnet50_streamline_linear(model: ModelWrapper, cfg: DataflowBuildConfi
     return model
 
 
-def step_resnet50_streamline_nonlinear(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_resnet50_streamline_nonlinear(
+    model: ModelWrapper, _cfg: DataflowBuildConfig
+) -> ModelWrapper:
     """Apply non-linear streamlining transformations to a ResNet-50 model.
 
     Moves linear operations past elementwise-add nodes and fork points to
@@ -264,13 +266,13 @@ def step_resnet50_streamline_nonlinear(model: ModelWrapper, cfg: DataflowBuildCo
     return model
 
 
-def step_resnet50_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_resnet50_streamline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Streamline a ResNet-50 model (backwards-compatible legacy step).
 
     Iterates linear and non-linear streamlining passes, then lowers convolutions
     to matrix multiplications and absorbs the resulting transpose operations.
     """
-    for iter_id in range(4):
+    for _iter_id in range(4):
         model = step_resnet50_streamline_linear(model, cfg)
         model = step_resnet50_streamline_nonlinear(model, cfg)
 
@@ -298,7 +300,7 @@ def step_resnet50_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
-def step_resnet50_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_resnet50_convert_to_hw(model: ModelWrapper, _cfg: DataflowBuildConfig) -> ModelWrapper:
     """Convert a ResNet-50 model to hardware-specific operations (backwards-compatible legacy step).
 
     Sets the input datatype to UINT8, then sequentially converts channelwise

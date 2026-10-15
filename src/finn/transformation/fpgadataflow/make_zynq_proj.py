@@ -42,7 +42,7 @@ from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.util.basic import get_num_default_workers
 from shutil import copy
 from subprocess import CalledProcessError
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
@@ -67,8 +67,12 @@ from finn.util.settings import get_settings
 
 from . import templates
 
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+    from finn.custom_op.fpgadataflow.rtl.nodecontainer import NodeContainer
 
-def _build_sdp_kernel(args: tuple) -> None:
+
+def _build_sdp_kernel(args: tuple[str, str, str, float, bool]) -> None:
     """Worker function for parallel SDP kernel builds.
 
     Runs InsertFIFO (if needed), SpecializeLayers, GiveUniqueNodeNames,
@@ -106,9 +110,12 @@ def _build_sdp_kernel(args: tuple) -> None:
             raise FINNInternalError(
                 "Only one NodeContainer per SDP when using partial reconfiguration"
             )
-        pr_container_inst = getCustomOp(prcont[0])
-        for body_idx in range(pr_container_inst.get_nodeattr("bodies")):
-            body_model = pr_container_inst.get_nodeattr("body_" + str(body_idx))
+        pr_container_inst = cast("NodeContainer", getCustomOp(prcont[0]))
+        num_bodies = cast("int", pr_container_inst.get_nodeattr("bodies"))
+        for body_idx in range(num_bodies):
+            body_model = cast(
+                "ModelWrapper", pr_container_inst.get_nodeattr("body_" + str(body_idx))
+            )
 
             if not enable_instrumentation:
                 body_model = body_model.transform(InsertFIFO())
@@ -161,6 +168,14 @@ def _require_ip_dir(node: NodeProto, ip_dir_value: str) -> None:
         )
 
 
+def _require_metadata_prop(model: ModelWrapper, key: str) -> str:
+    """Return a metadata property, raising if it is not set on the given model."""
+    value = model.get_metadata_prop(key)
+    if value is None:
+        raise FINNInternalError(f"Model is missing required metadata property {key!r}")
+    return value
+
+
 def collect_ip_dirs(model: ModelWrapper, ipstitch_path: str | None) -> list[str]:
     """Collect list of all IP directories required by the design."""
     ip_dirs = []
@@ -169,7 +184,8 @@ def collect_ip_dirs(model: ModelWrapper, ipstitch_path: str | None) -> list[str]
         node_inst = getCustomOp(node)
         if node.op_type == "NodeContainer":
             if node_inst.get_nodeattr("multi_dnn_type") == "partial_reconfiguration":
-                for body_idx in range(node_inst.get_nodeattr("bodies")):
+                num_bodies = cast("int", node_inst.get_nodeattr("bodies"))
+                for body_idx in range(num_bodies):
                     body_model = cast(
                         "ModelWrapper", node_inst.get_nodeattr("body_" + str(body_idx))
                     )
@@ -250,7 +266,7 @@ class MakeZYNQProject(Transformation):
         partial_reconfiguration = False
         for sdp_node in sdp_nodes:
             sdp_node = getCustomOp(sdp_node)
-            dataflow_model_filename = sdp_node.get_nodeattr("model")
+            dataflow_model_filename = cast("str", sdp_node.get_nodeattr("model"))
             kernel_model = ModelWrapper(dataflow_model_filename)
             if any(
                 n.op_type == "NodeContainer"
@@ -263,28 +279,28 @@ class MakeZYNQProject(Transformation):
                     0
                 ]  # We can assume that we have only one NodeContainer
                 pr_node_inst = getCustomOp(pr_node)
-                body_model = pr_node_inst.get_nodeattr("body_0")
+                body_model = cast("ModelWrapper", pr_node_inst.get_nodeattr("body_0"))
                 kernel_model.set_metadata_prop(
                     "vivado_stitch_proj",
-                    body_model.get_metadata_prop("vivado_stitch_proj"),
+                    _require_metadata_prop(body_model, "vivado_stitch_proj"),
                 )
                 kernel_model.set_metadata_prop(
-                    "wrapper_filename", body_model.get_metadata_prop("wrapper_filename")
+                    "wrapper_filename", _require_metadata_prop(body_model, "wrapper_filename")
                 )
                 kernel_model.set_metadata_prop(
                     "vivado_stitch_vlnv",
-                    body_model.get_metadata_prop("vivado_stitch_vlnv"),
+                    _require_metadata_prop(body_model, "vivado_stitch_vlnv"),
                 )
                 kernel_model.set_metadata_prop(
                     "vivado_stitch_ifnames",
-                    body_model.get_metadata_prop("vivado_stitch_ifnames"),
+                    _require_metadata_prop(body_model, "vivado_stitch_ifnames"),
                 )
                 kernel_model.save(dataflow_model_filename)
 
         sw_nodes = [
             getCustomOp(n)
             for sdp in sdp_nodes
-            for n in ModelWrapper(getCustomOp(sdp).get_nodeattr("model")).graph.node
+            for n in ModelWrapper(cast("str", getCustomOp(sdp).get_nodeattr("model"))).graph.node
             if n.op_type == "NodeContainer"
             and getCustomOp(n).get_nodeattr("multi_dnn_type") == "selectable_weights"
         ]
@@ -381,9 +397,9 @@ class MakeZYNQProject(Transformation):
         total_axilite_count = 0
         for node in model.graph.node:
             sdp_node = getCustomOp(node)
-            dataflow_model_filename = sdp_node.get_nodeattr("model")
+            dataflow_model_filename = cast("str", sdp_node.get_nodeattr("model"))
             kernel_model = ModelWrapper(dataflow_model_filename)
-            ifnames = eval(kernel_model.get_metadata_prop("vivado_stitch_ifnames"))
+            ifnames = eval(_require_metadata_prop(kernel_model, "vivado_stitch_ifnames"))
             total_axilite_count += len(ifnames["axilite"])
         if total_axilite_count > (64 - master_axilite_idx):
             nested_interconnect_count = math.ceil(total_axilite_count / 64.0)
@@ -431,7 +447,7 @@ class MakeZYNQProject(Transformation):
             if node.op_type != "StreamingDataflowPartition":
                 raise FINNInternalError(f"Invalid link graph: unexpected node {node.op_type}")
             sdp_node = getCustomOp(node)
-            dataflow_model_filename = sdp_node.get_nodeattr("model")
+            dataflow_model_filename = cast("str", sdp_node.get_nodeattr("model"))
             kernel_model = ModelWrapper(dataflow_model_filename)
             sdp_id = int(node.name.split("_")[-1])
 
@@ -457,7 +473,7 @@ class MakeZYNQProject(Transformation):
             )
             config.append("update_ip_catalog -rebuild -scan_changes")
 
-            ifnames = eval(kernel_model.get_metadata_prop("vivado_stitch_ifnames"))
+            ifnames = eval(_require_metadata_prop(kernel_model, "vivado_stitch_ifnames"))
 
             # gather info on connectivity
             # assume each node connected to outputs/inputs is DMA:
@@ -552,8 +568,14 @@ class MakeZYNQProject(Transformation):
                 for i in range(len(node.input)):
                     if producer is not None:
                         producer = model.find_producer(node.input[i])
+                        if producer is None:
+                            raise FINNInternalError(
+                                f"Tensor {node.input[i]} feeding {node.name} has no producer"
+                            )
                         j = list(producer.output).index(node.input[i])
-                        producer_model = ModelWrapper(getCustomOp(producer).get_nodeattr("model"))
+                        producer_model = ModelWrapper(
+                            cast("str", getCustomOp(producer).get_nodeattr("model"))
+                        )
                         producer_idma = any(
                             s.name.startswith("IODMA") for s in producer_model.graph.output
                         )
@@ -585,8 +607,9 @@ class MakeZYNQProject(Transformation):
                                 "[get_bd_intf_pins finn_switch/A_OUT]"
                             )
 
-                            ifnames = kernel_model.get_metadata_prop("vivado_stitch_ifnames")
-                            ifnames = json.loads(ifnames)
+                            ifnames = json.loads(
+                                _require_metadata_prop(kernel_model, "vivado_stitch_ifnames")
+                            )
                             width = ifnames["s_axis"][0][1]
                             config.append(
                                 f"set_property CONFIG.DATA_WIDTH_A {{{width}}} [get_bd_cells "
@@ -610,8 +633,9 @@ class MakeZYNQProject(Transformation):
                                 "[get_bd_intf_pins finn_switch/B_IN]"
                             )
 
-                            ifnames = kernel_model.get_metadata_prop("vivado_stitch_ifnames")
-                            ifnames = json.loads(ifnames)
+                            ifnames = json.loads(
+                                _require_metadata_prop(kernel_model, "vivado_stitch_ifnames")
+                            )
                             width = ifnames["s_axis"][0][1]
                             config.append(
                                 f"set_property CONFIG.DATA_WIDTH_B {{{width}}} [get_bd_cells "
@@ -687,7 +711,7 @@ class MakeZYNQProject(Transformation):
             )
 
         # create a temporary folder for the project
-        vivado_pynq_proj_dir = make_build_dir(prefix="vivado_zynq_proj_")
+        vivado_pynq_proj_dir = cast("str", make_build_dir(prefix="vivado_zynq_proj_"))
         model.set_metadata_prop("vivado_pynq_proj", vivado_pynq_proj_dir)
 
         fclk_mhz = int(1 / (self.period_ns * 0.001))
@@ -785,7 +809,7 @@ class MakeZYNQProject(Transformation):
         sw_sdp_nodes = []
         for sdp_node in sdp_nodes:
             sdp_node_inst = getCustomOp(sdp_node)
-            dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
+            dataflow_model_filename = cast("str", sdp_node_inst.get_nodeattr("model"))
             kernel_model = ModelWrapper(dataflow_model_filename)
             if any(
                 n.op_type == "NodeContainer"
@@ -806,7 +830,7 @@ class MakeZYNQProject(Transformation):
 
         for pr_sdp_node in pr_sdp_nodes:
             pr_sdp_node_inst = getCustomOp(pr_sdp_node)
-            dataflow_model_filename = pr_sdp_node_inst.get_nodeattr("model")
+            dataflow_model_filename = cast("str", pr_sdp_node_inst.get_nodeattr("model"))
             kernel_model = ModelWrapper(dataflow_model_filename)
             pr_node = next(
                 n
@@ -814,9 +838,10 @@ class MakeZYNQProject(Transformation):
                 if n.op_type == "NodeContainer"
                 and getCustomOp(n).get_nodeattr("multi_dnn_type") == "partial_reconfiguration"
             )
-            pr_node_inst = getCustomOp(pr_node)
+            pr_node_inst = cast("NodeContainer", getCustomOp(pr_node))
             sdp_name = pr_sdp_node.name
-            for body_idx in range(pr_node_inst.get_nodeattr("bodies")):
+            num_bodies = cast("int", pr_node_inst.get_nodeattr("bodies"))
+            for body_idx in range(num_bodies):
                 body_model = cast(
                     "ModelWrapper", pr_node_inst.get_nodeattr("body_" + str(body_idx))
                 )
@@ -852,11 +877,9 @@ class MakeZYNQProject(Transformation):
                 else:
                     # For each additional body create a Reconfigurable Module BD
                     # boundary ports are pre-defined by the container
-                    body_vlnv = body_model.get_metadata_prop("vivado_stitch_vlnv")
+                    body_vlnv = _require_metadata_prop(body_model, "vivado_stitch_vlnv")
                     body_ipstitch_path = body_model.get_metadata_prop("vivado_stitch_proj")
-                    body_ifnames = eval(
-                        cast("str", body_model.get_metadata_prop("vivado_stitch_ifnames"))
-                    )
+                    body_ifnames = eval(_require_metadata_prop(body_model, "vivado_stitch_ifnames"))
 
                     body_ip_dirs = ["list"]
                     body_ip_dirs += collect_ip_dirs(body_model, body_ipstitch_path)
@@ -956,7 +979,7 @@ class MakeZYNQProject(Transformation):
             )
             for pr_sdp in pr_sdp_nodes:
                 pr_sdp_inst = getCustomOp(pr_sdp)
-                pr_sdp_model = ModelWrapper(pr_sdp_inst.get_nodeattr("model"))
+                pr_sdp_model = ModelWrapper(cast("str", pr_sdp_inst.get_nodeattr("model")))
                 pr_nodecontainer = next(
                     n
                     for n in pr_sdp_model.graph.node
@@ -964,7 +987,7 @@ class MakeZYNQProject(Transformation):
                     and getCustomOp(n).get_nodeattr("multi_dnn_type") == "partial_reconfiguration"
                 )
                 pr_nodecontainer_inst = getCustomOp(pr_nodecontainer)
-                num_bodies = pr_nodecontainer_inst.get_nodeattr("bodies")
+                num_bodies = cast("int", pr_nodecontainer_inst.get_nodeattr("bodies"))
                 dfx_cont_vs_config = []
 
                 vs_name = pr_sdp.name
@@ -1115,7 +1138,7 @@ class MakeZYNQProject(Transformation):
             derives the width from the number of bodies that have to be distinguished.
             """
             inst = getCustomOp(pr_sdp)
-            km = ModelWrapper(inst.get_nodeattr("model"))
+            km = ModelWrapper(cast("str", inst.get_nodeattr("model")))
             nc = next(
                 n
                 for n in km.graph.node
@@ -1123,7 +1146,7 @@ class MakeZYNQProject(Transformation):
                 and getCustomOp(n).get_nodeattr("multi_dnn_type") == "partial_reconfiguration"
             )
             nc_inst = getCustomOp(nc)
-            nb = nc_inst.get_nodeattr("bodies")
+            nb = cast("int", nc_inst.get_nodeattr("bodies"))
             attr = cast("int", nc_inst.get_nodeattr("tuser_width"))
             return attr if attr > 0 else max(math.ceil(math.log2(max(nb, 2))), 1)
 
@@ -1134,14 +1157,14 @@ class MakeZYNQProject(Transformation):
             distinguished by the tUSER signal.
             """
             inst = getCustomOp(sw_sdp)
-            km = ModelWrapper(inst.get_nodeattr("model"))
+            km = ModelWrapper(cast("str", inst.get_nodeattr("model")))
             nc = next(
                 n
                 for n in km.graph.node
                 if n.op_type == "NodeContainer"
                 and getCustomOp(n).get_nodeattr("multi_dnn_type") == "selectable_weights"
             )
-            nb = getCustomOp(nc).get_nodeattr("bodies")
+            nb = cast("int", getCustomOp(nc).get_nodeattr("bodies"))
             return max(math.ceil(math.log2(max(nb, 2))), 1)
 
         all_tuser_widths = [_tuser_width_for_pr(p) for p in pr_sdp_nodes] + [
@@ -1163,24 +1186,24 @@ class MakeZYNQProject(Transformation):
         # dfx_schedule + dfx_finn_decouple + dfx_decoupler architecture.
         for pr_sdp in pr_sdp_nodes:
             pr_sdp_inst = getCustomOp(pr_sdp)
-            pr_sdp_model = ModelWrapper(pr_sdp_inst.get_nodeattr("model"))
+            pr_sdp_model = ModelWrapper(cast("str", pr_sdp_inst.get_nodeattr("model")))
             pr_nodecontainer = next(
                 n
                 for n in pr_sdp_model.graph.node
                 if n.op_type == "NodeContainer"
                 and getCustomOp(n).get_nodeattr("multi_dnn_type") == "partial_reconfiguration"
             )
-            pr_nodecontainer_inst = getCustomOp(pr_nodecontainer)
+            pr_nodecontainer_inst = cast("NodeContainer", getCustomOp(pr_nodecontainer))
             sdp_name = pr_sdp.name
-            num_bodies = pr_nodecontainer_inst.get_nodeattr("bodies")
+            num_bodies = cast("int", pr_nodecontainer_inst.get_nodeattr("bodies"))
             # Use AXI-Stream-padded widths (multiples of 8) for both data paths.
             # The stitched BDC IP always uses padded widths; using the unpadded
             # get_instream_width() would cause a data-width mismatch in the BD.
             in_data_width = pr_nodecontainer_inst.get_instream_width_padded()
             out_data_width = pr_nodecontainer_inst.get_outstream_width_padded()
 
-            body_0_model = pr_nodecontainer_inst.get_nodeattr("body_0")
-            body_0_ifnames = eval(body_0_model.get_metadata_prop("vivado_stitch_ifnames"))
+            body_0_model = cast("ModelWrapper", pr_nodecontainer_inst.get_nodeattr("body_0"))
+            body_0_ifnames = eval(_require_metadata_prop(body_0_model, "vivado_stitch_ifnames"))
             s_axis_name = body_0_ifnames["s_axis"][0][0]
             m_axis_name = body_0_ifnames["m_axis"][0][0]
 
@@ -1188,7 +1211,7 @@ class MakeZYNQProject(Transformation):
             # Derived from the last node of the first PR body (all bodies are
             # functionally equivalent and share the same output shape).
             # Matches the formula used by dfx_tuser_passthrough and sw_wrapper.
-            last_node_inst = getCustomOp(body_0_model.graph.node[-1])
+            last_node_inst = cast("HWCustomOp", getCustomOp(body_0_model.graph.node[-1]))
             out_shape = last_node_inst.get_folded_output_shape()
             num_output_beats = int(math.prod(out_shape[1:-1]))
 
@@ -1311,9 +1334,9 @@ class MakeZYNQProject(Transformation):
         for non_pr_sdp in static_sdp_nodes:
             non_pr_sdp_inst = getCustomOp(non_pr_sdp)
             sdp_name = non_pr_sdp.name
-            body_model = ModelWrapper(non_pr_sdp_inst.get_nodeattr("model"))
+            body_model = ModelWrapper(cast("str", non_pr_sdp_inst.get_nodeattr("model")))
 
-            body_ifnames = eval(cast("str", body_model.get_metadata_prop("vivado_stitch_ifnames")))
+            body_ifnames = eval(_require_metadata_prop(body_model, "vivado_stitch_ifnames"))
             if not body_ifnames.get("s_axis") or not body_ifnames.get("m_axis"):
                 # IDMA/ODMA endpoint nodes have no bidirectional stream interface;
                 # they do not need a dfx_tuser_passthrough wrapper.
@@ -1324,8 +1347,8 @@ class MakeZYNQProject(Transformation):
             # Separate padded widths for the input path (s_axis→rp_m_axis) and the
             # output path (rp_s_axis→m_axis); the wrapped static IP chain can change
             # the stream width (e.g. DWC inserted between nodes with different SIMD/PE).
-            first_node_inst = getCustomOp(body_model.graph.node[0])
-            last_node_inst = getCustomOp(body_model.graph.node[-1])
+            first_node_inst = cast("HWCustomOp", getCustomOp(body_model.graph.node[0]))
+            last_node_inst = cast("HWCustomOp", getCustomOp(body_model.graph.node[-1]))
             in_data_width = first_node_inst.get_instream_width_padded()
             out_data_width = last_node_inst.get_outstream_width_padded()
 
@@ -1406,8 +1429,8 @@ class MakeZYNQProject(Transformation):
         for sw_sdp in sw_sdp_nodes:
             sw_sdp_inst = getCustomOp(sw_sdp)
             sdp_name = sw_sdp.name
-            body_model = ModelWrapper(sw_sdp_inst.get_nodeattr("model"))
-            body_ifnames = eval(cast("str", body_model.get_metadata_prop("vivado_stitch_ifnames")))
+            body_model = ModelWrapper(cast("str", sw_sdp_inst.get_nodeattr("model")))
+            body_ifnames = eval(_require_metadata_prop(body_model, "vivado_stitch_ifnames"))
 
             # s_axis list contains both the data stream and the tap port (s_axis_tap_id_*).
             # Separate them by name prefix.
@@ -1433,9 +1456,9 @@ class MakeZYNQProject(Transformation):
                 and getCustomOp(n).get_nodeattr("multi_dnn_type") == "selectable_weights"
             )
             sw_nc_inst = getCustomOp(sw_nc)
-            num_sets = sw_nc_inst.get_nodeattr("bodies")
+            num_sets = cast("int", sw_nc_inst.get_nodeattr("bodies"))
 
-            last_node_inst = getCustomOp(body_model.graph.node[-1])
+            last_node_inst = cast("HWCustomOp", getCustomOp(body_model.graph.node[-1]))
             out_shape = last_node_inst.get_folded_output_shape()
             num_output_beats = int(math.prod(out_shape[1:-1]))
 
@@ -1509,7 +1532,7 @@ class MakeZYNQProject(Transformation):
 
         for pr_sdp in pr_sdp_nodes:
             pr_sdp_inst = getCustomOp(pr_sdp)
-            pr_sdp_model = ModelWrapper(pr_sdp_inst.get_nodeattr("model"))
+            pr_sdp_model = ModelWrapper(cast("str", pr_sdp_inst.get_nodeattr("model")))
             pr_nodecontainer = next(
                 n
                 for n in pr_sdp_model.graph.node
@@ -1518,7 +1541,7 @@ class MakeZYNQProject(Transformation):
             )
             pr_nodecontainer_inst = getCustomOp(pr_nodecontainer)
             sdp_name = pr_sdp.name
-            num_bodies = pr_nodecontainer_inst.get_nodeattr("bodies")
+            num_bodies = cast("int", pr_nodecontainer_inst.get_nodeattr("bodies"))
             bd_list = ":".join(
                 [f"Hier_{sdp_name}.bd"] + [f"Hier_{sdp_name}_{i}.bd" for i in range(1, num_bodies)]
             )
@@ -1551,7 +1574,7 @@ class MakeZYNQProject(Transformation):
         pr_sdp_names = []
         for pr_sdp_node in pr_sdp_nodes:
             pr_sdp_inst = getCustomOp(pr_sdp_node)
-            pr_sdp_model = ModelWrapper(pr_sdp_inst.get_nodeattr("model"))
+            pr_sdp_model = ModelWrapper(cast("str", pr_sdp_inst.get_nodeattr("model")))
             pr_nodecontainer_inst = getCustomOp(
                 next(
                     n
@@ -1561,7 +1584,7 @@ class MakeZYNQProject(Transformation):
                 )
             )
             pr_sdp_names.append(pr_sdp_node.name)
-            pr_sdp_bodies.append(pr_nodecontainer_inst.get_nodeattr("bodies"))
+            pr_sdp_bodies.append(cast("int", pr_nodecontainer_inst.get_nodeattr("bodies")))
         if not all(n == pr_sdp_bodies[0] for n in pr_sdp_bodies):
             raise FINNUserError("All NodeContainers must have the same number of bodies for pr")
         num_bodies = pr_sdp_bodies[0]
@@ -1595,7 +1618,7 @@ class MakeZYNQProject(Transformation):
         for pr_sdp in pr_sdp_nodes:
             pr_sdp_inst = getCustomOp(pr_sdp)
             sdp_name = pr_sdp.name
-            pr_sdp_model = ModelWrapper(pr_sdp_inst.get_nodeattr("model"))
+            pr_sdp_model = ModelWrapper(cast("str", pr_sdp_inst.get_nodeattr("model")))
             pr_nodecontainer = next(
                 n
                 for n in pr_sdp_model.graph.node
@@ -1603,7 +1626,7 @@ class MakeZYNQProject(Transformation):
                 and getCustomOp(n).get_nodeattr("multi_dnn_type") == "partial_reconfiguration"
             )
             pr_nodecontainer_inst = getCustomOp(pr_nodecontainer)
-            pblock = pr_nodecontainer_inst.get_nodeattr("pblock")
+            pblock = cast("str", pr_nodecontainer_inst.get_nodeattr("pblock"))
             pr_sdp_pblock_info.append((sdp_name, pblock))
 
         pblocks_specified = [pblock for _, pblock in pr_sdp_pblock_info]
@@ -1619,6 +1642,8 @@ class MakeZYNQProject(Transformation):
 
         pr_config.append("open_run synth_1 -name synth_1")
 
+        cell_names: list[str] = []
+        pblock_names: list[str] = []
         if all_empty:
             # ----------------------------------------------------------------
             # Auto-floorplanning mode: query per-cell resource usage from the
@@ -1671,8 +1696,7 @@ class MakeZYNQProject(Transformation):
         if all_empty:
             # Auto mode: query post-implementation utilisation and write the JSON report.
             _pr_report_path = str(
-                Path(cast("str", model.get_metadata_prop("vivado_pynq_proj")))
-                / "pr_region_resources.json"
+                Path(_require_metadata_prop(model, "vivado_pynq_proj")) / "pr_region_resources.json"
             )
             model.set_metadata_prop("pr_region_resources_json", _pr_report_path)
             pr_config.append("open_run impl_1 -name impl_1")
@@ -1815,7 +1839,7 @@ class ZynqBuild(Transformation):
         worker_args = [
             (
                 sdp_node.name,
-                getCustomOp(sdp_node).get_nodeattr("model"),
+                cast("str", getCustomOp(sdp_node).get_nodeattr("model")),
                 self.fpga_part,
                 self.period_ns,
                 self.enable_instrumentation,

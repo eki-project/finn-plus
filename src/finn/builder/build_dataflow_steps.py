@@ -60,7 +60,7 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.util.cleanup import cleanup_model
 from shutil import copy
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
@@ -220,6 +220,7 @@ from finn.xsi import SimEngine
 
 if TYPE_CHECKING:
     from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
+    from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
 
 
 BuildDataflowStep = Callable[..., ModelWrapper]
@@ -304,15 +305,21 @@ def _generate_pblock_svg(report_json_path: str | Path, svg_path: str | Path) -> 
     lines = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{canvas_w}" height="{canvas_h}">',
         # Background = full device SLICE array
-        f'<rect x="{pad}" y="{pad}"'
-        f' width="{(dev_max_x + 1) * scale}" height="{(dev_max_y + 1) * scale}"'
-        f' fill="#d8d8d8" stroke="#555" stroke-width="1"/>',
+        (
+            f'<rect x="{pad}" y="{pad}"'
+            f' width="{(dev_max_x + 1) * scale}" height="{(dev_max_y + 1) * scale}"'
+            f' fill="#d8d8d8" stroke="#555" stroke-width="1"/>'
+        ),
         # Y-axis label (rotated)
-        f'<text transform="rotate(-90)" x="-{canvas_h//2}" y="{pad - 6}"'
-        f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE Y</text>',
+        (
+            f'<text transform="rotate(-90)" x="-{canvas_h//2}" y="{pad - 6}"'
+            f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE Y</text>'
+        ),
         # X-axis label
-        f'<text x="{canvas_w // 2}" y="{canvas_h - 4}"'
-        f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE X</text>',
+        (
+            f'<text x="{canvas_w // 2}" y="{canvas_h - 4}"'
+            f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE X</text>'
+        ),
     ]
 
     for i, (x0, y0, x1, y1, name) in enumerate(pblocks):
@@ -418,7 +425,7 @@ def verify_step(
                     f"Unable to determine expected input shape for verification. "
                     f"Shape of tensor {parent_model.get_first_global_in()} is None."
                 )
-            target_ishape = (in_npy.shape[0],) + tuple(exp_ishape)[1:]
+            target_ishape = (in_npy.shape[0], *tuple(exp_ishape)[1:])
             if in_npy.shape != target_ishape:
                 log.warning(
                     f"Verification input has shape {in_npy.shape} while model expects "
@@ -471,7 +478,7 @@ def verify_step(
                     f"Unable to determine expected input shape for verification. "
                     f"Shape of tensor {model.get_first_global_in()} is None."
                 )
-            target_ishape = (in_npy.shape[0],) + tuple(exp_ishape)[1:]
+            target_ishape = (in_npy.shape[0], *tuple(exp_ishape)[1:])
             if in_npy.shape != target_ishape:
                 log.warning(
                     f"Verification input has shape {in_npy.shape} while model expects "
@@ -508,7 +515,7 @@ def verify_step(
         res_str = res_to_str[bool(res)]
         if cfg.verify_save_full_context and (rtlsim_pre_hook is None):
             verification_output_fn = verify_out_dir / f"verify_{step_name}_{b}_{res_str}.npz"
-            np.savez(verification_output_fn, **out_dict)
+            np.savez(verification_output_fn, **out_dict)  # type: ignore[arg-type]
 
             # Log tensor statistics for debugging (only output tensors, in topological order)
             tensors_to_log = ["global_in"]
@@ -891,14 +898,14 @@ def step_set_fifo_depths(
     # at "auto" (an explicit ram_style from a fifo_config_file or folding config wins).
     if cfg.large_fifo_mem_style != LargeFIFOMemStyle.AUTO:
         for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
-            node_inst = getHWCustomOp(node)
+            node_inst = cast("StreamingFIFO", getHWCustomOp(node))
             if node_inst.get_nodeattr("ram_style") != "auto":
                 continue
             if node_inst.resolve_ram_style() in ("block", "ultra"):
                 node_inst.set_nodeattr("ram_style", cfg.large_fifo_mem_style.value)
 
     # Generate a dedicated report about final FIFO sizes.
-    fifo_info = {
+    fifo_info: dict[str, Any] = {
         "fifo_depths": {},
         "fifo_sizes": {},
         "fifo_sizes_effective": {},
@@ -1611,7 +1618,7 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
 
 @register_build_dataflow_step()
 def step_minimize_bit_width_datatype_only(
-    model: ModelWrapper, cfg: DataflowBuildConfig
+    model: ModelWrapper, cfg: DataflowBuildConfig  # noqa: ARG001
 ) -> ModelWrapper:
     """Datatype-based bit width minimization, upstream's first pass (Xilinx#1700): uses
     the worst-case bounds of the annotated datatypes instead of the actual values.
@@ -1890,7 +1897,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
             )
         )
         shutil.copytree(
-            model.get_metadata_prop("cpp_driver_dir"),
+            get_metadata_prop_path(model, "cpp_driver_dir", must_exist=True),
             str(cfg.get_driver_directory() / "cpp"),
             dirs_exist_ok=True,
             copy_function=shutil.copyfile,
@@ -1935,7 +1942,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
         )
 
         shutil.copytree(
-            model.get_metadata_prop("pynq_driver_dir"),
+            get_metadata_prop_path(model, "pynq_driver_dir", must_exist=True),
             cfg.get_driver_directory(),
             dirs_exist_ok=True,
         )
@@ -2004,14 +2011,13 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
         )
     # Commonly used config variables
     part = cfg._resolve_fpga_part()
-    platform = (
-        cfg._resolve_vitis_platform() if cfg.shell_flow_type is ShellFlowType.VITIS_ALVEO else None
-    )
     clk_ns = cfg.synth_clk_period_ns
 
     # Differentiate preparation by flow type
     match cfg.shell_flow_type:
         case ShellFlowType.VITIS_ALVEO:
+            # Resolved up front so that a missing platform fails before any synthesis work.
+            platform = cfg._resolve_vitis_platform()
             # Insert IODMAs
             model = model.transform(InsertIODMA(max_intfwidth=cfg.vitis_iodma_intf_max_width))
             model = model.transform(GiveUniqueNodeNamesRecursive())
@@ -2376,6 +2382,8 @@ def step_loop_rolling(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWra
             template_path = Path(cfg.output_dir) / "loop-body-template.onnx"
             loop_extraction = LoopExtraction(cfg.loop_body_hierarchy, template_path)
             model = model.transform(loop_extraction)
+            if loop_extraction.loop_body_template is None:
+                raise FINNInternalError("LoopExtraction did not produce a loop body template")
             model = model.transform(LoopRolling(loop_extraction.loop_body_template))
     else:
         log.info("MLO not selected, skipping step_loop_rolling.")

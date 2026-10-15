@@ -56,6 +56,8 @@ class MinimizeWeightBitWidth(Transformation):
         for node in model.graph.node:
             if is_fpgadataflow_node(node):
                 inst = getHWCustomOp(node)
-                if hasattr(inst, "minimize_weight_bit_width"):
-                    inst.minimize_weight_bit_width(model, datatype_only=self.datatype_only)
+                # Not every HW op implements this hook, so look it up dynamically
+                minimize = getattr(inst, "minimize_weight_bit_width", None)
+                if minimize is not None:
+                    minimize(model, datatype_only=self.datatype_only)
         return (model, False)

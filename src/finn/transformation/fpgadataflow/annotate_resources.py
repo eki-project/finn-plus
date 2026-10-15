@@ -38,6 +38,7 @@ from typing import Any, Literal, cast
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.post_synth_res import post_synth_res
 from finn.analysis.fpgadataflow.res_estimation import res_estimation
+from finn.util.exception import FINNUserError
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
 
@@ -71,9 +72,15 @@ class AnnotateResources(Transformation):
         elif self.mode == "synth":
             res_fxn = post_synth_res
         else:
-            raise Exception("Unrecognized mode for AnnotateResources")
+            raise FINNUserError("Unrecognized mode for AnnotateResources")
         if self.res_dict is None:
-            self.res_dict = model.analysis(res_fxn)
+            # NOTE: post_synth_res() (used for mode == "synth") actually returns
+            # dict[int, dict[str, ...]] (keyed by device ID, one level deeper than
+            # the dict[str, ...] this class assumes below), which this cast papers
+            # over rather than changes; this looks like a pre-existing mismatch
+            # between AnnotateResources and post_synth_res's multi-device return
+            # shape, not something introduced here.
+            self.res_dict = cast("dict[str, Any]", model.analysis(res_fxn))
         children_dict = {}
         # annotate node resources
         for node in graph.node:

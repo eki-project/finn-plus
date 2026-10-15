@@ -41,7 +41,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name, roundup_to_integer_multiple
 from string import Template
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from finn.builder.build_dataflow_config import FpgaMemoryType
 from finn.util.basic import get_driver_shapes, make_build_dir
@@ -52,9 +52,18 @@ from finn.util.rtlsim import dat_file_to_numpy_array
 from finn.util.settings import get_settings
 
 if TYPE_CHECKING:
-    from onnx import NodeProto
+    import numpy.typing as npt
 
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
     from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
+
+
+def _require_metadata_prop(model: ModelWrapper, key: str) -> str:
+    """Return a metadata property, raising if it is not set on the given model."""
+    value = model.get_metadata_prop(key)
+    if value is None:
+        raise FINNInternalError(f"Model is missing required metadata property {key!r}")
+    return value
 
 
 def update_bitfile_path_after_copy(device: int, bitfile_path: Path, json_path: Path) -> None:
@@ -639,7 +648,7 @@ class MakePYNQDriver(Transformation):
 
     def _generate_weight_files(self, model: ModelWrapper) -> tuple[dict, bool]:
         """Generate weight files for external and runtime-writable weights."""
-        pynq_driver_dir = cast("str", model.get_metadata_prop("pynq_driver_dir"))
+        pynq_driver_dir = _require_metadata_prop(model, "pynq_driver_dir")
 
         external_weights = False
         runtime_weights = False
@@ -669,26 +678,39 @@ class MakePYNQDriver(Transformation):
             if producer is None:  # input dma?
                 sdp_inst = getCustomOp(node)
                 idma_name = cast("str", sdp_inst.get_nodeattr("instance_name"))
-                df_model = ModelWrapper(sdp_inst.get_nodeattr("model"))
+                df_model = ModelWrapper(cast("str", sdp_inst.get_nodeattr("model")))
                 if not (df_model.graph.node[0].op_type == "IODMA_hls"):
                     raise FINNInternalError("Partition must start with an input IODMA_hls node")
                 iodma_node = getCustomOp(df_model.graph.node[0])
                 if iodma_node.get_nodeattr("burstMode") == "wrap":  # input weights dma?
                     external_weights = True
                     dma_sdp_output = sdp_inst.onnx_node.output[0]
-                    dma_target_sdp = getCustomOp(
-                        cast("NodeProto", model.find_consumer(dma_sdp_output))
+                    dma_target_sdp_node = model.find_consumer(dma_sdp_output)
+                    if dma_target_sdp_node is None:
+                        raise FINNInternalError(f"Could not find a consumer for {dma_sdp_output}.")
+                    dma_target_sdp = getCustomOp(dma_target_sdp_node)
+                    dma_target_model = ModelWrapper(
+                        cast("str", dma_target_sdp.get_nodeattr("model"))
                     )
-                    dma_target_model = ModelWrapper(dma_target_sdp.get_nodeattr("model"))
                     iodma_output_tensor = iodma_node.onnx_node.output[0]
                     dma_consumer = dma_target_model.find_consumer(iodma_output_tensor)
+                    if dma_consumer is None:
+                        raise FINNInternalError(
+                            f"Could not find a consumer for {iodma_output_tensor}."
+                        )
                     ext_weight_shapes_dict[idma_name] = dma_target_model.get_tensor_shape(
                         dma_consumer.output[0]
                     )
                     init_tensor = df_model.get_initializer(iodma_node.onnx_node.input[0])
+                    if init_tensor is None:
+                        raise FINNInternalError(
+                            f"Tensor {iodma_node.onnx_node.input[0]} has no initializer."
+                        )
                     ext_weight_dma_cnt += 1
                     w_dtype = df_model.get_tensor_datatype(iodma_node.onnx_node.input[0])
-                    init_external_tensor = to_external_tensor(init_tensor, w_dtype)
+                    init_external_tensor = to_external_tensor(
+                        cast("npt.NDArray[Any]", init_tensor), w_dtype
+                    )
                     np.save(weights_dir + "/" + idma_name + ".npy", init_external_tensor)
                 idma_idx += 1
 
@@ -705,16 +727,20 @@ class MakePYNQDriver(Transformation):
                 raise FINNInternalError("Expected a StreamingDataflowPartition node")
             # get dataflow model
             sdp_node = getCustomOp(sdp_node)
-            dataflow_model_filename = sdp_node.get_nodeattr("model")
+            dataflow_model_filename = cast("str", sdp_node.get_nodeattr("model"))
             dataflow_model = ModelWrapper(dataflow_model_filename)
             rt_layer_ind = 0
             for node in dataflow_model.graph.node:
                 if node.op_type.startswith("MVAU") or node.op_type.startswith("Thresholding"):
-                    node_inst = getCustomOp(node)
+                    # make_weight_file() is declared individually on the concrete
+                    # MVAU/VVAU/Thresholding backend classes, not on a shared base
+                    node_inst = cast("Any", getCustomOp(node))
                     is_rt_weights = node_inst.get_nodeattr("runtime_writeable_weights")
                     if is_rt_weights == 1:
                         runtime_weights = True
                         fcl_w = dataflow_model.get_initializer(node.input[1])
+                        if fcl_w is None:
+                            raise FINNInternalError(f"Tensor {node.input[1]} has no initializer.")
                         w_filename = weights_dir + f"/{sdp_ind}_{rt_layer_ind}_{node.name}.dat"
                         node_inst.make_weight_file(fcl_w, "decoupled_runtime", w_filename)
                         rt_layer_ind += 1
@@ -806,11 +832,11 @@ class MakePYNQDriver(Transformation):
         fifo_widths = {}
         for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
             sdp_node_inst = getCustomOp(sdp_node)
-            dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
+            dataflow_model_filename = cast("str", sdp_node_inst.get_nodeattr("model"))
             kernel_model = ModelWrapper(dataflow_model_filename)
             for node in kernel_model.graph.node:
                 if node.op_type.startswith("StreamingFIFO"):
-                    node_inst = getCustomOp(node)
+                    node_inst = cast("HWCustomOp", getCustomOp(node))
                     # JSON doesn't support int keys
                     fifo_id = str(node_inst.get_nodeattr("fifo_id"))
                     fifo_widths[fifo_id] = node_inst.get_instream_width()
@@ -893,7 +919,7 @@ class MakePYNQDriver(Transformation):
             "driver_information": driver_information,
             "experiment_information": experiment_information,
         }
-        pynq_driver_dir = cast("str", model.get_metadata_prop("pynq_driver_dir"))
+        pynq_driver_dir = _require_metadata_prop(model, "pynq_driver_dir")
         settingsfile = pynq_driver_dir + "/settings.json"
         with Path(settingsfile).open("w") as f:
             json.dump(settings, f, indent=2)

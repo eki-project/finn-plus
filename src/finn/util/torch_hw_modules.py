@@ -1,8 +1,7 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""
-PyTorch modules that match FINN hardware-layer behavior.
+"""PyTorch modules that match FINN hardware-layer behavior.
 
 These modules are intended as drop-in PyTorch layers for modelling the
 functional behavior of FINN hardware layers before conversion to HWCustomOps.
@@ -11,7 +10,7 @@ functional behavior of FINN hardware layers before conversion to HWCustomOps.
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from typing import Any
 
 # Import constants from the ONNX custom op package (importing from the package
 # triggers registration of PWPolyFunction with QONNX's custom op registry)
@@ -19,14 +18,16 @@ from finn.custom_op.general import CLAMP_CFG, NUM_OCTAVES, SUPPORTED_FUNCS, _seg
 
 # PyTorch reference functions for coefficient fitting
 REFERENCE_FUNCS = {
-    "gelu": lambda x: F.gelu(x),
-    "silu": lambda x: F.silu(x),
+    "gelu": lambda x: nn.functional.gelu(x),
+    "silu": lambda x: nn.functional.silu(x),
     "sigmoid": lambda x: torch.sigmoid(x),
     "tanh": lambda x: torch.tanh(x),
 }
 
 
-def _fit_coefficients(func_name, K, degree=2, num_samples=1000):
+def _fit_coefficients(
+    func_name: str, K: int, degree: int = 2, num_samples: int = 1000  # noqa: N803
+) -> torch.Tensor:
     """Fit degree-N polynomials per segment. Returns a (segments, degree+1) tensor."""
     ref_fn = REFERENCE_FUNCS[func_name]
     bounds = _segment_boundaries(K)
@@ -43,7 +44,9 @@ def _fit_coefficients(func_name, K, degree=2, num_samples=1000):
     return torch.from_numpy(coeffs.astype(np.float32))
 
 
-def _segment_index(x, K, num_subs, num_segs):
+def _segment_index(
+    x: torch.Tensor, num_subs: int, num_segs: int
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Map each element to its polynomial segment, mirroring SV addressing."""
     abs_x = x.abs()
     is_neg = x < 0
@@ -74,7 +77,15 @@ def _segment_index(x, K, num_subs, num_segs):
     return seg_idx, is_neg_clamp, is_pos_clamp
 
 
-def _pwpolyf_eval(x, coeffs, neg_clamp_val, pos_clamp_val, func, K, degree):
+def _pwpolyf_eval(
+    x: torch.Tensor,
+    coeffs: torch.Tensor,
+    neg_clamp_val: torch.Tensor,
+    pos_clamp_val: torch.Tensor,
+    func: str,
+    K: int,  # noqa: N803
+    degree: int,
+) -> torch.Tensor:
     """Evaluate piecewise polynomial activation. Used by both Module and Function."""
     num_subs = 1 << K
     num_segs = 1 + 2 * NUM_OCTAVES * num_subs
@@ -84,7 +95,7 @@ def _pwpolyf_eval(x, coeffs, neg_clamp_val, pos_clamp_val, func, K, degree):
     orig_shape = x.shape
     x_flat = x.contiguous().view(-1)
 
-    seg_idx, is_neg_clamp, is_pos_clamp = _segment_index(x_flat, K, num_subs, num_segs)
+    seg_idx, is_neg_clamp, is_pos_clamp = _segment_index(x_flat, num_subs, num_segs)
 
     c = coeffs[seg_idx]
     # Horner evaluation: y = c0 + x*(c1 + x*(c2 + ...))
@@ -92,10 +103,7 @@ def _pwpolyf_eval(x, coeffs, neg_clamp_val, pos_clamp_val, func, K, degree):
     for i in range(degree - 1, -1, -1):
         y = c[:, i] + x_flat * y
 
-    if pos_passthrough:
-        pos_val = x_flat
-    else:
-        pos_val = pos_clamp_val.expand_as(y)
+    pos_val = x_flat if pos_passthrough else pos_clamp_val.expand_as(y)
     y = torch.where(is_pos_clamp, pos_val, y)
     y = torch.where(is_neg_clamp, neg_clamp_val.expand_as(y), y)
 
@@ -110,12 +118,30 @@ class PWPolyFFunction(torch.autograd.Function):
     and emits the decomposed polynomial evaluation instead)."""
 
     @staticmethod
-    def forward(ctx, x, coeffs, neg_clamp_val, pos_clamp_val, func, K, degree):
+    def forward(
+        ctx: Any,  # noqa: ARG004  (required by the torch.autograd.Function interface)
+        x: torch.Tensor,
+        coeffs: torch.Tensor,
+        neg_clamp_val: torch.Tensor,
+        pos_clamp_val: torch.Tensor,
+        func: str,
+        K: int,  # noqa: N803
+        degree: int,
+    ) -> torch.Tensor:
         """Evaluate the piecewise polynomial activation on `x`."""
         return _pwpolyf_eval(x, coeffs, neg_clamp_val, pos_clamp_val, func, K, degree)
 
     @staticmethod
-    def symbolic(g, x, coeffs, neg_clamp_val, pos_clamp_val, func, K, degree):
+    def symbolic(
+        g: Any,
+        x: Any,
+        coeffs: Any,  # noqa: ARG004  (symbolic mirrors the forward signature)
+        neg_clamp_val: Any,  # noqa: ARG004
+        pos_clamp_val: Any,  # noqa: ARG004
+        func: str,
+        K: int,  # noqa: N803
+        degree: int,
+    ) -> Any:
         """Emit a qonnx PWPolyFunction node carrying func, K and degree during ONNX export."""
         # Use qonnx.custom_op.general domain to match Brevitas export convention
         # and enable QONNX's registry to find the PWPolyFunction custom op
@@ -131,19 +157,24 @@ class PWPolyFFunction(torch.autograd.Function):
 
 
 class PWPolyFActivation(nn.Module):
-    """
-    Drop-in activation matching FINN's PWPolyF RTL behavior.
+    """Drop-in activation matching FINN's PWPolyF RTL behavior.
 
     Approximates nonlinear activations using piecewise polynomials over
     segments defined by FP32 bit extraction. The polynomial is evaluated via
     Horner's method to match the DSPFP32 FMA chain used by the RTL.
     """
 
-    def __init__(self, func="gelu", K=3, degree=2, fit_samples=1000):
+    def __init__(
+        self,
+        func: str = "gelu",
+        K: int = 3,  # noqa: N803
+        degree: int = 2,
+        fit_samples: int = 1000,
+    ) -> None:
         """Initialize the activation and fit the polynomial coefficients for `func`."""
         super().__init__()
         if func not in SUPPORTED_FUNCS:
-            raise ValueError("Unsupported func=%r; choose from %s" % (func, SUPPORTED_FUNCS))
+            raise ValueError(f"Unsupported func={func!r}; choose from {SUPPORTED_FUNCS}")
 
         self.func = func
         self.K = K
@@ -160,7 +191,7 @@ class PWPolyFActivation(nn.Module):
         self.register_buffer("neg_clamp_val", neg_cv)
         self.register_buffer("pos_clamp_val", pos_cv)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply the piecewise polynomial activation to `x`."""
         return PWPolyFFunction.apply(
             x,

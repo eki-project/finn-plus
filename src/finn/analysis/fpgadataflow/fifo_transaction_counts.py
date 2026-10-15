@@ -5,21 +5,30 @@
 import numpy as np
 import onnx
 from qonnx.custom_op.registry import getCustomOp
+from typing import TYPE_CHECKING, cast
+
+from finn.util.exception import FINNUserError
+
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
 
 
-def _has_fifos(model):
+def _has_fifos(model: "ModelWrapper") -> bool:
     """Return True if the model (or any nested subgraph) contains StreamingFIFO nodes."""
     if any(n.op_type.startswith("StreamingFIFO") for n in model.graph.node):
         return True
     for node in model.graph.node:
         for attr in node.attribute:
-            if attr.type == onnx.AttributeProto.GRAPH:
-                if _has_fifos(model.make_subgraph_modelwrapper(attr.g)):
-                    return True
+            if attr.type == onnx.AttributeProto.GRAPH and _has_fifos(
+                model.make_subgraph_modelwrapper(attr.g)
+            ):
+                return True
     return False
 
 
-def fifo_transaction_counts(model, apply_to_subgraphs=False):
+def fifo_transaction_counts(
+    model: "ModelWrapper", apply_to_subgraphs: bool = False
+) -> dict[str, int]:
     """Return the expected number of stream transactions each FIFO should carry.
 
     Requires a model that already has FIFOs inserted. Returns a dict mapping FIFO
@@ -31,28 +40,31 @@ def fifo_transaction_counts(model, apply_to_subgraphs=False):
     bodies). FIFOs are keyed by their node name directly (body FIFOs should already
     be uniquely named via GiveUniqueNodeNames with the FINNLoop prefix).
     """
-    assert _has_fifos(model), (
-        "fifo_transaction_counts requires a model with FIFOs inserted "
-        "(run InsertFIFO / set_fifo_depths first)"
-    )
+    if not _has_fifos(model):
+        raise FINNUserError(
+            "fifo_transaction_counts requires a model with FIFOs inserted "
+            "(run InsertFIFO / set_fifo_depths first)"
+        )
     return _count(model, apply_to_subgraphs)
 
 
-def _count(model, apply_to_subgraphs):
+def _count(model: "ModelWrapper", apply_to_subgraphs: bool) -> dict[str, int]:
     """Collect per-FIFO transaction counts, scaling subgraph
     FIFOs by the FINNLoop iteration count.
     """
     ret = {}
     for node in model.graph.node:
         if node.op_type.startswith("StreamingFIFO"):
-            folded_shape = getCustomOp(node).get_nodeattr("folded_shape")
+            folded_shape = cast("list[int]", getCustomOp(node).get_nodeattr("folded_shape"))
             per_frame = int(np.prod(folded_shape[:-1])) if len(folded_shape) > 1 else 1
             ret[node.name] = per_frame
     if apply_to_subgraphs:
         for node in model.graph.node:
             # FINNLoop re-streams its body once per iteration; generic subgraphs run once
             multiplier = (
-                getCustomOp(node).get_nodeattr("iteration") if node.op_type == "FINNLoop" else 1
+                cast("int", getCustomOp(node).get_nodeattr("iteration"))
+                if node.op_type == "FINNLoop"
+                else 1
             )
             for attr in node.attribute:
                 if attr.type == onnx.AttributeProto.GRAPH:

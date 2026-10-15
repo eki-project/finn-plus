@@ -19,8 +19,10 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - `FMPadding_Pixel` is renamed to `InputDilation` (`InputDilation_hls`); models that still contain `FMPadding_Pixel` nodes have to be regenerated (eki-project#257)
 - `ReplicateStream` and `InferReplicateStream` are removed; `DuplicateStreams` covers the same functionality (eki-project#257)
 - The HLS/TCL code-generation templates moved from `finn.custom_op.fpgadataflow.templates` to files in `src/finn/templates/codegen/`, loaded with `finn.templates.load_codegen_template` (eki-project#257)
+- The whole `src/` tree is ruff-clean and passes pyright without errors, and `src/` no longer uses `assert` for error handling: invalid inputs raise `FINNUserError`, broken invariants `FINNInternalError`. ruff (`ruff-check` pre-commit hook on `src/`) replaces flake8, and the docstring check GitHub action is removed since ruff's pydocstyle rules cover it (eki-project#262)
 
 ### Fixed
+- The Aurora multi-FPGA partitioner never counted the connections between devices in its `connections_per_device` constraint (the generator iterated over the wrong node), so the `ports_per_device` limit had no effect (eki-project#262)
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
 - (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)
 - RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate at the cost of a slightly larger buffer (eki-project#290)

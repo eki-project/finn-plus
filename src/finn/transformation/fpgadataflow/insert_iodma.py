@@ -29,16 +29,29 @@
 """Insert IODMA nodes at graph boundaries and external weights."""
 import math
 import numpy as np
-from onnx import TensorProto
+from onnx import NodeProto, TensorProto
 from onnx import helper as oh
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import SortGraph
 from qonnx.util.basic import get_by_name
+from typing import TYPE_CHECKING, Any, cast
 
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.fpgadataflow import get_device_id
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
+
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
+
+def _require_node(node: NodeProto | None, description: str) -> NodeProto:
+    """Return a non-None node, raising if it is unexpectedly missing."""
+    if node is None:
+        raise FINNInternalError(f"Expected {description} to be present, but it was missing")
+    return node
 
 
 class InsertIODMA(Transformation):
@@ -108,22 +121,27 @@ class InsertIODMA(Transformation):
         modified = False
         # only makes sense for a pure fpgadataflow graph -- so we check!
         all_nodes = list(model.graph.node)
-        if not all(
-            get_by_name(x.attribute, "backend").s.decode("UTF-8") == "fpgadataflow"
-            for x in all_nodes
-        ):
+
+        def _is_fpgadataflow_backend(node: NodeProto) -> bool:
+            """Return True if the node has the fpgadataflow backend attribute."""
+            backend = get_by_name(node.attribute, "backend")
+            return backend is not None and backend.s.decode("UTF-8") == "fpgadataflow"
+
+        if not all(_is_fpgadataflow_backend(x) for x in all_nodes):
             raise FINNInternalError("InsertIODMA only makes sense for a pure fpgadataflow graph")
         # insert IODMAs for graph inputs
         if self.insert_input:
             graph_in_names = [x.name for x in model.graph.input]
             for graph_in_name in graph_in_names:
-                first_node = model.find_consumer(graph_in_name)
+                first_node = _require_node(
+                    model.find_consumer(graph_in_name), f"a consumer of {graph_in_name}"
+                )
                 if first_node.op_type == "IODMA_hls":
                     # IODMA already inserted for this input
                     continue
                 in_shape = model.get_tensor_shape(graph_in_name)
                 in_dtype = model.get_tensor_datatype(graph_in_name)
-                first_node_inst = getCustomOp(first_node)
+                first_node_inst = cast("HWCustomOp", getCustomOp(first_node))
                 in_folded_shape = first_node_inst.get_folded_input_shape()
                 # take advantage of AXI stream width padding for DMA alignment
                 # (AXI streams are always padded to 8 bits)
@@ -170,12 +188,14 @@ class InsertIODMA(Transformation):
         if self.insert_output:
             graph_out_names = [x.name for x in model.graph.output]
             for graph_out_name in graph_out_names:
-                final_node = model.find_producer(graph_out_name)
+                final_node = _require_node(
+                    model.find_producer(graph_out_name), f"a producer of {graph_out_name}"
+                )
                 if final_node.op_type == "IODMA_hls":
                     continue
                 out_shape = model.get_tensor_shape(graph_out_name)
                 out_dtype = model.get_tensor_datatype(graph_out_name)
-                final_node_inst = getCustomOp(final_node)
+                final_node_inst = cast("HWCustomOp", getCustomOp(final_node))
                 out_folded_shape = final_node_inst.get_folded_output_shape()
                 # take advantage of AXI stream width padding for DMA alignment
                 # (AXI streams are always padded to 8 bits)
@@ -230,23 +250,34 @@ class InsertIODMA(Transformation):
                 )
             )
             for fc_node in fc_extw_nodes:
-                fc_inst = getCustomOp(fc_node)
+                fc_inst = cast("HWCustomOp", getCustomOp(fc_node))
                 fc_w_name = fc_node.input[1]
                 w_shape = model.get_tensor_shape(fc_w_name)
+                if w_shape is None:
+                    raise FINNInternalError(f"Could not determine shape of tensor {fc_w_name}")
                 w_dtype = model.get_tensor_datatype(fc_w_name)
                 # determine the feasible interface width
-                transfer_bits = np.prod(w_shape) * w_dtype.bitwidth()
+                transfer_bits = int(np.prod(w_shape) * w_dtype.bitwidth())
                 intfwidth = math.gcd(transfer_bits, self.max_intfwidth)
                 if intfwidth % 8 != 0:
                     raise FINNUserError(
                         f"No feasible interface width for transfer size: {intfwidth}"
                     )
                 # calculate width of stream output from DMA
-                pe = get_by_name(fc_node.attribute, "PE").i
-                simd = get_by_name(fc_node.attribute, "SIMD").i
+                pe_attr = get_by_name(fc_node.attribute, "PE")
+                simd_attr = get_by_name(fc_node.attribute, "SIMD")
+                if pe_attr is None or simd_attr is None:
+                    raise FINNInternalError(
+                        f"Node {fc_node.name} is missing the PE or SIMD attribute"
+                    )
+                pe = pe_attr.i
+                simd = simd_attr.i
                 stream_width = fc_inst.get_instream_width_padded(1)
                 # make new buffer
                 weights = model.get_initializer(fc_w_name)
+                if weights is None:
+                    raise FINNInternalError(f"Tensor {fc_w_name} has no initializer")
+                weights = cast("npt.NDArray[Any]", weights)
                 iodma_mem = self.get_mem_init(weights, pe, simd)
                 model.set_initializer(fc_w_name, iodma_mem)
 
@@ -277,7 +308,7 @@ class InsertIODMA(Transformation):
                 fc_node.input[1] = fc_node_in.name
                 model.graph.node.insert(0, dma_node)
                 # expand inFIFODepths for new second input of node
-                infifo_depth = fc_inst.get_nodeattr("inFIFODepths")
+                infifo_depth = cast("list[str | int | float]", fc_inst.get_nodeattr("inFIFODepths"))
                 infifo_depth.append(8)
                 fc_inst.set_nodeattr("inFIFODepths", infifo_depth)
                 modified = True

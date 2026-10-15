@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.general import GiveUniqueNodeNames
+from typing import cast
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.attention_heads import InferSplitIntoSplitMultiHeads
@@ -23,6 +24,8 @@ from finn.util.exception import FINNUserError
 
 def _resolve_multi_dnn_mode(cfg: DataflowBuildConfig) -> tuple[str, dict | None]:
     """Read the generation mode and kwargs from the multi-DNN config JSON."""
+    if cfg.multi_dnn_config_path is None:
+        raise FINNUserError("cfg.multi_dnn_config_path must be set to use multi-DNN steps")
     with Path(cfg.multi_dnn_config_path).open() as fp_json:
         multi_dnn_config = json.load(fp_json)
     gen = multi_dnn_config.get("Generation")
@@ -44,9 +47,13 @@ def step_apply_multi_dnn(model: ModelWrapper, cfg: DataflowBuildConfig) -> Model
             model.transform(CombineOutputsChannelwise()) if combine_outputs_channelwise else model
         )
     elif mode == "SelectableWeights":
+        if kwargs is None:
+            raise FINNUserError("SelectableWeights mode requires 'kwargs' in the config")
         model = model.transform(ExtractSelectableWeights(**kwargs))
         model = model.transform(MultiDNNWrapperExposeIO())
     elif mode == "PartialReconfiguration":
+        if kwargs is None:
+            raise FINNUserError("PartialReconfiguration mode requires 'kwargs' in the config")
         model = model.transform(ApplyPartialReconfiguration(**kwargs))
         model = model.transform(MultiDNNWrapperExposeIO())
     else:
@@ -87,7 +94,7 @@ def step_maximize_concat_split_simd(
     for node in model.graph.node:
         if node.op_type == "StreamingConcat_hls":
             node_inst = getCustomOp(node)
-            channels_per_stream = node_inst.get_nodeattr("ChannelsPerStream")
+            channels_per_stream = cast("list[int]", node_inst.get_nodeattr("ChannelsPerStream"))
             valid_divisors = sorted(common_divisors(channels_per_stream))
 
             # Find PE of the first upstream MVAU node

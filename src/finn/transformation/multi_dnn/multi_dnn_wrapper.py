@@ -16,10 +16,11 @@ class MultiDNNWrapper:
 
     def __init__(self, model_dict: dict[str, str | ModelWrapper]) -> None:
         """Initialize from a dict mapping submodel names to ONNX model paths."""
-        model_dict = {key: ModelWrapper(value) for key, value in model_dict.items()}
-        if not all(isinstance(value, ModelWrapper) for value in model_dict.values()):
-            raise FINNInternalError("All multi-DNN submodels must be ModelWrapper instances")
-        self.multi_model = self._create_multi_dnn_graph(model_dict)
+        resolved_model_dict = {
+            key: value if isinstance(value, ModelWrapper) else ModelWrapper(value)
+            for key, value in model_dict.items()
+        }
+        self.multi_model = self._create_multi_dnn_graph(resolved_model_dict)
         self._collapsed = False
 
     def _create_multi_dnn_graph(self, model_dict: dict[str, ModelWrapper]) -> ModelWrapper:
@@ -91,7 +92,10 @@ class MultiDNNWrapper:
 
             # Apply to submodels
             for target in targets:
-                self[target] = step(self[target], cfgs[target])
+                submodel = self[target]
+                if submodel is None:
+                    raise FINNUserError(f"No submodel named {target!r} found in the wrapper")
+                self[target] = step(submodel, cfgs[target])
 
     def get_container_dict(self) -> dict[str, ModelWrapper]:
         """Return a dict mapping submodel names to their ModelWrapper bodies."""
@@ -106,7 +110,7 @@ class MultiDNNWrapper:
                     raise FINNInternalError(
                         f"{node.name}: expected a DNNContainer op, got {type(customop).__name__}"
                     )
-                submodel = customop.get_nodeattr("body")
+                submodel = customop.body
                 models[submodel.graph.name] = submodel
         return models
 
@@ -123,7 +127,7 @@ class MultiDNNWrapper:
                     raise FINNInternalError(
                         f"{node.name}: expected a DNNContainer op, got {type(customop).__name__}"
                     )
-                submodel = customop.get_nodeattr("body")
+                submodel = customop.body
                 if submodel.graph.name == key:
                     return submodel
         return None
@@ -141,7 +145,7 @@ class MultiDNNWrapper:
                     raise FINNInternalError(
                         f"{node.name}: expected a DNNContainer op, got {type(customop).__name__}"
                     )
-                submodel = customop.get_nodeattr("body")
+                submodel = customop.body
                 if submodel.graph.name == key:
                     customop.set_nodeattr("body", value)
                     break

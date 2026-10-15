@@ -12,6 +12,7 @@ import onnx_ir as ir
 
 # YAML for loading layout assumption/conversion configuration from file
 import yaml
+from collections.abc import Sequence
 
 # ONNX Passes provides onnxruntime-executable reference implementations of
 # custom operators which we need to transplant back into the QONNX domain
@@ -29,22 +30,37 @@ from onnx_passes.passes.base import RewriteRulePass, Transformation
 # Utility testing IR values for being constant (or initializers) tensors
 from onnx_passes.passes.util import is_constant
 
+# Pattern-matching support types: MatchResult is the return type expected of
+# RewriteRulePass.check(), Var is the type of the pattern-variable
+# placeholders passed into pattern()
+from onnxscript.rewriter.pattern import MatchResult, Var
+
 # QONNX datatype annotations for quantized tensors
 from qonnx.core.datatype import DataType
 
 # QONNX representation wrapper of ONNX models is used on the interface side to
 # bridge between the FINN and the new ONNX IR representation
 from qonnx.core.modelwrapper import ModelWrapper
+from typing import Any, cast
 
 # FINN steps are configured via a global configuration object passed into each
 # step
 from finn.builder.build_dataflow_config import DataflowBuildConfig, VerificationStepType
+from finn.util.exception import FINNInternalError
 
 # Makes custom QONNX import and inlining passes available
 
 
-def _make_pass_config(cfg: DataflowBuildConfig):
-    """Creates ONNX Passes configuration from FINN build configuration."""
+def _require_const_tensor(value: ir.Value) -> ir.TensorProtocol:
+    """Return the constant tensor bound to an IR value, raising if not constant."""
+    tensor = ir.convenience.get_const_tensor(value)
+    if tensor is None:
+        raise FINNInternalError(f"Expected {value} to be a constant tensor.")
+    return tensor
+
+
+def _make_pass_config(cfg: DataflowBuildConfig) -> dict[str, Any]:
+    """Create ONNX Passes configuration from FINN build configuration."""
     # If specified, load data layout annotations from file
     if cfg.layouts_config_file is not None:
         with cfg.layouts_config_file.open("r") as file:
@@ -74,8 +90,8 @@ def _make_pass_config(cfg: DataflowBuildConfig):
             # np.allclose(...)
             "tolerance": {"atol": cfg.verification_atol, "rtol": cfg.verification_rtol}
         }
-        if VerificationStepType.PASSES_FRONTEND in cfg._resolve_verification_steps()
-        else {},  # noqa: protected
+        if VerificationStepType.PASSES_FRONTEND in cfg._resolve_verification_steps()  # noqa: SLF001
+        else {},
         # Configuration of the model checker pass: Options according to the ONNX
         # IR reference: https://onnx.ai/ir-py/api/ir_passes_common.html
         "model_checker": {"full_check": True},
@@ -90,43 +106,45 @@ def _make_pass_config(cfg: DataflowBuildConfig):
     }
 
 
-def _apply_passes(model: ir.Model, passes: list[str], cfg: dict, state: dict):
-    """Resolves and applies the list of passes to the ONNX model."""
+def _apply_passes(
+    model: ir.Model, passes: Sequence[str], cfg: dict[str, Any], state: dict[str, Any]
+) -> ir.Model:
+    """Resolve and apply the list of passes to the ONNX model."""
     # Collect and instantiate all ONNX IR passes from the sequence by name and
     # connect each pass to the shared configuration and state dictionary
-    passes = [cls(cfg, state) for cls in collect(passes)]
+    pass_instances = [cls(cfg, state) for cls in collect(cast("list[str | type]", list(passes)))]
     # Pass manager instance which repeatedly runs the sequence of passes on
     # the model and evaluates pre- and post-conditions of each pass, e.g.,
     # for automatic verification.
-    passes = ir.passes.PassManager(passes=passes, steps=1)
+    pass_manager = ir.passes.PassManager(passes=pass_instances, steps=1)
     # Inject custom operator ONNX functions into the model before applying the
     # configured pass sequence
-    return passes(inject_custom_ops(model)).model
+    return pass_manager(inject_custom_ops(model)).model
 
 
 def prepare(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
-    """Prepares a model to be processed by ONNX Passes."""
+    """Prepare a model to be processed by ONNX Passes."""
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
-    model = ir.from_proto(model.model)
+    ir_model = ir.from_proto(model.model)
 
     # Create configuration for all passes and assume initially empty state
-    cfg, state = _make_pass_config(cfg), {}
+    pass_cfg, state = _make_pass_config(cfg), {}
     # Imports the QONNX operators (if present) into the custom domain and
     # convert data layouts at the input/output if configured
     passes = ["import-qonnx", "convert-layouts", "shape-inference", "checker"]
 
     # Apply passes and serialize the resulting ONNX IR format back to ONNX proto
     # wrapped by QONNX
-    return ModelWrapper(ir.to_proto(_apply_passes(model, passes, cfg, state)))
+    return ModelWrapper(ir.to_proto(_apply_passes(ir_model, passes, pass_cfg, state)))
 
 
 def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
-    """Applies ONNX Passes inlining transformations."""
+    """Apply ONNX Passes inlining transformations."""
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
-    model = ir.from_proto(model.model)
+    ir_model = ir.from_proto(model.model)
 
     # Create configuration for all passes and assume initially empty state
-    cfg, state = _make_pass_config(cfg), {}
+    pass_cfg, state = _make_pass_config(cfg), {}
     # Operator inlining passes and shape annotations
     passes = [
         # Expresses QONNX Quant nodes as rounding, clipping and scaling
@@ -147,74 +165,92 @@ def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
     # Apply passes and serialize the resulting ONNX IR format back to ONNX proto
     # wrapped by QONNX
-    return ModelWrapper(ir.to_proto(_apply_passes(model, passes, cfg, state)))
+    return ModelWrapper(ir.to_proto(_apply_passes(ir_model, passes, pass_cfg, state)))
 
 
 def streamline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
-    """Applies ONNX Passes streamlining transformations."""
+    """Apply ONNX Passes streamlining transformations."""
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
-    model = ir.from_proto(model.model)
+    ir_model = ir.from_proto(model.model)
 
     # Create configuration for all passes and assume initially empty state
-    cfg, state = _make_pass_config(cfg), {}
+    pass_cfg, state = _make_pass_config(cfg), {}
     # Streamlining and threshold conversion passes
     passes = ["streamline-thresholds", "streamline", "checker"]
 
     # Apply passes and serialize the resulting ONNX IR format back to ONNX proto
     # wrapped by QONNX
-    return ModelWrapper(ir.to_proto(_apply_passes(model, passes, cfg, state)))
+    return ModelWrapper(ir.to_proto(_apply_passes(ir_model, passes, pass_cfg, state)))
 
 
 class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
     """Exports MultiThreshold representation from ONNX Passes to FINN format."""
 
-    def pattern(self, op, x, thresholds, weights):
-        """Target pattern to match."""
+    def pattern(self, op: Any, x: Var, thresholds: Var, weights: Var) -> Any:
+        """Return the target pattern to match."""
         return op.MultiThreshold(x, thresholds, weights, _domain=CUSTOM_DOMAIN)
 
-    def check(self, op, x, thresholds, weights):
-        """Match condition."""
+    def check(
+        self,
+        context: Any,  # noqa: ARG002
+        x: ir.Value,  # noqa: ARG002
+        thresholds: ir.Value,
+        weights: ir.Value,
+    ) -> MatchResult:
+        """Return the match condition."""
         # Threshold parameter tensors must be constant, otherwise compatibility
         # with FINN cannot be checked...
         # TODO: Extend this to support non-constant thresholds to support
         #  runtime-writable parameters?
         if not is_constant(thresholds) or not is_constant(weights):
-            return False
+            return MatchResult().fail("Thresholds and weights must be constant.")
 
         # FINN does not support weighted, i.e., non-monotonic or non-unit step
         # thresholds, at the moment
-        if np.any(ir.convenience.get_const_tensor(weights).numpy() != 1):
-            return False
+        if np.any(_require_const_tensor(weights).numpy() != 1):
+            return MatchResult().fail("FINN does not support weighted thresholds.")
 
         # FINN only supports at most per-channel (last axis) granularity for
         # thresholds, all leading dimensions must have size 1
+        if thresholds.shape is None:
+            return MatchResult().fail("Thresholds must have a known shape.")
         if np.any(np.asarray(thresholds.shape[:-2]) != 1):
-            return False
+            return MatchResult().fail(
+                "FINN only supports at most per-channel granularity for thresholds."
+            )
 
         # Matched format is supported by QONNX and FINN
-        return True
+        return MatchResult()
 
-    def rewrite(self, op, x, thresholds, weights):
-        """Replacement pattern."""
+    def rewrite(
+        self,
+        op: Any,
+        x: ir.Value,
+        thresholds: ir.Value,
+        weights: ir.Value,  # noqa: ARG002
+    ) -> Any:
+        """Return the replacement pattern."""
         # Remove leading dimensions from the thresholds parameter tensor as
         # expected by QONNX
-        thresholds = ir.convenience.get_const_tensor(thresholds).numpy()
-        thresholds = thresholds.reshape(thresholds.shape[-2:])
+        thresholds_arr: np.ndarray = _require_const_tensor(thresholds).numpy()
+        thresholds_arr = thresholds_arr.reshape(thresholds_arr.shape[-2:])
 
         # QONNX requires per-tensor thresholds explicitly marked as 1xN shape
         # Needs to be checked and corrected here due to effects of the un-
         # broadcasting transformation
-        if len(thresholds.shape) < 2:
-            thresholds = thresholds.reshape((1, -1))
+        if len(thresholds_arr.shape) < 2:
+            thresholds_arr = thresholds_arr.reshape((1, -1))
 
         # Infer the output bitwidth based on the number of thresholds
-        out_dtype = f"UINT{int(np.ceil(np.log2(thresholds.shape[-1] + 1)))}"
+        out_dtype = f"UINT{int(np.ceil(np.log2(thresholds_arr.shape[-1] + 1)))}"
 
         # Create a new constant operator for the squeezed thresholds input
-        thresholds = op.Constant(value=ir.tensor(thresholds))
+        thresholds_const = op.Constant(value=ir.tensor(thresholds_arr))
 
         # Generate daty layouts with unknows up to the final axis, which is the
         # known channel axis
+        if x.shape is None:
+            raise FINNInternalError(f"Expected {x} to have a statically known shape.")
         layout = (len(x.shape) - 1) * "." + "C"
 
         # Custom operator attributes according to QONNX: currently QONNX
@@ -225,19 +261,21 @@ class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
 
         # Replacement pattern: MultiThreshold operator in QONNX domain without
         # weights and with explicit datatype attribute
-        return op.MultiThreshold(x, thresholds, **attributes, _domain=QONNX_DOMAIN)
+        return op.MultiThreshold(x, thresholds_const, **attributes, _domain=QONNX_DOMAIN)
 
 
-def _export_thresholds_to_finn(model: ir.Model):
-    """Exports MultiThreshold representation from ONNX Passes to FINN format."""
+def _export_thresholds_to_finn(model: ir.Model) -> ir.Model:
+    """Export MultiThreshold representation from ONNX Passes to FINN format."""
     return _ExportThresholdsToFINN(config={}, state={})(model).model
 
 
 class _ExportIm2ColToFINN(Transformation, RewriteRulePass):
     """Exports Im2Col representation from ONNX Passes to FINN format."""
 
-    def pattern(self, op, x, indices, dilations, kernel_shape, strides):
-        """Target pattern to match."""
+    def pattern(
+        self, op: Any, x: Var, indices: Var, dilations: Var, kernel_shape: Var, strides: Var
+    ) -> Any:
+        """Return the target pattern to match."""
         return op.Im2Col(
             # Proper input and auxiliary index input holding the access pattern
             x,
@@ -250,14 +288,38 @@ class _ExportIm2ColToFINN(Transformation, RewriteRulePass):
             _domain=CUSTOM_DOMAIN,
         )
 
-    def check(self, op, x, indices, dilations, kernel_shape, strides):
-        """Match condition."""
+    def check(
+        self,
+        context: Any,  # noqa: ARG002
+        x: ir.Value,
+        indices: ir.Value,  # noqa: ARG002
+        dilations: ir.Attr,  # noqa: ARG002
+        kernel_shape: ir.Attr,  # noqa: ARG002
+        strides: ir.Attr,  # noqa: ARG002
+    ) -> MatchResult:
+        """Return the match condition."""
         # QONNX needs statically annotated input shape as this will be turned
         # into an attribute of the node
-        return x.shape is not None and x.shape.is_static()
+        if x.shape is None or not x.shape.is_static():
+            return MatchResult().fail("Input shape must be statically known.")
+        return MatchResult()
 
-    def rewrite(self, op, x, indices, dilations, kernel_shape, strides):
-        """Replacement pattern."""
+    def rewrite(
+        self,
+        op: Any,
+        x: ir.Value,
+        indices: ir.Value,  # noqa: ARG002
+        dilations: ir.Attr,
+        kernel_shape: ir.Attr,
+        strides: ir.Attr,
+    ) -> Any:
+        """Return the replacement pattern."""
+        # QONNX needs statically annotated input shape as this will be turned
+        # into an attribute of the node; check() already guarantees this, this
+        # is only here to satisfy static typing
+        if x.shape is None:
+            raise FINNInternalError("Expected input shape to be statically known.")
+
         # Convert attributes to format required by QONNX
         attributes = {
             # TODO: Apparently QONNX needs the shape as a string...
@@ -278,25 +340,29 @@ class _ExportIm2ColToFINN(Transformation, RewriteRulePass):
         return op.Im2Col(x, **attributes, _domain=QONNX_DOMAIN)
 
 
-def _export_im2col_to_finn(model: ir.Model):
-    """Exports Im2Col representation from ONNX Passes to FINN format."""
+def _export_im2col_to_finn(model: ir.Model) -> ir.Model:
+    """Export Im2Col representation from ONNX Passes to FINN format."""
     return _ExportIm2ColToFINN(config={}, state={})(model).model
 
 
-def _infer_qonnx_datatypes(model: ModelWrapper):
-    """Adds QONNX datatypes to a model by inferring types from values."""
+def _infer_qonnx_datatypes(model: ModelWrapper) -> ModelWrapper:
+    """Add QONNX datatypes to a model by inferring types from values."""
     # Try inferring new datatype annotations for all tensors in the model
     for name in model.get_all_tensor_names():
         # Only apply datatype inference on initializer tensors, for all other
         # tensors there is no mechanism to tests whether all values are integer
-        if (init := model.get_initializer(name)) is not None:
-            # Do not change annotation if already annotated as some integer
-            if not model.get_tensor_datatype(name).is_integer():
-                # If all values are integers, i.e., do not change when rounding
-                # and casting to integer, infer this as an integer tensor
-                if np.all(np.asarray(np.round(init), dtype=np.int64) == init):
-                    # Set to some large integer type, should be minimized later
-                    model.set_tensor_datatype(name, DataType["INT64"])
+        init = model.get_initializer(name)
+        init_arr = np.asarray(init) if init is not None else None
+        # Do not change annotation if already annotated as some integer. If
+        # all values are integers, i.e., do not change when rounding and
+        # casting to integer, infer this as an integer tensor
+        if (
+            init_arr is not None
+            and not model.get_tensor_datatype(name).is_integer()
+            and np.all(np.asarray(np.round(init_arr), dtype=np.int64) == init_arr)
+        ):
+            # Set to some large integer type, should be minimized later
+            model.set_tensor_datatype(name, DataType["INT64"])
 
     # Potentially modified model, still as QONNX ModelWrapper, this step
     # operates in-place modifying the original
@@ -304,12 +370,12 @@ def _infer_qonnx_datatypes(model: ModelWrapper):
 
 
 def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
-    """Converts the model back to the FINN compatible format."""
+    """Convert the model back to the FINN compatible format."""
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
-    model = ir.from_proto(model.model)
+    ir_model = ir.from_proto(model.model)
 
     # Create configuration for all passes and assume initially empty state
-    cfg, state = _make_pass_config(cfg), {}
+    pass_cfg, state = _make_pass_config(cfg), {}
 
     # Cleanup passes ensuring threshold compatibility with the FINN format
     passes = [
@@ -328,23 +394,23 @@ def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
     # Apply passes sequence with configuration and global state, stay within
     # ONNX IR format here
-    model = _apply_passes(model, passes, cfg, state)
+    ir_model = _apply_passes(ir_model, passes, pass_cfg, state)
 
     # Export custom operators to the FINN representation
-    model = _export_thresholds_to_finn(model)
-    model = _export_im2col_to_finn(model)
+    ir_model = _export_thresholds_to_finn(ir_model)
+    ir_model = _export_im2col_to_finn(ir_model)
 
     # Finalize the data layout annotations and get rid of custom functions:
     # more of a workaround as qonnx execution does not understand these...
-    model = _apply_passes(model, ["absorb-layouts", "inline-functions"], {}, {})
+    ir_model = _apply_passes(ir_model, ["absorb-layouts", "inline-functions"], {}, {})
 
     # Serialize the resulting ONNX IR format back to ONNX proto wrapped by QONNX
     # and add quantization datatype annotations
-    return _infer_qonnx_datatypes(ModelWrapper(ir.to_proto(model)))
+    return _infer_qonnx_datatypes(ModelWrapper(ir.to_proto(ir_model)))
 
 
-def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
-    """Meta build step calling the ONNX Passes steps in the expected order."""
+def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Call the ONNX Passes steps in the expected order as a meta build step."""
     model = prepare(model, cfg)
     model = inline(model, cfg)
     model = streamline(model, cfg)

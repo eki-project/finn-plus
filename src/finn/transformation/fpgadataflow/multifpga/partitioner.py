@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import locale
 import mip
+import mip.exceptions
 import os
 import random
 import time
@@ -11,7 +12,7 @@ import yaml
 from abc import ABC, abstractmethod
 from mip import Model
 from pathlib import Path
-from typing import Any
+from typing import Any, Self, cast
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, MIPSolver, PartitioningStrategy
 from finn.util.basic import make_build_dir
@@ -80,7 +81,8 @@ class Partitioner(ABC):
         for attempt in range(1, max_attempts + 1):
             try:
                 return Model(name=name, solver_name=solver_name)
-            except mip.exceptions.InterfacingError as e:
+            # A retry loop: the try/except has to be inside it.
+            except mip.exceptions.InterfacingError as e:  # noqa: PERF203
                 # Only a failed Gurobi environment creation can disappear on retry (no token or
                 # no answer from the token server right now). A missing solver library or a
                 # failed model creation is a persistent setup problem.
@@ -134,7 +136,9 @@ class Partitioner(ABC):
             if not mip_gurobi.has_gurobi:
                 return None
             ffi = mip_gurobi.ffi
-            lib = mip_gurobi.grblib
+            # The functions below are declared at runtime via ffi.cdef, so the cffi stubs
+            # cannot know them.
+            lib: Any = mip_gurobi.grblib
             if not Partitioner._gurobi_diagnostics_declared:
                 ffi.cdef(
                     """
@@ -155,11 +159,14 @@ class Partitioner(ABC):
                 status = lib.GRBstartenv(env)
                 if status == 0:
                     return None
-                message = ffi.string(lib.GRBgeterrormsg(env)).decode("utf-8", errors="replace")
+                # ffi.string of a "const char *" is always bytes.
+                message = cast("bytes", ffi.string(lib.GRBgeterrormsg(env))).decode(
+                    "utf-8", errors="replace"
+                )
                 return f"Gurobi error {status}: {message.strip()}"
             finally:
                 lib.GRBfreeenv(env)
-        except Exception as e:  # noqa: BLE001 - diagnostics must never mask the original error
+        except Exception as e:  # diagnostics must never mask the original error
             log.debug(f"Could not collect Gurobi diagnostics: {e}")
             return None
 
@@ -181,7 +188,11 @@ class Partitioner(ABC):
         self.status: mip.OptimizationStatus | None = None
         self.objective_value: float | None = None
         self._resource_use_relative_cache: dict[int, dict[str, Any]] | None = None
-        self.model = self.init_model(cfg.partitioning_configuration.partition_solver)
+        # Explicitly annotated: without it, pyright's loop-narrowing infers a spurious
+        # "Model | LinExpr" union for self.model wherever a subclass does `self.model +=
+        # <constraint>` inside a for loop, since mip's LinExpr overloads comparison
+        # operators (e.g. `==`) to build constraint objects instead of returning bool.
+        self.model: mip.Model = self.init_model(cfg.partitioning_configuration.partition_solver)
         self.model.emphasis = cfg.partitioning_configuration.partition_solver_emphasis
 
         # Restore locale, as mentioned above.
@@ -216,10 +227,10 @@ class Partitioner(ABC):
             if solver._env and solver._venv_loaded:  # noqa: SLF001
                 mip_gurobi.GRBfreeenv(solver._env)  # noqa: SLF001
                 solver._env = mip_gurobi.ffi.NULL  # noqa: SLF001
-        except Exception as e:  # noqa: BLE001 - never fail because cleanup failed
+        except Exception as e:  # never fail because cleanup failed
             log.debug(f"Could not release the mip solver: {e}")
 
-    def __enter__(self) -> Partitioner:
+    def __enter__(self) -> Self:
         """Enter a ``with`` block that releases the solver at its end."""
         return self
 
@@ -233,9 +244,11 @@ class Partitioner(ABC):
         The partitioner is not part of a reference cycle, so this runs as soon as the last
         reference is dropped and returns the Gurobi license token right away.
         """
-        try:
+        # Never raise from __del__. A plain try/except instead of contextlib.suppress, since this
+        # may run during interpreter shutdown when module globals are already torn down.
+        try:  # noqa: SIM105
             self.close()
-        except Exception:  # noqa: BLE001, S110 - never raise from __del__
+        except Exception:
             pass
 
     @abstractmethod
@@ -277,7 +290,8 @@ class Partitioner(ABC):
             return None
         result = self.create_result()
         # Cache what is reported after solving, so that the solver can be released early.
-        self.objective_value = self.model.objective_value
+        # mip types it as numbers.Real; the solvers return a float.
+        self.objective_value = cast("float | None", self.model.objective_value)
         self.get_resource_use_relative()
         return result
 

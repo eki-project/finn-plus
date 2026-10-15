@@ -13,7 +13,7 @@ from mashumaro.mixins.yaml import DataClassYAMLMixin
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from finn.builder.build_dataflow_config import FpgaMemoryType, VitisOptStrategy
 from finn.templates import get_jinja_environment
@@ -266,7 +266,7 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
         """Add further lines to the connectivity section. For example to assign clocks or ports."""
         self.connectivity_section += txt + ("" if txt[-1] != "\n" else "\n")
 
-    def _get_kerneldefs(self) -> dict[str, dict[str, str]]:
+    def _get_kerneldefs(self) -> dict[str, dict[str, Any]]:
         """Use the `kernelinfo` utility to get information on all used kernels.
 
         Returns the kernel info indexed by kernel name. (Key is the kernel name,
@@ -342,7 +342,7 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
 
     def get_config_validation_errors(
         self, silent_warnings: bool = False
-    ) -> None | list[FINNVitisLinkConfigError]:
+    ) -> list[FINNVitisLinkConfigError] | None:
         """Check the configuration and if errors are found, return them. Also prints warnings."""
         errors = []
         kerneldefs = self._get_kerneldefs()

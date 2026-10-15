@@ -12,8 +12,9 @@ that fits the models runs outside of the FINN environment.
 
 import pandas as pd
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import cast
 
 _DATATYPE_RE = re.compile(r"^(U?)INT(\d+)$")
 
@@ -76,7 +77,7 @@ def _mvau_drop_broken_runs(df: pd.DataFrame) -> pd.DataFrame:
     unconnected), so their measurements are invalid."""
     if "params.backend" in df.columns and "dut_info.pe" in df.columns:
         broken = (df["params.backend"] == "rtl") & (df["dut_info.pe"] == 1)
-        return df[~broken]
+        return cast("pd.DataFrame", df[~broken])
     return df
 
 
@@ -111,7 +112,7 @@ MVAU_SPEC = OperatorFeatureSpec(
 SPECS: dict[str, OperatorFeatureSpec] = {MVAU_SPEC.name: MVAU_SPEC}
 
 
-def spec_for_op_type(op_type: str) -> Optional[OperatorFeatureSpec]:
+def spec_for_op_type(op_type: str) -> OperatorFeatureSpec | None:
     """Return the spec covering a FINN node op_type, or None if the operator is unsupported."""
     for spec in SPECS.values():
         if op_type in spec.op_types:

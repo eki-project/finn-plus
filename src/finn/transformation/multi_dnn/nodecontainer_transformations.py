@@ -7,11 +7,24 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import qonnx_make_model
+from typing import TYPE_CHECKING, cast
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
+from finn.util.exception import FINNInternalError
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.rtl.nodecontainer import NodeContainer
+
+
+def _require_metadata_prop(model: ModelWrapper, key: str) -> str:
+    """Return a required metadata prop, raising if it was not set."""
+    value = model.get_metadata_prop(key)
+    if value is None:
+        raise FINNInternalError(f"Model is missing required metadata prop {key!r}")
+    return value
 
 
 class GenerateNodeContainerStitched(Transformation):
@@ -26,7 +39,7 @@ class GenerateNodeContainerStitched(Transformation):
         """Generate stitched IP for selectable-weights and PR NodeContainer nodes."""
         for node in model.graph.node:
             if node.op_type == "NodeContainer":
-                node_inst = getCustomOp(node)
+                node_inst = cast("NodeContainer", getCustomOp(node))
                 if node_inst.get_nodeattr("multi_dnn_type") == "selectable_weights":
                     inshape = list(node_inst.get_folded_input_shape())
                     oshape = list(node_inst.get_folded_output_shape())
@@ -48,9 +61,11 @@ class GenerateNodeContainerStitched(Transformation):
                         )
                     )
                     inner_node_inst = getCustomOp(node_model.graph.node[0])
-                    vivado_stitch_proj_dir = node_model.get_metadata_prop("vivado_stitch_proj")
-                    wrapper_filename = node_model.get_metadata_prop("wrapper_filename")
-                    block_vlnv = node_model.get_metadata_prop("vivado_stitch_vlnv")
+                    vivado_stitch_proj_dir = _require_metadata_prop(
+                        node_model, "vivado_stitch_proj"
+                    )
+                    wrapper_filename = _require_metadata_prop(node_model, "wrapper_filename")
+                    block_vlnv = _require_metadata_prop(node_model, "vivado_stitch_vlnv")
                     node_inst.set_nodeattr("ipgen_path", wrapper_filename)
                     node_inst.set_nodeattr("ip_path", vivado_stitch_proj_dir + "/ip")
                     node_inst.set_nodeattr("gen_top_module", f"{node.name}_wrapper")
@@ -63,11 +78,10 @@ class GenerateNodeContainerStitched(Transformation):
                     # imports GenerateNodeContainerStitched from this module.
                     from finn.builder.build_dataflow_steps import step_set_fifo_depths
 
-                    node_inst = getCustomOp(node)
-                    bodies = node_inst.get_nodeattr("bodies")
+                    bodies = cast("int", node_inst.get_nodeattr("bodies"))
                     for body_idx in range(bodies):
                         body_attr = f"body_{body_idx}"
-                        node_model = node_inst.get_nodeattr(body_attr)
+                        node_model = cast("ModelWrapper", node_inst.get_nodeattr(body_attr))
                         # Give each PR body the same FIFO treatment as the top-level flow.
                         # GiveUniqueNodeNamesRecursive (used inside step_set_fifo_depths)
                         # already inserts a "_" between prefix and node name, so the prefix
@@ -97,11 +111,13 @@ class GenerateNodeContainerStitched(Transformation):
                         node_inst.set_nodeattr(body_attr, node_model)
                         # Set Nodecontainer attributes for stitiched IP generation
                         if body_idx == 0:
-                            vivado_stitch_proj_dir = node_model.get_metadata_prop(
-                                "vivado_stitch_proj"
+                            vivado_stitch_proj_dir = _require_metadata_prop(
+                                node_model, "vivado_stitch_proj"
                             )
-                            wrapper_filename = node_model.get_metadata_prop("wrapper_filename")
-                            block_vlnv = node_model.get_metadata_prop("vivado_stitch_vlnv")
+                            wrapper_filename = _require_metadata_prop(
+                                node_model, "wrapper_filename"
+                            )
+                            block_vlnv = _require_metadata_prop(node_model, "vivado_stitch_vlnv")
                             node_inst.set_nodeattr("ipgen_path", wrapper_filename)
                             node_inst.set_nodeattr("ip_path", vivado_stitch_proj_dir + "/ip")
                             node_inst.set_nodeattr("gen_top_module", f"{node.name}_wrapper")
@@ -118,12 +134,12 @@ class NameNodeContainerNodes(Transformation):
         for node in model.graph.node:
             if node.op_type != "NodeContainer":
                 continue
-            node_inst = getCustomOp(node)
+            node_inst = cast("NodeContainer", getCustomOp(node))
             if node_inst.get_nodeattr("multi_dnn_type") == "partial_reconfiguration":
-                bodies = node_inst.get_nodeattr("bodies")
+                bodies = cast("int", node_inst.get_nodeattr("bodies"))
                 for body_idx in range(bodies):
                     body_attr = f"body_{body_idx}"
-                    body_model = node_inst.get_nodeattr(body_attr)
+                    body_model = cast("ModelWrapper", node_inst.get_nodeattr(body_attr))
                     prefix = f"{node.name}_body_{body_idx}_"
 
                     optype_count = {}

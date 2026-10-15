@@ -219,7 +219,8 @@ class AuroraPartitioner(Partitioner):
         }
         for node in modelwrapper.graph.node:
             self.model += self.chosen_device[node.name] == xsum(
-                self.devices[node.name][device] * device for device in range(self.pcfg.num_fpgas)
+                self.devices[node.name][device] * device  # type: ignore
+                for device in range(self.pcfg.num_fpgas)
             )
 
         # Custom constraints
@@ -307,10 +308,12 @@ class AuroraPartitioner(Partitioner):
                         <= self.devices[node.name][device]
                     )
                     self.model += self.device_switch[device][node.name][suc.name] <= (
-                        1 - self.devices[suc.name][device]
+                        1 - self.devices[suc.name][device]  # type: ignore
                     )
                     self.model += self.device_switch[device][node.name][suc.name] >= (
-                        self.devices[node.name][device] + (1 - self.devices[suc.name][device]) - 1
+                        self.devices[node.name][device]
+                        + (1 - self.devices[suc.name][device])  # type: ignore
+                        - 1
                     )
 
         # Finally calculating the conections per device
@@ -321,13 +324,15 @@ class AuroraPartitioner(Partitioner):
         for device in range(self.pcfg.num_fpgas):
             self.model += self.connections_per_device[device] == xsum(
                 self.device_switch[device][node.name][suc.name]
-                for suc in self.get_successors(node)
                 for node in modelwrapper.graph.node
+                for suc in self.get_successors(node)
             )
 
         # Limit the number of connections per device (depends on the FPGAs QSFP ports)
         for device in range(self.pcfg.num_fpgas):
-            self.model += self.connections_per_device[device] <= self.pcfg.ports_per_device
+            self.model += (
+                self.connections_per_device[device] <= self.pcfg.ports_per_device  # type: ignore
+            )
 
         # Consecutive nodes must be on consecutive devices
         self.device_diff: dict[str, dict[str, mip.Var]] = {}
@@ -345,8 +350,8 @@ class AuroraPartitioner(Partitioner):
                     self.device_diff[node.name][suc.name]
                     >= self.chosen_device[suc.name] - self.chosen_device[node.name]
                 )
-                self.model += self.device_diff[node.name][suc.name] <= 1
-                self.model += self.device_diff[node.name][suc.name] >= 0
+                self.model += self.device_diff[node.name][suc.name] <= 1  # type: ignore
+                self.model += self.device_diff[node.name][suc.name] >= 0  # type: ignore
 
         # Setting topology requirements
         input_nodes = [
@@ -431,7 +436,7 @@ class AuroraPartitioner(Partitioner):
                     self.model += self.resource_use_int[device][resource_name] == xsum(
                         [
                             self.devices[node.name][device]
-                            * self.resource_estimates[node.name][resource_name]
+                            * self.resource_estimates[node.name][resource_name]  # type: ignore
                             for node in modelwrapper.graph.node
                             if resource_name in self.resource_estimates[node.name].keys()
                         ]
@@ -489,7 +494,7 @@ class AuroraPartitioner(Partitioner):
                         ]
                     )
                     # Needs to be really small so the model is still valid for very small designs
-                    >= 0.0000001
+                    >= 0.0000001  # type: ignore
                 )
 
             # The min resource diff to ideal on a device, regardless of resource type
