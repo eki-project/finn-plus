@@ -1,10 +1,10 @@
 """Helpers for reading metadata out of the HWH file accompanying a bitfile."""
 
-import os
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 
-def get_clk_wiz_params_from_hwh(bitfile_name):
+def get_clk_wiz_params_from_hwh(bitfile_name: str) -> dict[str, str]:
     """Parse the HWH file to get clk_wiz_0 parameters.
 
     PYNQ's ip_dict only contains IPs with an AXI-Lite slave interface, so the
@@ -15,8 +15,8 @@ def get_clk_wiz_params_from_hwh(bitfile_name):
     is missing, unparsable, or contains no Clocking Wizard, so that callers can fall back to
     their configured frequency via ``dict.get(..., default)`` without a None check.
     """
-    hwh_path = os.path.splitext(bitfile_name)[0] + ".hwh"
-    if not os.path.exists(hwh_path):
+    hwh_path = Path(bitfile_name).with_suffix(".hwh")
+    if not hwh_path.exists():
         return {}
     try:
         tree = ET.parse(hwh_path)

@@ -349,14 +349,13 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
 
         # Check kernel instantiations
         for kernel, cu in self.nk:
-            if kernel not in kerneldefs.keys():
-                if not silent_warnings:
-                    log.warning(
-                        f"Kernel {kernel} (CU: {cu}) has no matching definition in "
-                        f"the provided xo files. This may be caused by an error "
-                        f"when loading the kernel definitons, or because you forgot "
-                        f"to add the matching xo file to the configuration."
-                    )
+            if kernel not in kerneldefs and not silent_warnings:
+                log.warning(
+                    f"Kernel {kernel} (CU: {cu}) has no matching definition in "
+                    f"the provided xo files. This may be caused by an error "
+                    f"when loading the kernel definitons, or because you forgot "
+                    f"to add the matching xo file to the configuration."
+                )
 
         # Check connections
         for cu_sender, receivers in self.sc.items():
@@ -568,7 +567,8 @@ class BuildBasicVitisLinkConfig(Transformation):
         # Create a config for every device
         for node in model.graph.node:
             device = get_device_id(node)
-            assert device is not None
+            if not (device is not None):
+                raise FINNInternalError("No device resolved for the linking configuration")
             if device not in configs:
                 configs[device] = VitisLinkConfiguration(
                     config_path=Path(make_build_dir(f"vitis_link_device_{device}_")) / "config.txt",

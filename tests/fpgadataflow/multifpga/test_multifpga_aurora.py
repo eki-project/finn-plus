@@ -12,7 +12,6 @@ import os
 import types
 import yaml
 from copy import deepcopy
-from dataclasses import dataclass
 from fpgadataflow.multifpga.utils import (
     MockGraph,
     MockModelWrapper,
@@ -21,10 +20,8 @@ from fpgadataflow.multifpga.utils import (
     mock_model,
 )
 from pathlib import Path
-from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.custom_op.registry import getCustomOp
 from test_multifpga_sdp_creation import create_sdp_ready_model_no_branches
-from typing import Final, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
@@ -45,20 +42,13 @@ from finn.transformation.fpgadataflow.multifpga.create_multi_sdp import (
 from finn.transformation.fpgadataflow.multifpga.create_network_metadata import CreateNetworkMetadata
 from finn.transformation.fpgadataflow.multifpga.partition_model import PartitionForMultiFPGA
 from finn.util.basic import make_build_dir
-from finn.util.exception import (
-    FINNError,
-    FINNMultiFPGAConfigError,
-    FINNMultiFPGAError,
-    FINNMultiFPGAPartitionerError,
-    FINNMultiFPGAUserError,
-)
+from finn.util.exception import FINNError, FINNMultiFPGAPartitionerError
 from finn.util.fpgadataflow import get_device_id
 from finn.util.platforms import platforms
-from finn.util.resources import (
-    ResourceEstimates,
-    available_resources_on_platform,
-    get_estimated_model_resources,
-)
+from finn.util.resources import available_resources_on_platform, get_estimated_model_resources
+
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
 
 
 @pytest.mark.auroraflow
@@ -228,9 +218,9 @@ class TestAuroraFlowPartitioning:
         Considers the number of devices, as well as the max utilization percentage.
         """
         assert cfg.partitioning_configuration is not None, "No partitioning configuration found!"
-        assert cfg.board is not None, (
-            "Partitioning requires the 'board' " "parameter to be set in the dataflow config."
-        )
+        assert (
+            cfg.board is not None
+        ), "Partitioning requires the 'board' parameter to be set in the dataflow config."
         resource_estimates = get_estimated_model_resources(
             model,
             cfg._resolve_fpga_part(),  # noqa
@@ -285,7 +275,7 @@ class TestAuroraFlowPartitioning:
         board: str,
         max_util: float,
         ideal_util: float,
-        pytestconfig: pytest.Config,
+        pytestconfig: pytest.Config,  # noqa: ARG002
     ) -> None:
         """Test some known model - fpga combinations that should
         be solveable.

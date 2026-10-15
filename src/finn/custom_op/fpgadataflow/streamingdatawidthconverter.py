@@ -33,6 +33,7 @@ import numpy as np
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import TYPE_CHECKING, cast
 
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
@@ -41,26 +42,25 @@ if TYPE_CHECKING:
     from onnx import GraphProto
     from qonnx.core.modelwrapper import ModelWrapper
 
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
+
 # does not do anything at the ONNX node-by-node level, and input-output
 # tensor shapes are the same. performs data width conversion at the rtlsim level
 
 
+@register_custom_op
 class StreamingDataWidthConverter(HWCustomOp):
     """Abstraction layer for HW implementation of StreamingDataWidthConverter."""
 
-    def get_nodeattr_types(
-        self,
-    ) -> dict[
-        str,
-        tuple[str, bool, int | float | str | bool | np.ndarray | list]
-        | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
-    ]:
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs: dict[
-            str,
-            tuple[str, bool, int | float | str | bool | np.ndarray | list]
-            | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
-        ] = {
+        my_attrs: NodeAttrTypes = {
             # shape of input tensor
             "inShape": ("ints", True, []),
             # shape of output tensor, usually the same as inShape,
@@ -93,8 +93,8 @@ class StreamingDataWidthConverter(HWCustomOp):
         oshape = cast("list[int]", self.get_nodeattr("outShape"))
         return oshape
 
-    def _folded_shape_for_width(self, width):
-        """Compute folded shape for a given stream width.
+    def _folded_shape_for_width(self, width: int) -> tuple[int, ...]:
+        """Compute the folded shape for a given stream width.
 
         When the number of channels divides evenly by the number of elements
         per stream word, returns shape[:-1] + [channels // elems, elems].
@@ -102,35 +102,46 @@ class StreamingDataWidthConverter(HWCustomOp):
         When channels don't divide evenly (e.g., wide streams spanning multiple
         spatial dimensions), falls back to flattening the entire tensor:
         (total_elems // elems, elems).
+
+        Args:
+            width: Stream width in bits.
+
+        Returns:
+            tuple[int, ...]: The folded tensor shape.
         """
         shape = self.get_normal_input_shape()
         bits = self.get_input_datatype().bitwidth()
-        assert (
-            width % bits == 0
-        ), """DWC stream width must be divisible by
-        input element bitwidth"""
+        if width % bits != 0:
+            raise FINNInternalError(
+                f"DWC stream width {width} must be divisible by input element bitwidth {bits}"
+            )
         elems = int(width // bits)
         channels = shape[-1]
         if channels % elems == 0:
-            return tuple(shape[:-1] + [int(channels // elems), elems])
+            return (*shape[:-1], int(channels // elems), elems)
 
         total_elems = int(np.prod(shape))
-        assert (
-            total_elems % elems == 0
-        ), "DWC stream width with %d elements does not divide tensor shape %s" % (elems, str(shape))
+        if total_elems % elems != 0:
+            raise FINNInternalError(
+                f"DWC stream width with {elems} elements does not divide tensor shape {shape}"
+            )
         return (int(total_elems // elems), elems)
 
-    def get_folded_input_shape(self, ind=0):
-        """Return the folded input shape, i.e. the input tensor shape with the
-        last axis split into (words, elements per input word)."""
-        iwidth = self.get_nodeattr("inWidth")
-        return self._folded_shape_for_width(iwidth)
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
+        """Return the folded input shape.
 
-    def get_folded_output_shape(self, ind=0):
-        """Return the folded output shape, i.e. the output tensor shape with the
-        last axis split into (words, elements per output word)."""
-        owidth = self.get_nodeattr("outWidth")
-        return self._folded_shape_for_width(owidth)
+        The folded input shape is the input tensor shape with the last axis split into
+        (words, elements per input word).
+        """
+        return self._folded_shape_for_width(cast("int", self.get_nodeattr("inWidth")))
+
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
+        """Return the folded output shape.
+
+        The folded output shape is the output tensor shape with the last axis split into
+        (words, elements per output word).
+        """
+        return self._folded_shape_for_width(cast("int", self.get_nodeattr("outWidth")))
 
     def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return instream width."""
@@ -173,8 +184,8 @@ class StreamingDataWidthConverter(HWCustomOp):
         return info_messages
 
     def execute_node(
-        self, context: dict[str, np.ndarray], graph: "GraphProto"
-    ) -> None:  # noqa: ARG002
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
         """Execute node."""
         node = self.onnx_node
         exp_shape = self.get_normal_input_shape()

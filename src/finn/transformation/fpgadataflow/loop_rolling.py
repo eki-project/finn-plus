@@ -29,39 +29,48 @@ from typing import TYPE_CHECKING, cast
 
 from finn.util import onnxscript_helpers as osh
 from finn.util.basic import make_build_dir
-from finn.util.exception import FINNUserError
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
+    import numpy.typing as npt
+
     from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
 
 
-def get_constant_from_value(value):
+def get_constant_from_value(value: ir.Value) -> np.ndarray | None:
     """Get the constant value of a tensor."""
     # Handle input and/or inititalizer values
-    if value.producer() is None:
-        return value.const_value.numpy()
-    if value.producer().op_type == "Constant":
-        return value.producer().attributes["value"].value.numpy()
+    producer = value.producer()
+    if producer is None:
+        return cast("ir.TensorProtocol", value.const_value).numpy()
+    if producer.op_type == "Constant":
+        return producer.attributes["value"].value.numpy()
+    return None
 
 
-def same_values(inputs):
+def same_values(inputs: list[ir.Value]) -> bool:
     """Check if all inputs have the same constant value."""
     if not inputs:
         return False
 
     first_value = get_constant_from_value(inputs[0])
 
-    for inp in inputs[1:]:
-        if not np.array_equal(first_value, get_constant_from_value(inp)):
-            return False
+    # A non-constant input yields None; np.array_equal handles that like the untyped
+    # original did, hence the casts.
+    return all(
+        np.array_equal(
+            cast("npt.ArrayLike", first_value), cast("npt.ArrayLike", get_constant_from_value(inp))
+        )
+        for inp in inputs[1:]
+    )
 
-    return True
 
-
-def build_loop_replace_pattern(graph, LoopBody):
+def build_loop_replace_pattern(
+    graph: ir.Graph, loop_body: "LoopBodyTemplate"
+) -> osh.ReplacementPatternGraph:
     """Build a replacement pattern graph for a repeated loop body."""
-    nodes = osh.find_nodes_of_optype(graph, LoopBody.function.name)
+    nodes = osh.find_nodes_of_optype(graph, loop_body.function.name)
     iterations = len(nodes)
 
     graph_nodes = []
@@ -69,8 +78,8 @@ def build_loop_replace_pattern(graph, LoopBody):
 
     graph_inputs = []
     const_indexes = []
-    for i, LoopInputType in enumerate(LoopBody.signature):
-        if LoopInputType == LoopBodyInputType.PARAMETER:
+    for i, loop_input_type in enumerate(loop_body.signature):
+        if loop_input_type == LoopBodyInputType.PARAMETER:
             # validate parameter shapes
             g_shape = nodes[0].inputs[i].shape
             for node in nodes:
@@ -79,7 +88,7 @@ def build_loop_replace_pattern(graph, LoopBody):
                         f"LoopRolling: Index {i} expected shape {g_shape}, "
                         f"got {node.inputs[i].shape}."
                     )
-                    raise Exception(
+                    raise FINNUserError(
                         "LoopRolling: all loop-body initializers of the same index "
                         "must have the same shape."
                     )
@@ -124,8 +133,12 @@ def build_loop_replace_pattern(graph, LoopBody):
 
             # Add mlo_max_iter attribute to loop input consumers
             # assuming that each input only has a single consumer
-            inp = LoopBody.function.inputs[i]
-            assert len(inp.consumers()) == 1
+            inp = loop_body.function.inputs[i]
+            if len(inp.consumers()) != 1:
+                raise FINNInternalError(
+                    f"LoopRolling: expected exactly one consumer for {inp.name}, "
+                    f"got {len(inp.consumers())}"
+                )
             consumer = inp.consumers()[0]
             if osh.is_fpgadataflow_onnxir_node(consumer):
                 consumer.attributes["mlo_max_iter"] = ir.Attr(
@@ -134,7 +147,7 @@ def build_loop_replace_pattern(graph, LoopBody):
                 consumer.attributes["inFIFODepths"] = ir.Attr(
                     "inFIFODepths", ir.AttributeType.INTS, [2, 2]
                 )
-        elif LoopInputType == LoopBodyInputType.CONSTANT:
+        elif loop_input_type == LoopBodyInputType.CONSTANT:
             const_indexes.append(i)
 
             # if input is constant push down into loop body graph
@@ -163,34 +176,34 @@ def build_loop_replace_pattern(graph, LoopBody):
                 outputs=[new_const_prod_value],
             )
             # add new nodes to loop body
-            LoopBody.function.append(new_const_prod_node)
-            LoopBody.function.sort()
+            loop_body.function.append(new_const_prod_node)
+            loop_body.function.sort()
 
-            for usage in LoopBody.function.inputs[i].uses():
+            for usage in loop_body.function.inputs[i].uses():
                 usage.node.replace_input_with(usage.idx, new_const_prod_value)
 
-            LoopBody.function.sort()
+            loop_body.function.sort()
 
-        elif LoopInputType == LoopBodyInputType.ACTIVATION:
+        elif loop_input_type == LoopBodyInputType.ACTIVATION:
             cinp = osh.vdisconnect(copy.copy(nodes[0].inputs[i]))
             graph_inputs.append(cinp)
             loop_inputs.append(cinp)
 
     for i in reversed(const_indexes):
-        del LoopBody.function.inputs[i]
-        del LoopBody.signature[i]
+        del loop_body.function.inputs[i]
+        del loop_body.signature[i]
 
     loop_outputs = []
     graph_outputs = []
-    for out in LoopBody.function.outputs:
+    for out in loop_body.function.outputs:
         output = osh.vdisconnect(copy.copy(out))
         loop_outputs.append(output)
         graph_outputs.append(output)
 
-    g_loop_body = LoopBody.function._graph
+    g_loop_body = loop_body.function._graph
     odt = g_loop_body.outputs[0].meta["quant_parameter_tensor_names"]["finn_datatype"]
     idt = odt
-    body_attr = ir.Attr(name="body", type=ir.AttributeType.GRAPH, value=LoopBody.function._graph)
+    body_attr = ir.Attr(name="body", type=ir.AttributeType.GRAPH, value=loop_body.function._graph)
     backend_attr = ir.Attr(name="backend", type=ir.AttributeType.STRING, value="fpgadataflow")
     iteration = ir.Attr(name="iteration", type=ir.AttributeType.INT, value=iterations)
     inputdatatype_attr = ir.Attr(name="inputDataType", type=ir.AttributeType.STRING, value=idt)
@@ -221,7 +234,7 @@ class LoopExtraction(Transformation):
 
     def __init__(
         self, hierarchy_list: list[list[str]], loop_body_template_path: str | Path | None = None
-    ):
+    ) -> None:
         """Initialize with a list of module hierarchies to extract and the path the extracted
         loop body template is saved to (defaults to a fresh build directory)."""
         super().__init__()
@@ -230,12 +243,13 @@ class LoopExtraction(Transformation):
             loop_body_template_path = Path(template_dir) / "loop-body-template.onnx"
         self.loop_body_template_path = str(loop_body_template_path)
 
-        assert isinstance(hierarchy_list, list), "Hierarchy list must be a list of strings"
+        if not isinstance(hierarchy_list, list):
+            raise FINNUserError("Hierarchy list must be a list of strings")
         for hlist in hierarchy_list:
-            assert isinstance(hlist, list), "Each hierarchy entry must be a list of strings"
-            assert all(
-                isinstance(item, str) for item in hlist
-            ), "All items in hierarchy sub-list must be strings"
+            if not isinstance(hlist, list):
+                raise FINNUserError("Each hierarchy entry must be a list of strings")
+            if not all(isinstance(item, str) for item in hlist):
+                raise FINNUserError("All items in hierarchy sub-list must be strings")
         self.hierarchy_list = hierarchy_list
         self.loop_body_template = None
 
@@ -246,10 +260,10 @@ class LoopExtraction(Transformation):
         model_ir = onnxscript.ir.serde.deserialize_model(model.model)
         graph = model_ir.graph
 
-        P = osh.PytorchHierarchyNode()
+        hierarchy_tree = osh.PytorchHierarchyNode()
         unadded_nodes = []
         for node in graph._nodes:
-            added = P.add_node(node)
+            added = hierarchy_tree.add_node(node)
             if not added:
                 unadded_nodes.append(node)
         # Handle the nodes that have no metadata from PyTorch
@@ -275,13 +289,16 @@ class LoopExtraction(Transformation):
                 "pkg.torch.onnx.class_hierarchy", ""
             )
 
-            assert P.add_node(node)
+            if not hierarchy_tree.add_node(node):
+                raise FINNInternalError(
+                    f"LoopExtraction: could not place node {node.name} in the hierarchy tree"
+                )
         graph.sort()
         for i, hierarchy in enumerate(self.hierarchy_list):
             if i == 0:
-                nodes = P.get_nodes(hierarchy)
+                nodes = hierarchy_tree.get_nodes(hierarchy)
             else:
-                nodes += P.get_nodes(hierarchy)
+                nodes += hierarchy_tree.get_nodes(hierarchy)
 
         loop_body_graph_view = osh.SubGraphView(graph, "loop-body", nodes)
         loop_body_model = onnxscript.ir.Model(
@@ -312,39 +329,44 @@ class LoopExtraction(Transformation):
         return (model, False)
 
 
-def add_finn_datatype_if_needed(tensor):
+def add_finn_datatype_if_needed(tensor: ir.Value) -> None:
     """Ensure the tensor metadata includes a FINN datatype."""
     if not tensor_has_finn_datatype(tensor):
         if "quant_parameter_tensor_names" not in tensor.meta:
             tensor.meta["quant_parameter_tensor_names"] = {}
         tensor.meta["quant_parameter_tensor_names"][
             "finn_datatype"
-        ] = osh.tensor_type_to_finn_datatype_string(tensor.type)
+        ] = osh.tensor_type_to_finn_datatype_string(cast("ir.TensorType", tensor.type))
 
 
-def validate_loop_type(loop_node: ir.Node):
+def validate_loop_type(loop_node: ir.Node) -> None:
     """Validate that the node is a FINNLoop."""
-    assert loop_node.op_type == "FINNLoop", "Node is not a FINNLoop"
+    if loop_node.op_type != "FINNLoop":
+        raise FINNInternalError(f"Node is not a FINNLoop, got {loop_node.op_type}")
 
 
-def validate_loop_attributes(loop_node: ir.Node):
+def validate_loop_attributes(loop_node: ir.Node) -> None:
     """Validate required attributes on the FINNLoop node."""
     required_attrs = ["body", "backend", "iteration", "inputDataType", "outputDataType"]
     for attr in required_attrs:
-        assert attr in loop_node.attributes, f"FINNLoop node missing required attribute: {attr}"
-    assert (
-        loop_node.attributes["backend"].value == "fpgadataflow"
-    ), "FINNLoop backend attribute must be 'fpgadataflow'"
-    assert (
+        if attr not in loop_node.attributes:
+            raise FINNInternalError(f"FINNLoop node missing required attribute: {attr}")
+    if loop_node.attributes["backend"].value != "fpgadataflow":
+        raise FINNInternalError("FINNLoop backend attribute must be 'fpgadataflow'")
+    if not (
         isinstance(loop_node.attributes["iteration"].value, int)
         and loop_node.attributes["iteration"].value > 0
-    ), "FINNLoop iteration attribute must be a positive integer"
+    ):
+        raise FINNUserError("FINNLoop iteration attribute must be a positive integer")
     idt = loop_node.attributes["inputDataType"].value
     odt = loop_node.attributes["outputDataType"].value
-    assert idt == odt, "FINNLoop inputDataType and outputDataType must be the same"
+    if idt != odt:
+        raise FINNUserError(
+            f"FINNLoop inputDataType and outputDataType must be the same, got {idt} != {odt}"
+        )
 
 
-def tensor_has_finn_datatype(tensor):
+def tensor_has_finn_datatype(tensor: ir.Value) -> bool:
     """Return True if the tensor metadata includes a FINN datatype."""
     return (
         "quant_parameter_tensor_names" in tensor.meta
@@ -352,52 +374,56 @@ def tensor_has_finn_datatype(tensor):
     )
 
 
-def finn_datatypes_match(datatype_a, datatype_b):
+def finn_datatypes_match(datatype_a: str, datatype_b: str) -> bool:
     """Return True when two FINN datatype strings match."""
     return datatype_a == datatype_b
 
 
-def tensor_types_match(value_a, value_b):
+def tensor_types_match(value_a: ir.Value, value_b: ir.Value) -> bool:
     """Return True when two IR values have the same type."""
     return value_a.type == value_b.type
 
 
-def tensor_shapes_match(value_a, value_b):
+def tensor_shapes_match(value_a: ir.Value, value_b: ir.Value) -> bool:
     """Return True when two IR values have the same shape."""
     return value_a.shape == value_b.shape
 
 
-def validate_loop_io_tensor_pair(tensor_a, tensor_b):
+def validate_loop_io_tensor_pair(tensor_a: ir.Value, tensor_b: ir.Value) -> None:
     """Validate type, shape, and FINN datatype alignment for a tensor pair."""
-    assert tensor_types_match(
-        tensor_a, tensor_b
-    ), f"FINNLoop body activation input/output type mismatch {tensor_a.type} != {tensor_b.type}"
-    assert tensor_shapes_match(
-        tensor_a, tensor_b
-    ), f"FINNLoop body activation input/output shape mismatch {tensor_a.shape} != {tensor_b.shape}"
+    if not tensor_types_match(tensor_a, tensor_b):
+        raise FINNInternalError(
+            f"FINNLoop body activation input/output type mismatch "
+            f"{tensor_a.type} != {tensor_b.type}"
+        )
+    if not tensor_shapes_match(tensor_a, tensor_b):
+        raise FINNInternalError(
+            f"FINNLoop body activation input/output shape mismatch "
+            f"{tensor_a.shape} != {tensor_b.shape}"
+        )
 
     add_finn_datatype_if_needed(tensor_a)
     add_finn_datatype_if_needed(tensor_b)
 
-    assert finn_datatypes_match(
-        tensor_a.meta["quant_parameter_tensor_names"]["finn_datatype"],
-        tensor_b.meta["quant_parameter_tensor_names"]["finn_datatype"],
-    ), f"""FINNLoop body activation input/output finn_datatype mismatch
-       {tensor_a.meta["quant_parameter_tensor_names"]["finn_datatype"]} !=
-       {tensor_b.meta["quant_parameter_tensor_names"]["finn_datatype"]}"""
+    dt_a = tensor_a.meta["quant_parameter_tensor_names"]["finn_datatype"]
+    dt_b = tensor_b.meta["quant_parameter_tensor_names"]["finn_datatype"]
+    if not finn_datatypes_match(dt_a, dt_b):
+        raise FINNInternalError(
+            f"FINNLoop body activation input/output finn_datatype mismatch {dt_a} != {dt_b}"
+        )
 
 
-def validate_loop_io_tensors(loop_node: ir.Node):
+def validate_loop_io_tensors(loop_node: ir.Node) -> None:
     """Validate FINNLoop input/output tensor pairs."""
     # Validate that loop body activation input and output types and shapes match
     body_graph = loop_node.attributes["body"].value
     for i in range(len(body_graph.outputs)):
-        validate_loop_io_tensor_pair(loop_node.inputs[i], body_graph.inputs[i])
+        validate_loop_io_tensor_pair(cast("ir.Value", loop_node.inputs[i]), body_graph.inputs[i])
         validate_loop_io_tensor_pair(loop_node.outputs[i], body_graph.outputs[i])
         validate_loop_io_tensor_pair(body_graph.inputs[i], body_graph.outputs[i])
 
 
-def validate_loop_node(loop_node: ir.Node):
+def validate_loop_node(loop_node: ir.Node) -> None:
     """Validate FINNLoop node structure and metadata."""
     validate_loop_type(loop_node)
     validate_loop_attributes(loop_node)
@@ -414,7 +440,7 @@ class LoopBodyInputType(Enum):
     ITERATOR = 4
     CONDITION = 5
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Return the enum name as a string."""
         return self.name
 
@@ -422,7 +448,7 @@ class LoopBodyInputType(Enum):
 class LoopBodyTemplate:
     """Encapsulate loop body graph patterns and function templates."""
 
-    def __init__(self, filename):
+    def __init__(self, filename: str | Path) -> None:
         """Load a loop body template from disk."""
         self.load(filename)
         self._ir_graph.sort()
@@ -431,13 +457,13 @@ class LoopBodyTemplate:
         self.function_replace = self._build_function_replace_pattern()
         self.signature = [LoopBodyInputType.UNDEFINED] * len(self._ir_graph.inputs)
 
-    def _build_ir_function(self):
+    def _build_ir_function(self) -> ir.Function:
         """Build an IR function from the loop body graph."""
         return ir.Function(
             domain="loop", name="fn_" + self._ir_graph.name, graph=self._ir_graph, attributes=[]
         )
 
-    def _build_function_replace_pattern(self):
+    def _build_function_replace_pattern(self) -> osh.ReplacementPatternGraph:
         """Build a replacement pattern that calls the loop body function."""
         inputs = [osh.vdisconnect(copy.copy(x)) for x in self._ir_graph.inputs]
         outputs = [osh.vdisconnect(copy.copy(x)) for x in self._ir_graph.outputs]
@@ -454,7 +480,9 @@ class LoopBodyTemplate:
 
         return osh.ReplacementPatternGraph(g)
 
-    def build_function_match_pattern(self, graph, use_iteration_ext=True):
+    def build_function_match_pattern(
+        self, graph: ir.Graph, use_iteration_ext: bool = True
+    ) -> tuple[osh.GraphPattern, list[ir.Node]]:
         """Build a pattern that matches inlined loop body instances."""
         graph.sort()
         nodes = osh.find_nodes_of_optype(graph, self.function.name)
@@ -471,28 +499,28 @@ class LoopBodyTemplate:
 
         return (pattern, nodes)
 
-    def load(self, filename):
+    def load(self, filename: str | Path) -> None:
         """Load the loop body template from an ONNX file."""
         self._model_proto = onnx.load(filename)
         self._ir_model = ir.serde.deserialize_model(self._model_proto)
         self._ir_graph = self._ir_model.graph
 
-    def update(self):
+    def update(self) -> None:
         """Refresh the serialized model proto from the IR graph."""
         self._ir_model = ir.Model(self._ir_graph, ir_version=self._model_proto.ir_version)
         self._model_proto = ir.serde.serialize_model(self._ir_model)
 
-    def save(self, filename):
+    def save(self, filename: str | Path) -> None:
         """Save the loop body template to an ONNX file."""
         self.update()
         onnx.save(self._model_proto, filename)
 
-    def set_signature_index(self, index, stype):
+    def set_signature_index(self, index: int, stype: "LoopBodyInputType") -> None:
         """Set the input signature type at the given index."""
         self.signature[index] = stype
 
     @property
-    def output_signature(self):
+    def output_signature(self) -> list["LoopBodyInputType"]:
         """Return the output signature (without iterator/condition inputs)."""
         # The output signature is the same as the input signature but without the iteration input
         return self.signature[1:]
@@ -501,7 +529,7 @@ class LoopBodyTemplate:
 class LoopRolling(Transformation):
     """Boilerplate Transformation for loop rolling in fpgadataflow."""
 
-    def __init__(self, loop_body_template):
+    def __init__(self, loop_body_template: "LoopBodyTemplate") -> None:
         """Initialize the transformation with a loop body template."""
         super().__init__()
         self.loop_body_template = loop_body_template
@@ -510,7 +538,7 @@ class LoopRolling(Transformation):
         """Apply loop rolling to repeated function calls."""
         model_ir = onnxscript.ir.serde.deserialize_model(model.model)
         graph = model_ir.graph
-        LoopBody = self.loop_body_template
+        loop_body = self.loop_body_template
 
         #################################
         # I/O Normalization for Loop Body
@@ -520,7 +548,7 @@ class LoopRolling(Transformation):
         # get the consecutive node layers
         # TODO: write a check to ensure that there is only one
         #       set of consecutive nodes.
-        nodes = osh.find_nodes_of_optype(graph, LoopBody.function.name)
+        nodes = osh.find_nodes_of_optype(graph, loop_body.function.name)
         # Loop through all the nodes (execept the last one) and
         # identify the input to output pairs
 
@@ -543,17 +571,29 @@ class LoopRolling(Transformation):
 
             for a_out in a_node.outputs:
                 # Require that outputs of a have a single use of b_node
-                assert len(a_out.uses()) == 1
-                assert a_out.uses()[0][0] is b_node
+                if len(a_out.uses()) != 1:
+                    raise FINNInternalError(
+                        f"LoopRolling: loop-body output {a_out.name} must have exactly "
+                        f"one use, got {len(a_out.uses())}"
+                    )
+                if a_out.uses()[0][0] is not b_node:
+                    raise FINNInternalError(
+                        f"LoopRolling: loop-body output {a_out.name} must feed the next "
+                        f"loop-body instance"
+                    )
 
                 a_use_index = a_out.uses()[0][1]
                 input_swap = (a_out.index(), a_use_index)
                 if i == 0:
                     # add swaps from the first node
                     input_swaps.append(input_swap)
-                else:
-                    # check that they are the same in the rest
-                    assert input_swap in input_swaps
+                # check that they are the same in the rest
+                elif input_swap not in input_swaps:
+                    raise FINNInternalError(
+                        f"LoopRolling: inconsistent activation input ordering "
+                        f"across loop-body instances ({input_swap} not in "
+                        f"{input_swaps})"
+                    )
 
         # apply the input swaps to each nodes
         for node in nodes:
@@ -567,11 +607,11 @@ class LoopRolling(Transformation):
         # mark swapped nodes as activations
         activations = 0
         for swap in input_swaps:
-            a = LoopBody.function.inputs[swap[0]]
-            b = LoopBody.function.inputs[swap[1]]
-            LoopBody.function.inputs[swap[0]] = b
-            LoopBody.function.inputs[swap[1]] = a
-            LoopBody.signature[swap[0]] = LoopBodyInputType.ACTIVATION
+            a = loop_body.function.inputs[swap[0]]
+            b = loop_body.function.inputs[swap[1]]
+            loop_body.function.inputs[swap[0]] = b
+            loop_body.function.inputs[swap[1]] = a
+            loop_body.signature[swap[0]] = LoopBodyInputType.ACTIVATION
             activations += 1
 
         # Next Label Inputs according to how they are produced.
@@ -586,22 +626,24 @@ class LoopRolling(Transformation):
 
             if osh.same(inputs) or same_values(inputs):
                 # Constant with Respect to Loop
-                LoopBody.signature[index] = LoopBodyInputType.CONSTANT
+                loop_body.signature[index] = LoopBodyInputType.CONSTANT
             else:
                 # Must be Indexed
-                LoopBody.signature[index] = LoopBodyInputType.PARAMETER
+                loop_body.signature[index] = LoopBodyInputType.PARAMETER
 
         ###################################################
         # End I/O Normalization for Loop Body
         ###################################################
 
-        LoopMatchPattern, nodes = LoopBody.build_function_match_pattern(
+        loop_match_pattern, nodes = loop_body.build_function_match_pattern(
             model_ir.graph, use_iteration_ext=False
         )
 
-        loop_replace_pattern = build_loop_replace_pattern(model_ir.graph, LoopBody)
+        loop_replace_pattern = build_loop_replace_pattern(model_ir.graph, loop_body)
 
-        change_function_calls_to_loop = pattern.RewriteRule(LoopMatchPattern, loop_replace_pattern)
+        change_function_calls_to_loop = pattern.RewriteRule(
+            loop_match_pattern, loop_replace_pattern
+        )
         rewrite_set = pattern.RewriteRuleSet([change_function_calls_to_loop])
         count = rewrite_set.apply_to_model(model_ir, verbose=None)
         log.info(f"Rolled {count} function calls into a loop operator")
@@ -620,7 +662,7 @@ class LoopRolling(Transformation):
         # This must be done after serialization so we can work with protobuf nodes
 
         for loop_node in model_wrapper.get_nodes_by_op_type("FINNLoop"):
-            loop_body = cast(
+            body_model = cast(
                 "ModelWrapper", cast("FINNLoop", getCustomOp(loop_node)).get_nodeattr("body")
             )
             # Capture parameter input names from the actual (post-rewrite) body
@@ -630,29 +672,29 @@ class LoopRolling(Transformation):
             # attribute via TapeRewriterContext, which may rename values to
             # avoid coincidental name collisions with the enclosing graph being
             # rewritten -- so names captured before the rewrite can silently
-            # drift from what actually ends up in the model. LoopBody.signature
+            # drift from what actually ends up in the model. loop_body.signature
             # corresponds index-for-index with loop_body.graph.input (both were
             # kept in lockstep through the activation swaps and constant
             # removals above), so we can reliably re-derive the parameter names
             # from the real, current body graph.
             actual_parameter_names = {
                 inp.name
-                for idx, inp in enumerate(loop_body.graph.input)
-                if LoopBody.signature[idx] == LoopBodyInputType.PARAMETER
+                for idx, inp in enumerate(body_model.graph.input)
+                if loop_body.signature[idx] == LoopBodyInputType.PARAMETER
             }
-            loop_body.set_metadata_prop(
+            body_model.set_metadata_prop(
                 "mlo_input_parameter_names", str(list(actual_parameter_names))
             )
-            for node in loop_body.graph.node:
+            for node in body_model.graph.node:
                 if not is_custom_op(node.domain):
                     continue
                 try:
                     inst = getCustomOp(node)
-                    inst.adapt_for_loop_body(LoopBody.signature)
+                    inst.adapt_for_loop_body(loop_body.signature)
                 except (KeyError, AttributeError):
                     # Operator doesn't need adaptation or doesn't support it
                     pass
-            getCustomOp(loop_node).set_nodeattr("body", loop_body.graph)
+            getCustomOp(loop_node).set_nodeattr("body", body_model.graph)
 
         model = model_wrapper.transform(FoldConstants(), apply_to_subgraphs=True)
 

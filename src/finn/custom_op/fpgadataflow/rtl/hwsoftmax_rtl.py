@@ -8,33 +8,50 @@
 ############################################################################
 
 """RTL backend implementation of the SoftMax layer."""
-import numpy as np
-import os
 
-from finn.custom_op.fpgadataflow.hwsoftmax import HWSoftmax
+import numpy as np
+from onnx import NodeProto
+from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
+from typing import TYPE_CHECKING, cast
+
+from finn.custom_op.fpgadataflow.hwsoftmax import HWSoftmax, NodeAttrTypes
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import fifo_rtl_files
+from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
 
+if TYPE_CHECKING:
+    from onnx import GraphProto
 
+
+def _rtllib_dir() -> Path:
+    """Return the directory of the finn-rtllib softmax RTL sources."""
+    return Path(get_settings().finn_rtllib) / "softmax_rtl"
+
+
+@register_custom_op
 class HWSoftmax_rtl(HWSoftmax, RTLBackend):
     """RTL backend implementation for SoftMax kernel.
+
     Generates RTL code for hardware synthesis of SoftMax operations
     via the streaming FP32 softmaxf core (with optional integer
-    input conversion via int_to_fp32)."""
+    input conversion via int_to_fp32).
+    """
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return node attribute types, combining RTLBackend and HWSoftmax attributes."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         my_attrs.update(HWSoftmax.get_nodeattr_types(self))
         return my_attrs
 
-    def _rtllib_files(self):
+    def _rtllib_files(self) -> list[str]:
         """Return the finn-rtllib source file names used by the softmax core."""
         return [
             "softmaxf.sv",
@@ -45,17 +62,17 @@ class HWSoftmax_rtl(HWSoftmax, RTLBackend):
             "int_to_fp32.sv",
         ]
 
-    def generate_hdl(self, model, fpgapart, clk):
+    def generate_hdl(self, model: ModelWrapper, fpgapart: str, clk: float) -> None:  # noqa: ARG002
         """Render the softmax wrapper template and copy the RTL sources into the codegen dir."""
-        rtllib_dir = os.path.join(get_settings().finn_rtllib, "softmax_rtl/")
-        template_path = rtllib_dir + "softmax_wrapper_template.v"
-        simd = self.get_nodeattr("SIMD")
+        template_path = _rtllib_dir() / "softmax_wrapper_template.v"
+        simd = self.simd
         topname = self.get_verilog_top_module_name()
         n = self.get_normal_input_shape()[-1]
-        assert (
-            n % simd == 0
-        ), """Requirement N (last dim) divisable by SIMD is violated.
-            Please set SIMD to a different value"""
+        if n % simd != 0:
+            raise FINNUserError(
+                "Requirement N (last dim) divisable by SIMD is violated. "
+                "Please set SIMD to a different value"
+            )
 
         idt = self.get_input_datatype()
         width = idt.bitwidth()
@@ -76,48 +93,42 @@ class HWSoftmax_rtl(HWSoftmax, RTLBackend):
         self.set_nodeattr("gen_top_module", self.get_verilog_top_module_name())
 
         # apply code generation to templates
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        with open(template_path, "r") as f:
-            template = f.read()
+        code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
+        template = template_path.read_text()
         for key, value in code_gen_dict.items():
             template = template.replace(key, str(value))
 
-        with open(
-            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + ".v"),
-            "w",
-        ) as f:
-            f.write(template)
+        gen_top_module = cast("str", self.get_nodeattr("gen_top_module"))
+        (Path(code_gen_dir) / f"{gen_top_module}.v").write_text(template)
 
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
         self.set_nodeattr("ipgen_path", code_gen_dir)
         self.set_nodeattr("ip_path", code_gen_dir)
 
-    def get_rtl_file_list(self, abspath=False):
+    def get_rtl_file_list(self, abspath: bool = False) -> list[str]:
         """Return the list of RTL files (core sources, wrapper and FIFO) for this node."""
         if abspath:
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(get_settings().finn_rtllib, "softmax_rtl/")
+            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen")) + "/"
+            rtllib_dir = str(_rtllib_dir()) + "/"
         else:
             code_gen_dir = ""
             rtllib_dir = ""
 
         verilog_files = [rtllib_dir + f for f in self._rtllib_files()]
-        verilog_files.append(code_gen_dir + self.get_nodeattr("gen_top_module") + ".v")
+        verilog_files.append(code_gen_dir + cast("str", self.get_nodeattr("gen_top_module")) + ".v")
         return verilog_files + fifo_rtl_files(abspath)
 
-    def code_generation_ipi(self):
+    def code_generation_ipi(self) -> list[str]:
         """Construct and return the TCL for node instantiation in Vivado IPI."""
-        cmd = []
-        for f in self.get_rtl_file_list(abspath=True):
-            cmd.append("add_files -norecurse %s" % f)
+        cmd = [f"add_files -norecurse {f}" for f in self.get_rtl_file_list(abspath=True)]
         cmd.append(
-            "create_bd_cell -type module -reference %s %s"
-            % (self.get_nodeattr("gen_top_module"), self.onnx_node.name)
+            f"create_bd_cell -type module -reference {self.get_nodeattr('gen_top_module')} "
+            f"{self.onnx_node.name}"
         )
         return cmd
 
-    def get_exp_cycles(self):
+    def get_exp_cycles(self) -> int:
         """Return the expected cycle count including pipeline fill latency."""
         # softmaxf is a fully-pipelined 4-stage RTL design with elastic queues
         # between stages. Once the pipeline fills, throughput is 1 beat/cycle.
@@ -127,12 +138,11 @@ class HWSoftmax_rtl(HWSoftmax, RTLBackend):
         folded = self.get_folded_input_shape()
         n_beats = int(np.prod(folded[:-1]))
         n = self.get_normal_input_shape()[-1]
-        simd = self.get_nodeattr("SIMD")
-        beats_per_vec = max(1, n // simd)
+        beats_per_vec = max(1, n // self.simd)
         # Pipeline fill: ~50 cycles (tree + poly + recip + div latencies)
         return n_beats + beats_per_vec + 50
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute the node via Python (cppsim) or rtlsim depending on exec_mode."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":

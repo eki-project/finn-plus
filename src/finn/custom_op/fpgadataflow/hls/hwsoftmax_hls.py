@@ -7,23 +7,30 @@
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
 
-"""Module for hwsoftmax hls."""
+"""HLS backend implementation of the hardware softmax operator."""
+
 import numpy as np
+from typing import TYPE_CHECKING
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.hwsoftmax import HWSoftmax
+from finn.custom_op.fpgadataflow.hwsoftmax import HWSoftmax, NodeAttrTypes
+
+if TYPE_CHECKING:
+    from onnx import GraphProto, NodeProto
 
 
+@register_custom_op
 class HWSoftmax_hls(HWSoftmax, HLSBackend):
     """Class for HW Softmax hls."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: "NodeProto", **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(HWSoftmax.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         # override HLSBackend defaults for the SoftMax kernel
@@ -31,21 +38,24 @@ class HWSoftmax_hls(HWSoftmax, HLSBackend):
         my_attrs["hls_style"] = ("s", False, "freerunning")
         return my_attrs
 
-    def get_exp_cycles(self):
-        """Return the expected cycle count including per-vector stalls and pipeline overhead."""
+    def get_exp_cycles(self) -> int:
+        """Return the expected cycle count including per-vector stalls and pipeline overhead.
+
+        Returns:
+            int: Expected number of clock cycles for one inference.
+        """
         # SoftMax is a 3-stage dataflow pipeline (max, exp+sum, divide) with
         # depth=N/SIMD FIFOs between stages. Each vector incurs pipeline stall
         # overhead as stages wait for max/sum values before proceeding.
         folded = self.get_folded_input_shape()
         n_beats = int(np.prod(folded[:-1]))
         n = self.get_normal_input_shape()[-1]
-        simd = self.get_nodeattr("SIMD")
-        beats_per_vec = max(1, n // simd)
+        beats_per_vec = max(1, n // self.simd)
         num_vectors = n_beats // beats_per_vec
         # Per-vector stalls (max/sum reads) + pipeline fill + FP operation latencies
         return n_beats + 2 * num_vectors + 2 * beats_per_vec + 30
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = [
             "#include <hls_vector.h>",
@@ -53,21 +63,20 @@ class HWSoftmax_hls(HWSoftmax, HLSBackend):
             '#include "utils.hpp"',
         ]
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        simd = self.get_nodeattr("SIMD")
         idtype = self.get_input_datatype()
-        w = self.get_nodeattr("ifm_dim")[-1]
+        w = self.ifm_dim[-1]
         self.code_gen_dict["$DEFINES$"] = [
             f"""
-            constexpr unsigned  SIMD = {simd};
+            constexpr unsigned  SIMD = {self.simd};
             constexpr unsigned  W = {w};
             using  TI = {idtype.get_hls_datatype_str()};
             using  F = float;
            """
         ]
 
-    def docompute(self):
+    def docompute(self) -> None:
         """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = [
             """
@@ -81,7 +90,7 @@ class HWSoftmax_hls(HWSoftmax, HLSBackend):
         """
         ]
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             f"""
@@ -92,7 +101,7 @@ class HWSoftmax_hls(HWSoftmax, HLSBackend):
             """
         ]
 
-    def pragmas(self):
+    def pragmas(self) -> None:
         """Return pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = [
             """
@@ -106,10 +115,10 @@ class HWSoftmax_hls(HWSoftmax, HLSBackend):
             """
         ]
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
-    def timeout_value(self):
-        """Set timeout value for HLS functions defined for one clock cycle"""
-        self.code_gen_dict["$TIMEOUT_VALUE$"] = [str(np.prod(self.get_normal_input_shape()))]
+    def timeout_value(self) -> None:
+        """Set the timeout value for HLS functions defined for one clock cycle."""
+        self.code_gen_dict["$TIMEOUT_VALUE$"] = [str(int(np.prod(self.get_normal_input_shape())))]

@@ -1,4 +1,5 @@
 """Transformation to apply partial reconfiguration to a multi-DNN model."""
+
 from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -8,13 +9,13 @@ from qonnx.transformation.base import Transformation
 class ApplyPartialReconfiguration(Transformation):
     """Restructure DNNContainer nodes into a partial reconfiguration NodeContainer."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: str | int | list) -> None:
         """Initialize with reference_model_name and pr_regions keyword arguments."""
         super().__init__()
-        self.reference_model_name = kwargs.get("reference_model_name", None)
-        self.pr_regions = kwargs.get("pr_regions", None)
+        self.reference_model_name = kwargs.get("reference_model_name")
+        self.pr_regions = kwargs.get("pr_regions")
 
-    def apply(self, model: ModelWrapper) -> ModelWrapper:
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply partial reconfiguration restructuring to the model."""
         reference_model_name = self.reference_model_name
         pr_regions = self.pr_regions
