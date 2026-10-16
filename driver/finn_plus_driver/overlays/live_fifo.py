@@ -18,6 +18,7 @@ from finn_plus_driver.overlays.fifo_search import (
     SearchContext,
     TotalBitsCost,
     cache_to_iterations,
+    decision_counts,
     producer_blocked_from_stall,
     resolve_strategy_name,
     run_search,
@@ -47,33 +48,102 @@ STRATEGY_KWARGS = (
 )
 
 
+#: Minimum observation of the fixed-runtime heuristic in cycles (1 ms at the 10 ns clock it
+#: assumed) and the smallest frame horizon of the steady-state detection.
+STEADY_STATE_MIN_CYCLES = 100000
+STEADY_STATE_MIN_FRAMES = 4
+
+
+def steady_state_frames(paced_latency, paced_interval, min_cycles=STEADY_STATE_MIN_CYCLES):
+    """Frame horizon of an evaluation derived from the paced (unbounded) measurements.
+
+    The fixed-runtime heuristic observed every configuration for ``max(4 * latency, min_cycles)``
+    cycles; at the paced interval that many cycles complete ``ceil(... / interval)`` frames, so
+    the horizon in frames closely resembles the old observation without assuming a clock
+    period. At least ``STEADY_STATE_MIN_FRAMES`` frames are required.
+    """
+    cycles = max(4 * int(paced_latency), int(min_cycles))
+    frames = math.ceil(cycles / max(int(paced_interval), 1))
+    return max(STEADY_STATE_MIN_FRAMES, int(frames))
+
+
 class LiveFIFOOracle:
     """Hardware implementation of the ``Oracle`` protocol of ``fifo_search``.
 
     One evaluation is the inner loop of the original binary search: reset the accelerator,
-    configure the bounded FIFO depths, run with the throttled input for ``iteration_runtime``
-    seconds and read the instrumentation. Only when a strategy asks for them, the peak
-    occupancies (``READ_FILL``) and the stall flags (``READ_STALL``) of every FIFO are read
-    from the ring afterwards. Ring reads are non-intrusive; they cost a few ms per FIFO.
+    configure the bounded FIFO depths, start it with the throttled input and observe the
+    instrumentation. Only when a strategy asks for them, the peak occupancies (``READ_FILL``)
+    and the stall flags (``READ_STALL``) of every FIFO are read from the ring afterwards. Ring
+    reads are non-intrusive; they cost a few ms per FIFO.
+
+    With the steady-state registers of the instrumentation wrapper (``hw_capabilities
+    ["steady_state_registers"]``) and a frame horizon ``steady_state_frames``, the observation
+    is a polling loop that ends by the first of these rules (``EvalResult.decided_by``):
+
+    - ``idle_timeout``: no frame completed for longer than the relaxed interval threshold
+      (deadlock is the extreme case), definitive negative;
+    - ``pending_timeout``: the oldest frame in flight is older than the relaxed latency
+      threshold (only when the stop condition includes the latency), definitive negative;
+    - ``interval_violation`` / ``latency_violation``: the sliding-window maximum exceeds its
+      threshold, definitive negative;
+    - ``horizon_reached``: ``steady_state_frames`` frames completed without a violation;
+    - ``cap_hit``: the wall-clock cap (``iteration_runtime * cap_factor``) expired first; the
+      old single-read decision on the last sample is used and logged.
+    - ``instrumentation_error``: timestamp overflow/underflow (deadlock, as before).
+
+    The interval and latency of a polled result are the window maxima, not the last sample.
+    Without the registers (or without a horizon) the observation is the fixed sleep of
+    ``iteration_runtime`` seconds and one read (``fixed_runtime``), exactly as before.
     """
 
-    def __init__(self, overlay, iteration_runtime, throttle_interval, hw_capabilities):
-        """Bind to an overlay, the per-evaluation runtime and the input throttle interval."""
+    def __init__(
+        self,
+        overlay,
+        iteration_runtime,
+        throttle_interval,
+        hw_capabilities,
+        steady_state_frames=None,
+        avg_window_size=64,
+        poll_interval_s=0.0003,
+        cap_factor=4.0,
+        feasibility=None,
+    ):
+        """Bind to an overlay, the per-evaluation runtime (cap) and the input throttle interval.
+
+        ``feasibility`` (a ``FeasibilityCheck``) provides the thresholds of the early-exit
+        rules; it is ``None`` for the target measurement and set afterwards.
+        """
         self.overlay = overlay
         self.num_fifos = overlay.num_fifos
         self.iteration_runtime = iteration_runtime
         self.throttle_interval = throttle_interval
         self.hw_capabilities = hw_capabilities
+        self.steady_state_frames = steady_state_frames
+        self.avg_window_size = avg_window_size
+        self.poll_interval_s = poll_interval_s
+        self.cap_factor = cap_factor
+        self.feasibility = feasibility
         self.num_evaluations = 0
 
-    def evaluate(self, depths, need_flags=False, need_peaks=False):
-        """Measure one bounded configuration on the FPGA."""
-        ov = self.overlay
-        depths = [int(d) for d in depths]
-        ov.reset_accelerator()
-        ov.configure_fifos_bounded(depths)
-        ov.start_accelerator(throttle_interval=self.throttle_interval)
+    @property
+    def polling(self):
+        """Whether evaluations poll the steady-state registers instead of sleeping."""
+        return self.steady_state_frames is not None and bool(
+            self.hw_capabilities.get("steady_state_registers", False)
+        )
+
+    @property
+    def cap_s(self):
+        """Wall-clock cap of a polled evaluation in seconds."""
+        return self.iteration_runtime * self.cap_factor
+
+    def _observe_fixed(self):
+        """Old observation: sleep for the iteration runtime and read the last sample once."""
         time.sleep(self.iteration_runtime)
+        return self._read_last_sample("fixed_runtime")
+
+    def _read_last_sample(self, decided_by, frames=None):
+        """Single read of the instrumentation, decided as in the original binary search."""
         (
             overflow_err,
             underflow_err,
@@ -83,10 +153,91 @@ class LiveFIFOOracle:
             latency,
             interval,
             *_,
-        ) = ov.observe_instrumentation(False)
-        ov.stop_accelerator()
-        self.num_evaluations += 1
+        ) = self.overlay.observe_instrumentation(False)
         deadlock = interval == 0 or bool(overflow_err) or bool(underflow_err)
+        return dict(
+            interval=interval,
+            latency=latency,
+            min_latency=min_latency,
+            deadlock=deadlock,
+            decided_by=decided_by,
+            frames=frames,
+        )
+
+    def _observe_polling(self):
+        """Poll the steady-state registers until a rule decides the evaluation."""
+        ov = self.overlay
+        fb = self.feasibility
+        check_interval = fb is not None and fb.stop_condition in ("interval", "both")
+        check_latency = fb is not None and fb.stop_condition in ("latency", "both")
+        t0 = time.monotonic()
+        deadline = t0 + self.cap_s
+        decided_by = None
+        s = None
+        while True:
+            s = ov.observe_steady_state()
+            frames = s["run_frames"]
+            if s["overflow"] or s["underflow"]:
+                decided_by = "instrumentation_error"
+            elif (
+                check_interval and frames >= 1 and s["idle_cycles"] > fb.relaxed_interval_threshold
+            ):
+                decided_by = "idle_timeout"
+            elif check_latency and s["oldest_pending_age"] > fb.relaxed_latency_threshold:
+                decided_by = "pending_timeout"
+            elif check_interval and s["int_win_max"] > fb.relaxed_interval_threshold:
+                decided_by = "interval_violation"
+            elif check_latency and s["lat_win_max"] > fb.relaxed_latency_threshold:
+                decided_by = "latency_violation"
+            elif frames >= self.steady_state_frames:
+                decided_by = "horizon_reached"
+            elif time.monotonic() >= deadline:
+                decided_by = "cap_hit"
+            if decided_by is not None:
+                break
+            time.sleep(self.poll_interval_s)
+
+        if decided_by == "cap_hit":
+            print(
+                "STEADY STATE CAP HIT after %.3f s: %d of %d frames, falling back to the "
+                "single-read decision" % (self.cap_s, s["run_frames"], self.steady_state_frames)
+            )
+            return self._read_last_sample("cap_hit", frames=s["run_frames"])
+
+        min_latency = ov.instrumentation_read("min_latency")
+        frames = s["run_frames"]
+        # Window maxima as the measured values; a timeout reports the bound it has observed
+        # (the next interval / the pending frame's latency is at least that long)
+        interval = s["int_win_max"]
+        latency = s["lat_win_max"]
+        if decided_by == "idle_timeout":
+            interval = max(interval, s["idle_cycles"])
+        if decided_by == "pending_timeout":
+            latency = max(latency, s["oldest_pending_age"])
+        deadlock = frames == 0 or decided_by == "instrumentation_error"
+        return dict(
+            interval=interval,
+            latency=latency,
+            min_latency=min_latency,
+            deadlock=deadlock,
+            decided_by=decided_by,
+            frames=frames,
+        )
+
+    def evaluate(self, depths, need_flags=False, need_peaks=False):
+        """Measure one bounded configuration on the FPGA."""
+        ov = self.overlay
+        depths = [int(d) for d in depths]
+        ov.reset_accelerator()
+        ov.configure_fifos_bounded(depths)
+        t0 = time.monotonic()
+        ov.start_accelerator(
+            throttle_interval=self.throttle_interval, avg_window_size=self.avg_window_size
+        )
+        observed = self._observe_polling() if self.polling else self._observe_fixed()
+        ov.stop_accelerator()
+        eval_time_s = time.monotonic() - t0
+        self.num_evaluations += 1
 
         producer_blocked = None
         stall_flags = None
@@ -103,14 +254,12 @@ class LiveFIFOOracle:
 
         return EvalResult(
             depths=tuple(depths),
-            interval=interval,
-            latency=latency,
-            min_latency=min_latency,
-            deadlock=deadlock,
             producer_blocked=producer_blocked,
             stall_flags=stall_flags,
             peak=peak,
             flags_reliable=flags_reliable,
+            eval_time_s=eval_time_s,
+            **observed,
         )
 
 
@@ -155,7 +304,13 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # Capabilities of the virtual FIFO hardware, probed in experiment_fifosizing:
         # - peak_occupancy: READ_FILL reports the peak occupancy of a bounded run
         # - sticky_stall_flags: READ_STALL reports run-sticky stall flags in bits [7:4]
-        self.hw_capabilities = {"peak_occupancy": False, "sticky_stall_flags": False}
+        # - steady_state_registers: the instrumentation wrapper has the sliding-window
+        #   extremes, idle_cycles and oldest_pending_age registers
+        self.hw_capabilities = {
+            "peak_occupancy": False,
+            "sticky_stall_flags": False,
+            "steady_state_registers": False,
+        }
 
         # Sanity check
         # We expect 4 AXI-Lite peripherals:
@@ -238,7 +393,11 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         """
         flags = self.read_stall_flags()
         sticky = all((f >> STALL_STICKY_SHIFT) & STALL_IVLD for f in flags)
-        self.hw_capabilities = {"peak_occupancy": sticky, "sticky_stall_flags": sticky}
+        self.hw_capabilities = {
+            "peak_occupancy": sticky,
+            "sticky_stall_flags": sticky,
+            "steady_state_registers": self.has_steady_state_registers(),
+        }
         print(
             "HW CAPABILITIES: %s (stall flags after paced run: %s)"
             % (self.hw_capabilities, ["0x%02x" % f for f in flags])
@@ -266,7 +425,11 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         return max_period
 
     def run_paced(self, throttle_interval=0, runtime_s=1):
-        """Run FIFOs in paced mode to determine bottleneck period."""
+        """Run FIFOs in paced mode to determine the unbounded peak occupancies.
+
+        Returns the peak occupancy of every FIFO and the latency and interval of the last
+        completed frame.
+        """
         self.reset_accelerator()
 
         # Issue RUN_PACED instruction
@@ -290,7 +453,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # Collect maximum occupancy of all FIFOs by issuing READ_FILL instructions
         max_occupancy = self.read_peak_occupancy()
 
-        return max_occupancy, latency
+        return max_occupancy, latency, interval
 
     def total_fifo_size(self, depths):
         """Calculate total FIFO size in kB."""
@@ -315,6 +478,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         relaxation=0.0,
         max_evaluations=None,
         max_runtime_s=None,
+        steady_state_frames=None,
+        avg_window_size=64,
+        poll_interval_s=0.0003,
+        cap_factor=4.0,
         **strategy_kwargs,
     ):
         """Run a FIFO depth search strategy on the hardware oracle.
@@ -328,7 +495,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         start_depth : int or list
             Initial depth(s) for FIFOs; the performance targets are measured here.
         iteration_runtime : float
-            Runtime for each test iteration in seconds
+            Runtime for each test iteration in seconds; with steady-state detection the
+            wall-clock cap of an evaluation is ``iteration_runtime * cap_factor``
         throttle_interval : int
             Throttle interval in cycles
         stop_condition : str
@@ -341,6 +509,12 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             Default 0.0 means no degradation allowed.
         max_evaluations, max_runtime_s :
             Budget of the search (hardware evaluations / wall-clock seconds), None = unlimited.
+        steady_state_frames : int or None
+            Frame horizon of the steady-state detection (``LiveFIFOOracle``); None keeps the
+            fixed-runtime observation. Requires the steady-state registers in the bitfile.
+        avg_window_size, poll_interval_s, cap_factor :
+            Sliding window written to the instrumentation (clamped to the build's maximum),
+            poll period in seconds and cap factor of the steady-state detection.
         strategy_kwargs :
             Passed on to the strategy (seed_strategy, upper_bound_factor, node_order, pareto,
             pareto_cost_limit, allow_unreliable_flags).
@@ -356,13 +530,31 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         widths = self.fifo_width_list()
         cost_model = TotalBitsCost(widths, offset=self.fifo_depth_offset)
-        oracle = LiveFIFOOracle(self, iteration_runtime, throttle_interval, self.hw_capabilities)
+        oracle = LiveFIFOOracle(
+            self,
+            iteration_runtime,
+            throttle_interval,
+            self.hw_capabilities,
+            steady_state_frames=steady_state_frames,
+            avg_window_size=avg_window_size,
+            poll_interval_s=poll_interval_s,
+            cap_factor=cap_factor,
+        )
         cache = EvaluationCache(oracle, cost_model)
+        if steady_state_frames is not None and not oracle.polling:
+            print("STEADY STATE DETECTION: registers not in the bitfile, using the fixed runtime")
+        elif oracle.polling:
+            print(
+                "STEADY STATE DETECTION: horizon %d frames, window %d, poll %.0f us, cap %.3f s"
+                % (steady_state_frames, avg_window_size, poll_interval_s * 1e6, oracle.cap_s)
+            )
 
-        # Run once at the start configuration to determine the targets (iteration "0")
+        # Run once at the start configuration to determine the targets (iteration "0"); the
+        # thresholds derived from it enable the early-exit rules of the oracle
         start_time = time.time()
         target = cache.evaluate(start_depths, role="target")
         feasibility = FeasibilityCheck.from_result(stop_condition, relaxation, target.result)
+        oracle.feasibility = feasibility
         budget = SearchBudget(max_evaluations=max_evaluations, max_runtime_s=max_runtime_s)
         ctx = SearchContext(
             oracle,
@@ -415,6 +607,12 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                 "relaxed_latency_threshold": feasibility.relaxed_latency_threshold,
                 "hw_capabilities": dict(self.hw_capabilities),
                 "num_cache_hits": cache.num_cache_hits,
+                "steady_state_detection": oracle.polling,
+                "steady_state_frames": steady_state_frames if oracle.polling else None,
+                "avg_window_size": avg_window_size if oracle.polling else None,
+                "poll_interval_s": poll_interval_s if oracle.polling else None,
+                "evaluation_cap_s": oracle.cap_s if oracle.polling else None,
+                "decisions": decision_counts(cache),
             },
             "result": result,
         }
@@ -548,9 +746,20 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         ``relaxation``, ``relaxation_sweep`` (binary strategies only), ``report_name`` (report
         sub-directory, default: the strategy name), ``max_evaluations``,
         ``max_runtime_s``, ``iteration_runtime_factor`` (safety factor on the per-evaluation
-        runtime heuristic), ``hw_capabilities`` ("auto" or a bool overriding the probe) and the
-        strategy-specific ``seed_strategy``, ``upper_bound_factor``, ``node_order``, ``pareto``,
-        ``pareto_cost_limit``, ``allow_unreliable_flags``.
+        runtime heuristic), ``hw_capabilities`` ("auto" or a bool overriding the probe of the
+        virtual FIFO extensions) and the strategy-specific ``seed_strategy``,
+        ``upper_bound_factor``, ``node_order``, ``pareto``, ``pareto_cost_limit``,
+        ``allow_unreliable_flags``.
+
+        Steady-state detection (``LiveFIFOOracle``, needs the steady-state registers of the
+        instrumentation wrapper; older bitfiles fall back to the fixed runtime):
+        ``steady_state_detection`` ("auto", or False to force the fixed runtime),
+        ``steady_state_frames`` (frame horizon of a positive verdict, default derived from the
+        paced measurements with ``steady_state_frames()``: the old observation time in frames),
+        ``avg_window_size`` (sliding window in frames, default: the horizon, clamped by the
+        hardware to the build's ``instrumentation_avg_n``), ``poll_interval_s`` (default
+        300 us) and ``cap_factor`` (wall-clock cap of an evaluation as a multiple of the
+        fixed-runtime heuristic, default 4; the old single-read decision applies when hit).
         """
         fifo_search_order = kwargs.get("fifo_search_order")
         if fifo_search_order is not None:
@@ -566,6 +775,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         max_runtime_s = kwargs.get("max_runtime_s")
         iteration_runtime_factor = kwargs.get("iteration_runtime_factor", 1.0)
         hw_capabilities = kwargs.get("hw_capabilities", "auto")
+        steady_state_detection = kwargs.get("steady_state_detection", "auto")
+        steady_state_kwargs = {
+            k: kwargs[k] for k in ("poll_interval_s", "cap_factor") if k in kwargs
+        }
         strategy_kwargs = {k: kwargs[k] for k in STRATEGY_KWARGS if k in kwargs}
         is_binary = search_strategy.startswith("binary_")
         base_report_dir = kwargs.get("report_dir")
@@ -582,7 +795,9 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         print("---PHASE 2: RUN_PACED---")
         # TODO: Use better heuristic for runtime?
-        max_occupancy, paced_latency = self.run_paced(throttle_interval=max_period, runtime_s=1)
+        max_occupancy, paced_latency, paced_interval = self.run_paced(
+            throttle_interval=max_period, runtime_s=1
+        )
         print("MEASURED MAX FIFO OCCUPANCIES:")
         print("FIFO ID | MAX OCCUPANCY")
         for fifo_id, occupancy in enumerate(max_occupancy):
@@ -595,8 +810,12 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             self.hw_capabilities = {
                 "peak_occupancy": bool(hw_capabilities),
                 "sticky_stall_flags": bool(hw_capabilities),
+                "steady_state_registers": self.has_steady_state_registers(),
             }
             print("HW CAPABILITIES (from kwargs): %s" % self.hw_capabilities)
+        if steady_state_detection != "auto" and not steady_state_detection:
+            self.hw_capabilities["steady_state_registers"] = False
+            print("STEADY STATE DETECTION: disabled by kwargs")
 
         print("---PHASE 3: ITERATIVE MINIMIZATION---")
         print("SEARCH STRATEGY: %s" % search_strategy)
@@ -610,6 +829,16 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # Determine search iteration runtime via heuristic based on free-running latency
         iteration_runtime = max(0.001, (paced_latency * 4) * 10 / 1000 / 1000 / 1000)
         iteration_runtime *= iteration_runtime_factor
+        # Frame horizon of the steady-state detection: the same observation in frames
+        frames = kwargs.get("steady_state_frames")
+        if frames is None:
+            frames = steady_state_frames(paced_latency, paced_interval)
+        steady_state_kwargs["steady_state_frames"] = int(frames)
+        steady_state_kwargs["avg_window_size"] = int(kwargs.get("avg_window_size", frames))
+        print(
+            "STEADY STATE FRAMES: %d (paced latency %d, interval %d cycles)"
+            % (frames, paced_latency, paced_interval)
+        )
 
         search_log = self.run_fifo_search(
             search_strategy,
@@ -620,6 +849,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             relaxation=relaxation,
             max_evaluations=max_evaluations,
             max_runtime_s=max_runtime_s,
+            **steady_state_kwargs,
             **strategy_kwargs,
         )
 
@@ -688,6 +918,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                     throttle_interval=max_period,
                     stop_condition=stop_condition,
                     relaxation=sweep_relaxation,
+                    **steady_state_kwargs,
                 )
 
                 # Extract only essential metrics

@@ -3,7 +3,9 @@
 The overlay's AXI-lite accesses (FIFO controller ring operations, instrumentation, reset) are
 replaced by an emulation of the gauge behaviour on top of the synthetic monotone predicate of
 ``test_fifo_search``: no board or PYNQ required. This exercises the strategy dispatch, the
-hardware oracle, the capability probe and the reports written by ``experiment_fifosizing``.
+hardware oracle with its steady-state detection (frames completing over polls, deadlocking
+and slowly degrading configurations), the capability probe and the reports written by
+``experiment_fifosizing``.
 
 Run from the driver directory with: python -m pytest tests
 """
@@ -11,12 +13,12 @@ Run from the driver directory with: python -m pytest tests
 import pytest
 
 import json
-
 from finn_plus_driver.overlays.fifo_search import (
     STALL_IRDY,
     STALL_IVLD,
     STALL_STICKY_SHIFT,
     UNBOUNDED_DEPTH,
+    FeasibilityCheck,
     TotalBitsCost,
 )
 from finn_plus_driver.overlays.live_fifo import (
@@ -30,6 +32,8 @@ from finn_plus_driver.overlays.live_fifo import (
     OP_RUN_PACED,
     OP_WRITE_FILL,
     FINNLiveFIFOOverlay,
+    LiveFIFOOracle,
+    steady_state_frames,
 )
 from test_fifo_search import (
     DEGRADED_INTERVAL,
@@ -47,9 +51,26 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
     ``paced_peaks`` are the occupancies reported after the paced run (the start configuration
     of the search); the feasibility of a bounded configuration and the flags/peaks it reports
     come from the ``MockOracle`` predicate.
+
+    The steady-state registers (``steady_state_hw``) are emulated per run with a virtual
+    clock that advances by one poll per ``observe_steady_state`` call: a feasible configuration
+    completes ``frames_per_poll`` frames per poll with constant window maxima; a degraded one
+    (mock: ``DEGRADED_*``) degrades slowly, its window maxima growing by ``degrade_step`` per
+    poll; a severely violated one (mock: deadlock) completes one frame and then idles with a
+    growing pending-frame age. ``stall_mode`` makes every bounded run look frozen before its
+    first frame (no frames, no pending age) to exercise the wall-clock cap.
     """
 
-    def __init__(self, mock, widths, paced_peaks, extended_hw=True):
+    def __init__(
+        self,
+        mock,
+        widths,
+        paced_peaks,
+        extended_hw=True,
+        steady_state_hw=True,
+        frames_per_poll=3,
+        degrade_step=10,
+    ):
         """Bypass the PYNQ overlay constructor and set up the emulation state."""
         # no super().__init__(): the PYNQ Overlay would load a bitfile
         self.error = False
@@ -57,16 +78,27 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         self.num_fifos = len(widths)
         self.folding_config = {"Defaults": {}}
         self.fifo_depth_offset = 1
-        self.hw_capabilities = {"peak_occupancy": False, "sticky_stall_flags": False}
+        self.hw_capabilities = {
+            "peak_occupancy": False,
+            "sticky_stall_flags": False,
+            "steady_state_registers": False,
+        }
         self.fclk_mhz_actual = 100.0
         self.seed = 1
         self.mock = mock
         self.paced_peaks = list(paced_peaks)
         self.extended_hw = extended_hw
+        self.steady_state_hw = steady_state_hw
+        self.frames_per_poll = frames_per_poll
+        self.degrade_step = degrade_step
+        self.stall_mode = False
         self.depth_regs = [0] * self.num_fifos
         self.mode = "bounded"
         self.running = False
         self.num_runs = 0
+        self.polls = 0
+        self.num_polls = 0
+        self.avg_window_sizes = []
 
     # --- emulated hardware -------------------------------------------------------------
     def reset_accelerator(self):
@@ -77,6 +109,8 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         """Start the emulated run."""
         self.running = True
         self.num_runs += 1
+        self.polls = 0
+        self.avg_window_sizes.append(avg_window_size)
 
     def stop_accelerator(self):
         """Stop the emulated run."""
@@ -114,34 +148,110 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
             return sticky << STALL_STICKY_SHIFT
         raise AssertionError(f"unexpected opcode 0x{opcode:02x}")
 
+    def _bounded_class(self):
+        """Classify the bounded configuration like ``MockOracle.evaluate`` does."""
+        if self.mode == "paced" or self.mock.feasible(self.depth_regs):
+            return "feasible"
+        severe = any(sum(self.depth_regs[e] for e in T) * 2 < b for T, b in self.mock.constraints)
+        return "deadlock" if severe else "degraded"
+
     def observe_instrumentation(self, debug_print=True):
-        """Report the performance of the current configuration."""
-        if self.mode == "paced":
-            feasible = True
-        else:
-            feasible = self.mock.feasible(self.depth_regs)
-        if feasible:
+        """Report the performance of the current configuration (single read, last sample)."""
+        cls = self._bounded_class()
+        if cls == "feasible":
             interval, latency = FEASIBLE_INTERVAL, FEASIBLE_LATENCY
+        elif cls == "deadlock" and self.steady_state_hw:
+            interval, latency = 0, 0
         else:
             interval, latency = DEGRADED_INTERVAL, DEGRADED_LATENCY
         return (False, False, 1, 0, latency, latency, interval, latency, interval, 0, 0)
 
+    # --- emulated steady-state registers ------------------------------------------------
+    def has_steady_state_registers(self):
+        """Whether the emulated bitfile has the steady-state registers."""
+        return self.steady_state_hw
 
-def make_overlay(extended_hw=True):
+    def instrumentation_read(self, name):
+        """Only min_latency is read directly by the oracle."""
+        assert name == "min_latency"
+        return FEASIBLE_LATENCY
+
+    def observe_steady_state(self):
+        """One poll of the emulated steady-state registers of the current run."""
+        assert self.steady_state_hw and self.running
+        self.polls += 1
+        self.num_polls += 1
+        polls = self.polls
+        cls = self._bounded_class()
+        regs = {"overflow": False, "underflow": False, "avg_fill": 1}
+        if self.stall_mode:
+            regs.update(run_frames=0, int_win_max=0, lat_win_max=0, idle_cycles=0)
+            regs["oldest_pending_age"] = 0
+        elif cls == "feasible":
+            regs.update(run_frames=self.frames_per_poll * polls)
+            regs.update(int_win_max=FEASIBLE_INTERVAL, lat_win_max=FEASIBLE_LATENCY)
+            regs.update(
+                idle_cycles=FEASIBLE_INTERVAL // 2, oldest_pending_age=FEASIBLE_LATENCY // 2
+            )
+        elif cls == "degraded":
+            regs.update(run_frames=self.frames_per_poll * polls)
+            regs.update(int_win_max=FEASIBLE_INTERVAL + self.degrade_step * polls)
+            regs.update(lat_win_max=FEASIBLE_LATENCY + 4 * self.degrade_step * polls)
+            regs.update(
+                idle_cycles=FEASIBLE_INTERVAL // 2, oldest_pending_age=FEASIBLE_LATENCY // 2
+            )
+        else:  # deadlock after the first frame
+            regs.update(run_frames=1, int_win_max=0, lat_win_max=FEASIBLE_LATENCY)
+            regs.update(idle_cycles=1000 * polls, oldest_pending_age=1000 * polls + 50)
+        return regs
+
+
+def make_overlay(extended_hw=True, **kwargs):
     """Instance with a 4-FIFO predicate whose optimum differs from the binary search result."""
     # FIFO 0 and 1 are coupled; shrinking the wide FIFO 1 pays off more than FIFO 0
     mock = MockOracle(4, [({0, 1}, 8), ({1}, 2), ({2}, 3), ({3}, 1)])
     widths = [8, 64, 16, 32]
     paced_peaks = [6, 6, 5, 4]
-    return EmulatedLiveFIFOOverlay(mock, widths, paced_peaks, extended_hw=extended_hw), mock
+    overlay = EmulatedLiveFIFOOverlay(mock, widths, paced_peaks, extended_hw=extended_hw, **kwargs)
+    return overlay, mock
+
+
+class FakeClock:
+    """Replacement of the ``time`` module: sleeping advances a virtual monotonic clock."""
+
+    def __init__(self):
+        """Start at zero."""
+        self.now = 0.0
+        self.num_sleeps = 0
+        self.slept_s = 0.0
+
+    def sleep(self, s):
+        """Advance the clock instead of waiting."""
+        self.now += s
+        self.num_sleeps += 1
+        self.slept_s += s
+
+    def monotonic(self):
+        """Virtual monotonic time."""
+        return self.now
+
+    def time(self):
+        """Virtual wall-clock time."""
+        return self.now
 
 
 @pytest.fixture(autouse=True)
-def no_sleep(monkeypatch):
-    """Skip the wall-clock waits of the phases."""
+def clock(monkeypatch):
+    """Skip the wall-clock waits of the phases and make the evaluation cap deterministic."""
     import finn_plus_driver.overlays.live_fifo as live_fifo
 
-    monkeypatch.setattr(live_fifo.time, "sleep", lambda s: None)
+    fake = FakeClock()
+    monkeypatch.setattr(live_fifo, "time", fake)
+    return fake
+
+
+#: Frame horizon used by the experiment tests (4 polls of the emulation)
+HORIZON = 12
 
 
 @pytest.mark.parametrize(
@@ -165,7 +275,9 @@ def test_experiment_fifosizing_writes_reports(tmp_path, kwargs):
     """Every strategy writes a complete, feasible report set into its own directory."""
     overlay, mock = make_overlay()
     with pytest.warns(DeprecationWarning) if "fifo_search_order" in kwargs else _nowarn():
-        overlay.experiment_fifosizing(report_dir=str(tmp_path), stop_condition="both", **kwargs)
+        overlay.experiment_fifosizing(
+            report_dir=str(tmp_path), stop_condition="both", steady_state_frames=HORIZON, **kwargs
+        )
 
     strategy = kwargs.get("search_strategy") or "binary_" + kwargs["fifo_search_order"]
     report_dir = tmp_path / kwargs.get("report_name", strategy) / "both"
@@ -198,12 +310,33 @@ def test_experiment_fifosizing_writes_reports(tmp_path, kwargs):
 
     search = sizing["search"]
     assert search["search_strategy"] == strategy
-    assert search["hw_capabilities"] == {"peak_occupancy": True, "sticky_stall_flags": True}
+    assert search["hw_capabilities"] == {
+        "peak_occupancy": True,
+        "sticky_stall_flags": True,
+        "steady_state_registers": True,
+    }
     assert search["all_iterations"]["0"]["fifo_depths"] == [6, 6, 5, 4]
     assert search["num_evaluations"] == len(search["all_iterations"]) == overlay.num_runs - 1
     for it in search["all_iterations"].values():
         assert "deadlock" in it and "fifo_depths" in it
+        assert it["decided_by"] in {
+            "horizon_reached",
+            "interval_violation",
+            "latency_violation",
+            "idle_timeout",
+            "pending_timeout",
+        }
+        assert it["frames"] >= 1 and it["eval_time_s"] >= 0
     assert search["target_interval_cycles"] == FEASIBLE_INTERVAL
+    # the target measurement ran to the horizon, every verdict was decided by a rule
+    assert search["all_iterations"]["0"]["decided_by"] == "horizon_reached"
+    assert search["all_iterations"]["0"]["frames"] >= HORIZON
+    assert search["steady_state_detection"] and search["steady_state_frames"] == HORIZON
+    assert search["avg_window_size"] == HORIZON
+    assert set(overlay.avg_window_sizes[1:]) == {HORIZON}  # [0] is the paced run
+    assert sum(search["decisions"].values()) == search["num_evaluations"]
+    assert search["decisions"]["horizon_reached"] >= 1
+    assert "cap_hit" not in search["decisions"] and "fixed_runtime" not in search["decisions"]
 
     optimum = brute_force_optimum(mock, TotalBitsCost([8, 64, 16, 32]), [6, 6, 5, 4])
     if strategy.startswith("binary_"):
@@ -244,16 +377,25 @@ def test_exact_search_beats_binary_search_on_coupled_fifos(tmp_path):
     assert exact < binary
 
 
-def test_old_hardware_is_detected_and_bottom_up_refuses(tmp_path):
+def test_old_hardware_is_detected_and_bottom_up_refuses(tmp_path, clock):
     """Without the gauge extensions the probe reports no capabilities and the seed is returned."""
-    overlay, mock = make_overlay(extended_hw=False)
+    overlay, mock = make_overlay(extended_hw=False, steady_state_hw=False)
     overlay.experiment_fifosizing(
         report_dir=str(tmp_path), search_strategy="bottom_up_exact", stop_condition="interval"
     )
     with open(tmp_path / "bottom_up_exact" / "interval" / "fifo_sizing_report.json") as f:
         sizing = json.load(f)
     search = sizing["search"]
-    assert search["hw_capabilities"] == {"peak_occupancy": False, "sticky_stall_flags": False}
+    assert search["hw_capabilities"] == {
+        "peak_occupancy": False,
+        "sticky_stall_flags": False,
+        "steady_state_registers": False,
+    }
+    # old bitfile: every evaluation slept for the fixed runtime and read once
+    assert not search["steady_state_detection"] and search["steady_state_frames"] is None
+    assert search["decisions"] == {"fixed_runtime": search["num_evaluations"]}
+    assert overlay.num_polls == 0
+    assert clock.num_sleeps >= search["num_evaluations"] + 1  # evaluations + the paced run
     assert not search["optimal_proven"] and search["abort_reason"]
     assert search["fifo_depths"] == [6, 6, 5, 4]  # the seed (start configuration)
     assert mock.feasible(search["fifo_depths"])
@@ -305,6 +447,155 @@ def test_size_iteratively_binary_search_compat(tmp_path):
     }
     assert mock.feasible(log["fifo_depths"])
     assert log["all_iterations"]["1"]["tested_fifo"] in (0, 1)  # deepest first: depth 6
+
+
+def test_steady_state_frames_from_paced_measurements():
+    """The horizon is the fixed-runtime observation converted to frames, at least 4."""
+    # kws: 4 * 1697 < 1e5 cycles -> 1e5 / 490 = 204.1 frames
+    assert steady_state_frames(1697, 490) == 205
+    # mobilenetv1: 4 * 711946 = 2847784 cycles / 394272 = 7.2 frames
+    assert steady_state_frames(711946, 394272) == 8
+    assert steady_state_frames(10, 100000) == 4  # minimum
+    assert steady_state_frames(1000, 0) >= 100000  # degenerate interval
+
+
+def test_default_horizon_and_fixed_runtime_disabled(tmp_path):
+    """Without the kwarg the horizon comes from the paced run; the detection can be disabled."""
+    # paced latency 1000 / interval 100 (emulation) -> 1e5 / 100 = 1000 frames; the emulation
+    # completes 400 frames per poll so that the horizon is reached within the cap
+    overlay, mock = make_overlay(frames_per_poll=400)
+    overlay.experiment_fifosizing(report_dir=str(tmp_path), search_strategy="binary_forward")
+    with open(tmp_path / "binary_forward" / "both" / "fifo_sizing_report.json") as f:
+        search = json.load(f)["search"]
+    assert search["steady_state_frames"] == steady_state_frames(FEASIBLE_LATENCY, FEASIBLE_INTERVAL)
+    assert search["steady_state_frames"] == 1000 and search["avg_window_size"] == 1000
+    assert search["all_iterations"]["0"]["frames"] == 1200
+    assert "cap_hit" not in search["decisions"]
+
+    overlay, mock = make_overlay()
+    overlay.experiment_fifosizing(
+        report_dir=str(tmp_path),
+        search_strategy="binary_forward",
+        report_name="fixed",
+        steady_state_detection=False,
+    )
+    with open(tmp_path / "fixed" / "both" / "fifo_sizing_report.json") as f:
+        search = json.load(f)["search"]
+    assert not search["hw_capabilities"]["steady_state_registers"]
+    assert search["decisions"] == {"fixed_runtime": search["num_evaluations"]}
+    assert overlay.num_polls == 0
+
+
+def make_oracle(overlay, stop_condition, frames=HORIZON, cap_factor=4.0, feasibility=True):
+    """Polling oracle on the emulated overlay with the thresholds of the mock targets."""
+    overlay.hw_capabilities = {
+        "peak_occupancy": True,
+        "sticky_stall_flags": True,
+        "steady_state_registers": True,
+    }
+    oracle = LiveFIFOOracle(
+        overlay,
+        iteration_runtime=0.001,
+        throttle_interval=1000,
+        hw_capabilities=overlay.hw_capabilities,
+        steady_state_frames=frames,
+        avg_window_size=frames,
+        poll_interval_s=0.0003,
+        cap_factor=cap_factor,
+    )
+    if feasibility:
+        oracle.feasibility = FeasibilityCheck(
+            stop_condition, 0.0, FEASIBLE_INTERVAL, FEASIBLE_LATENCY
+        )
+    assert oracle.polling
+    return oracle
+
+
+@pytest.mark.parametrize("stop_condition", ["interval", "latency", "both"])
+def test_oracle_decision_rules(stop_condition, clock):
+    """Each class of configuration ends by the expected rule, at the expected poll."""
+    overlay, mock = make_overlay()
+    oracle = make_oracle(overlay, stop_condition)
+    fb = oracle.feasibility
+    # degraded instance: constraint {2} >= 3 violated by 2 (not severe), {3} >= 1 deadlocks at 0
+    feasible, degraded, deadlock = [6, 6, 5, 4], [6, 6, 2, 4], [6, 6, 5, 0]
+
+    r = oracle.evaluate(feasible, need_flags=True, need_peaks=True)
+    assert r.decided_by == "horizon_reached" and r.frames == HORIZON
+    assert overlay.polls == HORIZON // overlay.frames_per_poll
+    assert (r.interval, r.latency, r.min_latency) == (
+        FEASIBLE_INTERVAL,
+        FEASIBLE_LATENCY,
+        FEASIBLE_LATENCY,
+    )
+    assert fb.feasible(r) and not r.deadlock and r.peak is not None
+
+    # slowly degrading: the window maximum crosses the threshold at the 1st poll
+    # (interval: 100 + 10 * polls > 100), long before the horizon
+    r = oracle.evaluate(degraded)
+    if stop_condition == "latency":
+        assert r.decided_by == "latency_violation"
+        assert r.latency > fb.relaxed_latency_threshold
+    else:
+        assert r.decided_by == "interval_violation"
+        assert r.interval > fb.relaxed_interval_threshold
+    assert overlay.polls == 1 and r.frames == overlay.frames_per_poll
+    assert not fb.feasible(r) and not r.deadlock
+
+    # deadlock after the first frame: idle (interval rule) or pending age (latency rule)
+    r = oracle.evaluate(deadlock, need_flags=True)
+    if stop_condition == "latency":
+        assert r.decided_by == "pending_timeout"
+        assert r.latency == 1050 > fb.relaxed_latency_threshold
+    else:
+        assert r.decided_by == "idle_timeout"
+        assert r.interval == 1000 > fb.relaxed_interval_threshold
+    assert overlay.polls == 1 and r.frames == 1
+    assert not fb.feasible(r) and not r.deadlock and r.producer_blocked is not None
+
+
+def test_oracle_degradation_within_threshold_reaches_horizon(clock):
+    """A degradation below the relaxed threshold is not a violation: the horizon decides."""
+    overlay, mock = make_overlay(degrade_step=1)  # +1 cycle per poll, 4 polls to the horizon
+    oracle = make_oracle(overlay, "interval")
+    oracle.feasibility = FeasibilityCheck("interval", 0.1, FEASIBLE_INTERVAL, FEASIBLE_LATENCY)
+    r = oracle.evaluate([6, 6, 2, 4])
+    assert r.decided_by == "horizon_reached" and r.frames == HORIZON
+    assert r.interval == FEASIBLE_INTERVAL + 4  # the window maximum at the horizon
+    assert oracle.feasibility.feasible(r)
+    # a tighter relaxation turns the same configuration into a violation at the 3rd poll
+    oracle.feasibility = FeasibilityCheck("interval", 0.02, FEASIBLE_INTERVAL, FEASIBLE_LATENCY)
+    r = oracle.evaluate([6, 6, 2, 4])
+    assert r.decided_by == "interval_violation" and overlay.polls == 3
+
+
+def test_oracle_cap_falls_back_to_single_read(clock, capsys):
+    """When no rule fires before the cap, the old single-read decision is used and logged."""
+    overlay, mock = make_overlay()
+    overlay.stall_mode = True  # frozen before the first frame: no rule can fire
+    oracle = make_oracle(overlay, "interval", cap_factor=4.0)
+    t0 = clock.now
+    r = oracle.evaluate([6, 6, 5, 4])
+    assert r.decided_by == "cap_hit" and r.frames == 0
+    assert clock.now - t0 == pytest.approx(oracle.cap_s, abs=oracle.poll_interval_s)
+    assert "STEADY STATE CAP HIT" in capsys.readouterr().out
+    # the single read reports the mock's verdict: feasible here, degraded for a violated one
+    assert (r.interval, r.latency) == (FEASIBLE_INTERVAL, FEASIBLE_LATENCY) and not r.deadlock
+    r = oracle.evaluate([6, 6, 2, 4])
+    assert r.decided_by == "cap_hit" and r.interval == DEGRADED_INTERVAL
+    # a stalled run reads interval 0 in the deadlock class: reported as deadlock, as before
+    r = oracle.evaluate([6, 6, 5, 0])
+    assert r.decided_by == "cap_hit" and r.deadlock
+
+
+def test_oracle_target_measurement_without_thresholds(clock):
+    """Before the thresholds exist (target measurement) only the horizon and the cap decide."""
+    overlay, mock = make_overlay()
+    oracle = make_oracle(overlay, "both", feasibility=False)
+    r = oracle.evaluate([6, 6, 5, 0])  # would be a deadlock, but no threshold is known yet
+    assert r.decided_by == "cap_hit" and r.frames == 1
+    r = oracle.evaluate([6, 6, 5, 4])
+    assert r.decided_by == "horizon_reached" and r.frames == HORIZON
 
 
 class _nowarn:

@@ -54,6 +54,9 @@ class EvalResult:
     ``producer_blocked`` and ``peak`` are ``None`` when the oracle cannot provide them.
     ``flags_reliable`` is ``False`` when ``producer_blocked`` was derived from flags that are
     only latched at frame boundaries (stale in a deadlock) instead of run-sticky ones.
+    ``decided_by`` names the rule that ended the observation (see ``live_fifo.LiveFIFOOracle``),
+    ``frames`` is the number of completed frames it was based on and ``eval_time_s`` the
+    wall-clock time of the observation; all three are optional bookkeeping of the oracle.
     """
 
     depths: Tuple[int, ...]
@@ -65,6 +68,9 @@ class EvalResult:
     stall_flags: Optional[Tuple[int, ...]] = None
     peak: Optional[Tuple[int, ...]] = None
     flags_reliable: bool = True
+    decided_by: Optional[str] = None
+    frames: Optional[int] = None
+    eval_time_s: Optional[float] = None
 
 
 class Oracle(Protocol):
@@ -1089,8 +1095,24 @@ def cache_to_iterations(cache: EvaluationCache) -> Dict[str, Dict]:
             record["stall_flags"] = list(r.stall_flags)
         if r.peak is not None:
             record["peak"] = list(r.peak)
+        if r.decided_by is not None:
+            record["decided_by"] = r.decided_by
+        if r.frames is not None:
+            record["frames"] = r.frames
+        if r.eval_time_s is not None:
+            record["eval_time_s"] = round(r.eval_time_s, 6)
         iterations[str(entry.index)] = record
     return iterations
+
+
+def decision_counts(cache: EvaluationCache) -> Dict[str, int]:
+    """Number of evaluations in the log per rule that decided them (``EvalResult.decided_by``)."""
+    counts: Dict[str, int] = {}
+    for entry in cache.log:
+        rule = entry.result.decided_by
+        if rule is not None:
+            counts[rule] = counts.get(rule, 0) + 1
+    return counts
 
 
 def search_result_to_dict(result: SearchResult) -> Dict:
