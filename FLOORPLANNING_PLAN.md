@@ -2508,3 +2508,67 @@ Separately the floorplanned transformer fails the *platform's* HBM clock (hbm_ac
 that does; the free build meets it (+0.007) and the floorplanned MobileNets all do
 (+0.05 to +0.11). Not explained by pblock coverage of SLR0's bottom (37 % against
 MobileNet's 48 %) or by the DMA pblocks' positions; watched in the three rebuilds.
+
+**Results of plan steps 1 and 2 (16 Oct 2026).**
+
+*MobileNet at a real 5 ns* (`mobilenetv1_{per_node,baseline}_5ns_clk`, both fixes, from
+`step_prepare_synthesis`; the clock hook logged `10.000 ns -> 5.000 ns` in both links). Both
+reach 200 MHz, no frequency scaling:
+
+| | floorplanned | baseline |
+|---|---|---|
+| kernel clock WNS | +0.117 | +0.143 |
+| hbm_aclk WNS | +0.043 | +0.131 |
+| worst intra-unit (split) | +0.564 | +0.646 |
+| worst inter-unit (split) | +0.255, 216 paths, 26 round trips | +0.430, 3 paths |
+
+The re-timed comparisons of 15 Oct (floorplanned -0.57 against -1.31 at "5 ns") measured
+placements made for 10 ns; implemented at 5 ns, both designs close with the same margin. The
+baseline's worst 2,000 paths all sit inside two MVAU units the free placer spread over the
+chip (half-perimeter > 400 tiles, 96 % route); the floorplanned design's worst are
+inter-unit. No frequency gain at 200 MHz: the comparison moves to 4 ns.
+
+*Transformer at 10 ns.* `baseline_rst` and `per_node_density` (logic utilisation 0.45) both
+make a bitfile at 100 MHz. Their reported kernel WNS (+0.254 and +0.423) are reset hops under
+the half-period exception (restated against the period: +5.254, +5.423); the logic paths are:
+
+| | per_node, 0.75 (old kernels) | per_node_density, 0.45 | baseline_rst |
+|---|---|---|---|
+| worst intra-unit | -0.21 (95.4 MHz) | +0.672 | +0.727 |
+| hbm_aclk WNS | -1.31 | +0.071 | +0.041 |
+
+At density 0.45 the attention units recover nearly to the free placement and the HBM clock
+failure is gone. One model; whether the packer's density should follow the design's fill
+rather than a fixed ceiling is open (the transformer fills a third of its two SLRs).
+
+*`per_node_rst` (0.75, new kernels): `Place 30-99 'failed to commit all instances'`, caused by
+the reset-hop exception.* The post-opt netlist of the failed link and of the 0.75 link that
+placed on 16 Oct 03:33 are identical, cell for cell and pblock for pblock (dumped from both
+`level0_wrapper_opt.dcp`); the only difference is the exception, which since the
+`current_instance` fix reaches the main kernels. Placer replays from the opt checkpoints
+(`out/transformer_vision_per_node_rst/place_replay/`):
+
+| replay | result |
+|---|---|
+| failed link, default and multi-threaded engine | fails in Place Remaining |
+| failed link, exception overridden to 10 ns | fails |
+| placed link, as is (control) | places |
+| placed link plus the 5 ns exception | fails |
+
+**Fifth fix: the half-period exception on the reset tree is dropped** (`a4c3c46b0`). It came
+from 14 Oct, when implementation ran at 10 ns whatever was requested and hops were pulled
+short for a clock the placer never saw; with the clock fixed the period bounds every hop, so
+half of it is a static margin -- and it measurably broke placement and skewed the reported
+WNS and v++'s frequency scaling. The reset pipeline itself stays.
+
+*New code, old checkpoints.* feature/floorplanning-v2 cannot restart from checkpoints of the
+old base: their FIFOs carry `impl_style = vivado`, gone with dev's consolidated FIFO
+component (`AssertionError: impl_style = vivado not in {'rtl', 'virtual'}`), and the stored
+MobileNet FIFO depth file names 13 such FIFOs (`split_large_fifos` is gone too). Hence:
+
+- Clock push on the old tree (same netlists, exception dropped there as well):
+  `mobilenetv1_{per_node,baseline}_4ns` and
+  `transformer_vision_{per_node_density,baseline_rst}_8ns`, from `step_prepare_synthesis`.
+  Vitis scales a failing clock, so the achieved frequency is the comparison.
+- Reference on the new code from scratch, with fresh FIFO sizing:
+  `v2_mobilenetv1_baseline_5ns`; its `fifo_sizing.json` feeds the floorplanned v2 variant.
