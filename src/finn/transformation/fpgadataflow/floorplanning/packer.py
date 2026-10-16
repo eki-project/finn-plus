@@ -49,6 +49,7 @@ import json
 import math
 import sys
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 
 #: Site kinds the packer knows, in the order they are exported.
@@ -128,6 +129,13 @@ ANCHOR_REACH = 24
 #: by 12-16 % for 3-8 tiles more mean gap (median still 0), with every fixture
 #: placing the same number of units; 0.25 gains little shape and loses locality.
 LOCALITY_WEIGHT = 0.5
+
+#: Passes of the refinement over the consecutive-unit gaps (`SlrPacker.refine`), each
+#: visiting every gap longest first; a pass that improves nothing ends it earlier. On the
+#: six measured unit sets every run used all four, and twelve on mobilenetv1's 4 ns units
+#: cut the summed gap by a quarter but not the longest gap (206 tiles either way) at five
+#: times the run time (16 Oct 2026).
+REFINE_PASSES = 4
 
 #: Pack / apply / verify rounds the hook may run; the packer itself is stateless.
 MAX_ROUNDS = 3
@@ -545,6 +553,19 @@ class SlrPacker:
                     out.append((b + 1, hi))
             self.free[t] = out
 
+    def _release(self, spans: dict[int, tuple[int, int]]) -> None:
+        """Give inclusive row spans back to the tile columns' free intervals (undoes `_claim`)."""
+        for t, (a, b) in spans.items():
+            if t not in self.free:
+                continue
+            merged: list[tuple[int, int]] = []
+            for lo, hi in sorted([*self.free[t], (a, b)]):
+                if merged and lo <= merged[-1][1] + 1:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+                else:
+                    merged.append((lo, hi))
+            self.free[t] = merged
+
     def _free_over(self, t: int, y0: int, y1: int) -> bool:
         """Whether tile column ``t`` is free over the inclusive rows y0..y1."""
         return any(lo <= y0 and y1 <= hi for lo, hi in self.free.get(t, []))
@@ -557,6 +578,30 @@ class SlrPacker:
             if y + h - 1 <= hi:
                 out.append(y)
         return out
+
+    def _starts(self, t: int, h: int, aligned: bool, anchors: list[Placement]) -> list[int]:
+        """Start rows for a rectangle of height ``h`` in tile column ``t``.
+
+        Every free interval's bottom (`_bottoms`), and with placed neighbours also the rows
+        level with each of them (same bottom, same top, directly above, directly below)
+        and, with two, the rows centred between them -- inside a free interval, snapped
+        like a bottom. With bottoms alone a unit could only start where a free interval
+        starts: below a neighbour at rows 215-224 of a column free from row 0 up, the
+        nearest start was row 0, 185 rows away (mobilenetv1 unit 82, 16 Oct 2026).
+        """
+        out = set(self._bottoms(t, h, aligned))
+        if not anchors:
+            return sorted(out)
+        rows = [y for a in anchors for y in (a.y0, a.y1 - h + 1, a.y1 + 1, a.y0 - h)]
+        if len(anchors) >= 2:
+            a, b = anchors[0], anchors[1]
+            rows.append((a.y0 + a.y1 + b.y0 + b.y1) // 4 - h // 2)
+        for lo, hi in self.free.get(t, []):
+            for y in rows:
+                y = self._bottom(max(lo, y), aligned)
+                if y + h - 1 <= hi:
+                    out.add(y)
+        return sorted(out)
 
     @property
     def top(self) -> dict[int, int]:
@@ -771,7 +816,9 @@ class SlrPacker:
         lens = unit.chain_lengths(col.kind)
         return bool(lens) and not pack_chains(segs.get(col.kind, []), lens)
 
-    def place(self, unit: Unit, anchors: list[Placement] | None = None) -> Placement:
+    def place(
+        self, unit: Unit, anchors: list[Placement] | None = None, local: bool = False
+    ) -> Placement:
         """Find the most compact feasible column selection for a unit and claim it.
 
         Two searches: the first lets plain logic claim SLICEL columns only, so
@@ -779,11 +826,12 @@ class SlrPacker:
         that finds nothing, the second may take SLICEM for logic as well.
         ``anchors`` are the placed rectangles of the unit's dataflow neighbours in
         this SLR (`_neighbours`): candidates next to them rank ahead (`_search`).
+        ``local`` restricts the search to start columns around the anchors (`SlrPacker.refine`).
         """
         anchors = [a for a in anchors or [] if a.status == "placed"]
-        best, last_missing = self._search(unit, spare_slicem=True, anchors=anchors)
+        best, last_missing = self._search(unit, spare_slicem=True, anchors=anchors, local=local)
         if best is None:
-            best, missing2 = self._search(unit, spare_slicem=False, anchors=anchors)
+            best, missing2 = self._search(unit, spare_slicem=False, anchors=anchors, local=local)
             last_missing = last_missing or missing2
         if best is None:
             reason = "no room" if not last_missing else "starved: " + ",".join(sorted(last_missing))
@@ -857,6 +905,149 @@ class SlrPacker:
                     need = 0
         return rows
 
+    def refine(
+        self,
+        slr_units: list[Unit],
+        units: list[Unit],
+        result: dict[str, Placement],
+        round_no: int,
+    ) -> int:
+        """Shorten the longest gaps between consecutive units of one SLR's packing.
+
+        The greedy packing places each unit once, beside the units already placed, and
+        never makes room for one still to come: on mobilenetv1 (4 ns pair, 16 Oct 2026)
+        MVAUs needing ~71 DSPs found no feasible rectangle near their predecessor, whose
+        neighbourhood the units packed just before held, and landed 231-452 tiles away;
+        the 13 jumps of 100+ tiles carried half the design's consecutive-unit gap and its
+        failing inter-unit paths. Ordering cannot fix this -- packing the jumping units
+        first only moved the jumps between them (measured on the six unit sets below).
+
+        This is a deterministic rip-up-and-replace search. The gaps between consecutive
+        units (dataflow order; a unit packed this round on at least one side) are visited
+        longest first. Each move rips units out, re-places them with `SlrPacker.place` in
+        local mode -- anchored to their placed dataflow neighbours, start columns only
+        around those -- and keeps the result only if it improves the touched units'
+        objective, else restores the previous placements exactly. Moves, in turn: move
+        either unit of the gap alone; or rip the bigger one together with every unit in a
+        window its size around the other, place it first and re-place the ripped units
+        in dataflow order (making room). The objective is the longest gap among the
+        touched edges first, then half-perimeters plus `LOCALITY_WEIGHT` times the summed
+        gaps: with a sum alone a 390-tile jump and ten 39-tile ones score the same,
+        while only the first fails timing once every stream is registered.
+
+        Measured on the four fixtures plus the mobilenetv1 4 ns and vision-transformer
+        unit sets (16 Oct 2026), against the greedy packing alone: longest gap
+        405/236/475/404/452/473 -> 72/53/118/114/181/89 tiles, jumps of 100+ tiles
+        17/12/17/17/11/9 -> 0/0/3/1/3/0, the same units placed, mean half-perimeter
+        within -12..+2 %; 90-210 s per pack on the login node.
+
+        Returns the number of passes run.
+        """
+        movable = {u.name: u for u in slr_units if result[u.name].status == "placed"}
+        by_order = sorted(units, key=lambda u: u.order)
+        # Edges inside this SLR are what the search shortens. A partner across an SLR
+        # boundary only anchors: its gap includes the crossing itself, and counted in
+        # the longest-gap term it blocked moves elsewhere (largest gap 205 tiles on the
+        # resnet18 first-attempt fixture with it, 114 without, 16 Oct 2026).
+        edges: list[tuple[str, str]] = []
+        across: dict[str, list[str]] = {}
+        for a, b in pairwise(by_order):
+            pa, pb = result.get(a.name), result.get(b.name)
+            if pa is None or pb is None or pa.status != "placed" or pb.status != "placed":
+                continue
+            if a.name not in movable and b.name not in movable:
+                continue
+            if pa.slr == pb.slr:
+                edges.append((a.name, b.name))
+            else:
+                across.setdefault(a.name, []).append(b.name)
+                across.setdefault(b.name, []).append(a.name)
+        nbrs: dict[str, list[str]] = {}
+        for a, b in edges:
+            nbrs.setdefault(a, []).append(b)
+            nbrs.setdefault(b, []).append(a)
+
+        def gap(x: str, y: str) -> int:
+            """Gap between two units' rectangles; huge while either is unplaced."""
+            px, py = result[x], result[y]
+            if px.status != "placed" or py.status != "placed":
+                return 1 << 30
+            return self._gap(py.c0, py.c1, py.y0, py.y1, px)
+
+        def objective(names: list[str]) -> tuple[int, float]:
+            """Longest touched gap, then shapes plus weighted gaps, over the given units."""
+            touched = {tuple(sorted((n, m))) for n in names for m in nbrs.get(n, [])}
+            gaps = [gap(x, y) for x, y in touched]
+            shape = sum(_half_perimeter(result[n]) for n in names)
+            return (max(gaps, default=0), shape + LOCALITY_WEIGHT * sum(gaps))
+
+        def attempt(rip: list[str], order: list[str]) -> bool:
+            """Re-place ``rip`` in ``order``; keep it if the objective improves, else restore."""
+            before = objective(rip)
+            old = {n: result[n] for n in rip}
+            for n in rip:
+                self._release(_spans(old[n]))
+            complete = True
+            for n in order:
+                anchors = [
+                    result[m]
+                    for m in [*nbrs.get(n, []), *across.get(n, [])]
+                    if result[m].status == "placed"
+                ]
+                p = self.place(movable[n], anchors=anchors, local=True)
+                p.round = round_no
+                result[n] = p
+                if p.status != "placed":
+                    complete = False
+                    break
+            if complete and objective(rip) < before:
+                return True
+            for n in order:
+                if result[n] is not old[n] and result[n].status == "placed":
+                    self._release(_spans(result[n]))
+            for n in rip:
+                self._claim(_spans(old[n]))
+                result[n] = old[n]
+            return False
+
+        passes = 0
+        while passes < REFINE_PASSES:
+            passes += 1
+            improved = False
+            for a, b in sorted(edges, key=lambda e: -gap(*e)):
+                if gap(a, b) == 0:
+                    break
+                if any(n in movable and attempt([n], [n]) for n in (a, b)):
+                    improved = True
+                    continue
+                big, other = sorted(
+                    (a, b), key=lambda n: -footprint(movable[n]) if n in movable else 0
+                )
+                if big not in movable:
+                    continue
+                pb, po = result[big], result[other]
+                w, h = pb.c1 - pb.c0 + 1, pb.y1 - pb.y0 + 1
+                x0, x1, y0, y1 = po.c0 - w, po.c1 + w, po.y0 - h, po.y1 + h
+                rip = sorted(
+                    (
+                        n
+                        for n, p in result.items()
+                        if n in movable
+                        and n not in (big, other)
+                        and p.status == "placed"
+                        and p.c1 >= x0
+                        and p.c0 <= x1
+                        and p.y1 >= y0
+                        and p.y0 <= y1
+                    ),
+                    key=lambda n: movable[n].order,
+                )
+                if attempt([big, *rip], [big, *rip]):
+                    improved = True
+            if not improved:
+                break
+        return passes
+
     @staticmethod
     def _gap(c0: int, c1: int, y0: int, y1: int, anchor: Placement) -> int:
         """Manhattan gap in tiles between a rectangle and the anchor's (0 if they touch)."""
@@ -865,7 +1056,11 @@ class SlrPacker:
         return dx + dy
 
     def _search(
-        self, unit: Unit, spare_slicem: bool, anchors: list[Placement] | None = None
+        self,
+        unit: Unit,
+        spare_slicem: bool,
+        anchors: list[Placement] | None = None,
+        local: bool = False,
     ) -> tuple[tuple[int, int, int, int, int, list[int]] | None, dict[str, int]]:
         """Best (waste, y, c0, c1, h, columns) over all heights and starts, or None.
 
@@ -899,7 +1094,12 @@ class SlrPacker:
         carriers strung along from the earlier one, and mobilenetv1's unit 220 (a
         FIFO) ended 591 tiles from the window buffer it feeds, whose combinational
         ready path came back through it with 1.0 ns of slack (rebuild6, 14 Oct
-        2026).
+        2026). With two anchors the columns around the midpoint between them are
+        start columns as well, so a unit can split the distance between two neighbours
+        that lie apart instead of settling beside one of them. ``local`` keeps only the
+        start columns around the anchors: the refinement moves a unit towards its
+        neighbours or not at all, and the shortlist of low skyline columns elsewhere
+        doubled its run time (16 Oct 2026).
         """
         needed = unit.needed_slices(self.slicem_util, self.srl_per_slice, self.logic_util)
         aligned = unit.uses_sparse()
@@ -919,16 +1119,23 @@ class SlrPacker:
                 if self._wants(unit, col, blank, {}, spare_slicem):
                     per_kind.setdefault(col.kind, []).append(t)
         tops = self.top
-        starts = set(sorted(usable, key=lambda t: (tops[t], t))[:MAX_START_POSITIONS])
-        for cols_of_kind in per_kind.values():
-            starts.update(sorted(cols_of_kind, key=lambda t: (tops[t], t))[:8])
+        starts: set[int] = set()
+        if not local:
+            starts.update(sorted(usable, key=lambda t: (tops[t], t))[:MAX_START_POSITIONS])
+            for cols_of_kind in per_kind.values():
+                starts.update(sorted(cols_of_kind, key=lambda t: (tops[t], t))[:8])
         anchors = [a for a in anchors or [] if a.status == "placed"]
         for anchor in anchors:
             lo, hi = anchor.c0 - ANCHOR_REACH, anchor.c1 + ANCHOR_REACH
             starts.update(t for t in self.tile_cols if lo <= t <= hi)
+        if len(anchors) >= 2:
+            mid = (anchors[0].c0 + anchors[0].c1 + anchors[1].c0 + anchors[1].c1) // 4
+            starts.update(
+                t for t in self.tile_cols if mid - ANCHOR_REACH <= t <= mid + ANCHOR_REACH
+            )
         ordered = sorted(starts or set(self.tile_cols), key=lambda t: (tops[t], t))
         best, last_missing = self._scan(unit, spare_slicem, anchors, needed, aligned, ordered)
-        if best is None and len(ordered) < len(self.tile_cols):
+        if best is None and not local and len(ordered) < len(self.tile_cols):
             # The start columns above are a shortlist for speed. A unit with many
             # chains can find its contiguous block RAM rows only from a column the
             # shortlist skipped once the columns around the skyline's low points
@@ -959,7 +1166,7 @@ class SlrPacker:
             if best_key is not None and h >= best_key[0]:
                 break
             for start in ordered:
-                for y in self._bottoms(start, h, aligned):
+                for y in self._starts(start, h, aligned, anchors):
                     y1 = y + h - 1
                     cap = self._blank()
                     segs: dict[str, list[int]] = {}
@@ -1118,6 +1325,7 @@ def pack(
     slicem_util: float = DEFAULT_SLICEM_UTILIZATION,
     srl_per_slice: float = DEFAULT_SRL_PER_SLICE,
     logic_util: float = DEFAULT_LOGIC_UTILIZATION,
+    refine_gaps: bool = True,
 ) -> dict[str, Placement]:
     """Pack every unit; in later rounds re-pack only the units the hook rejected.
 
@@ -1143,6 +1351,8 @@ def pack(
             `DEFAULT_SRL_PER_SLICE`).
         logic_util: Fraction of a rectangle's slices plain logic may fill (see
             `DEFAULT_LOGIC_UTILIZATION`).
+        refine_gaps: Run `SlrPacker.refine` over each SLR's packing (dataflow order). Off only
+            to keep tests that do not look at locality fast.
     """
     previous = previous or {}
     feedback = feedback or {}
@@ -1196,7 +1406,21 @@ def pack(
             placement = packer.place(unit, anchors=_neighbours(unit, result, by_name))
             placement.round = round_no
             result[unit.name] = placement
+        if refine_gaps and order == "dataflow":
+            packer.refine(slr_units, units, result, round_no)
     return result
+
+
+def _spans(p: Placement) -> dict[int, tuple[int, int]]:
+    """Row span a placement claims in each of its tile columns."""
+    h = p.y1 - p.y0 + 1
+    cols = p.columns or list(range(p.c0, p.c1 + 1))
+    return {t: (p.y0, p.y0 + p.column_rows.get(t, h) - 1) for t in cols}
+
+
+def _half_perimeter(p: Placement) -> int:
+    """Tile columns spanned plus rows: the shape term of the packer's objective."""
+    return (p.c1 - p.c0 + 1) + (p.y1 - p.y0 + 1)
 
 
 def _neighbours(

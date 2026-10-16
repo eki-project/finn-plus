@@ -18,6 +18,8 @@ from finn.transformation.fpgadataflow.floorplanning.packer import (
     SLICE_LUTS,
     Census,
     Column,
+    Placement,
+    SlrPacker,
     Unit,
     footprint,
     load_previous,
@@ -347,7 +349,9 @@ def test_real_fixture_places_every_unit_with_little_lut_waste(fixture: str) -> N
     units = [
         Unit.from_dict(d) for d in json.loads((FIXTURES / f"units_{fixture}.json").read_text())
     ]
-    result = pack(census, units)
+    # Coverage and waste only; the gap refinement is measured in
+    # test_refinement_removes_the_long_jumps_on_a_real_fixture (slow tier).
+    result = pack(census, units, refine_gaps=False)
     summary = summarize(result, units, census)
     # An SLR whose SLICEM demand exceeds 90 % of its slices (resnet18's
     # distributed-RAM weights) is the SLR assignment's problem, reported as such;
@@ -463,7 +467,7 @@ def test_oversubscribed_slr_is_reported_as_an_assignment_problem() -> None:
     assert budget[1]["slicem"] > 1.0, budget[1]
     assert all(b["slicem"] > 0.9 for b in budget.values())
     assert all(b["luts"] < b["slicem"] for b in budget.values()), "plain LUTs are not the problem"
-    summary = summarize(pack(census, units), units, census)
+    summary = summarize(pack(census, units, refine_gaps=False), units, census)
     assert set(summary["oversubscribed"]) == {"SLR0", "SLR1", "SLR2"}
     assert all("slicem" in v for v in summary["oversubscribed"].values())
 
@@ -526,11 +530,11 @@ def test_a_unit_settles_between_its_placed_neighbours() -> None:
         dy = max(0, pb.y0 - pa.y1 - 1, pa.y0 - pb.y1 - 1)
         return dx + dy
 
-    # u0's only placed neighbour is the carrier: it settles against it.
-    assert gap("u0", "u4") <= 3, f"u0 is {gap('u0', 'u4')} tiles from the carrier"
-    # Every unit stays close to both the unit it receives from and the one it feeds.
-    for a, b in pairwise(["u0", "u1", "u2", "u3", "u4"]):
-        assert gap(a, b) <= 20, f"{b} is {gap(a, b)} tiles from {a}"
+    # Every unit ends next to both the unit it receives from and the one it feeds,
+    # the carrier included (greedy packing alone left u5 15 tiles from it; the
+    # refinement closes that, 16 Oct 2026).
+    for a, b in pairwise(["u0", "u1", "u2", "u3", "u4", "u5"]):
+        assert gap(a, b) <= 3, f"{b} is {gap(a, b)} tiles from {a}"
 
 
 @pytest.mark.fpgadataflow
@@ -552,3 +556,57 @@ def test_an_slr_crossing_unit_settles_at_the_boundary_near_its_partner() -> None
     assert dx <= 8, f"crossing units {dx} tile columns apart"
     slr1_lo = census.slice_bounds(1)[0]
     assert pb.y0 - slr1_lo <= 15, f"SLR1 unit starts {pb.y0 - slr1_lo} rows above the boundary"
+
+
+@pytest.mark.fpgadataflow
+def test_release_gives_back_what_claim_took() -> None:
+    """Releasing a claimed span restores the free intervals exactly, merged."""
+    packer = SlrPacker(_census(rows=120), 0)
+    before = {t: list(iv) for t, iv in packer.free.items()}
+    spans = {packer.tile_cols[0]: (10, 19), packer.tile_cols[3]: (0, 59)}
+    packer._claim(spans)  # noqa: SLF001
+    assert packer.free != before
+    packer._release(spans)  # noqa: SLF001
+    assert packer.free == before
+
+
+@pytest.mark.fpgadataflow
+def test_a_unit_starts_level_with_its_neighbour() -> None:
+    """With a neighbour high up a free column, the unit starts beside it, not at row 0.
+
+    Bottoms of free intervals alone put mobilenetv1's unit 82 at row 0, 185 rows
+    below the predecessor it receives from (16 Oct 2026).
+    """
+    packer = SlrPacker(_census(slice_cols=24, rows=240), 0)
+    anchor = Placement(name="a", slr=0, status="placed", c0=0, c1=1, y0=150, y1=159)
+    packer._claim({0: (150, 159), 1: (150, 159)})  # noqa: SLF001
+    unit = _unit("u", luts=200)
+    p = packer.place(unit, anchors=[anchor])
+    assert p.status == "placed"
+    gap = SlrPacker._gap(p.c0, p.c1, p.y0, p.y1, anchor)  # noqa: SLF001
+    assert gap <= 1, f"unit at rows {p.y0}-{p.y1}, {gap} tiles from its neighbour"
+
+
+@pytest.mark.fpgadataflow
+@pytest.mark.slow
+def test_refinement_removes_the_long_jumps_on_a_real_fixture() -> None:
+    """On mobilenetv1 the refinement leaves no consecutive-unit gap of 100+ tiles.
+
+    The greedy packing alone leaves jumps of up to 236 tiles on this fixture (12 of
+    100 or more), where a unit found no room near its predecessor (16 Oct 2026).
+    Every unit must stay placed.
+    """
+    census = Census.from_dict(json.loads((FIXTURES / "census_u55c_ulp.json").read_text()))
+    units = [
+        Unit.from_dict(d)
+        for d in json.loads((FIXTURES / "units_mobilenetv1_attempt1.json").read_text())
+    ]
+    result = pack(census, units)
+    assert all(p.status == "placed" for p in result.values())
+    by_order = sorted(units, key=lambda u: u.order)
+    gaps = [
+        SlrPacker._gap(pb.c0, pb.c1, pb.y0, pb.y1, pa)  # noqa: SLF001
+        for pa, pb in ((result[a.name], result[b.name]) for a, b in pairwise(by_order))
+        if pa.slr == pb.slr
+    ]
+    assert max(gaps) < 100, sorted(gaps)[-5:]
