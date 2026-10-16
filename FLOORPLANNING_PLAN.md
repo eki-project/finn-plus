@@ -2601,22 +2601,6 @@ not count. Open for the transformer: the floorplan has nothing to win where the 
 deep logic inside one unit; whether per-layer pblocks should stay off such designs (or be
 sized by measured path depth) is a design question, not yet measured.
 
-*Stream register slices at 4 ns* (`mobilenetv1_{per_node,baseline}_4ns_slices`, same
-checkpoints): floorplanned 228.2 MHz (WNS -0.381, 16 endpoints) against 222.4 without
-slices; free 250 MHz with or without (+0.039). The slices remove every ready round trip from
-the failing paths (22 of 40 before, 0 of 16 now); inter-unit failures drop from 33 to 8, all
-on one forward stream, ConvolutionInputGenerator 273 (a chain carrier) -> FIFO 274, 178
-tiles, 6 logic levels. The other 8 are inside MVAU 280 (9 levels, 136 tiles). Slices help
-but do not close the gap; the long jumps are a packing problem (16 Oct analysis: the greedy
-packer finds no room near the predecessor for MVAUs 130, 150 and 211 -- the snake's own
-units hold that area -- and the 13 jumps of 100+ tiles carry half the design's
-consecutive-unit distance). Options assessed, none implemented: large units first by
-measured footprint (extending the chain-carrier rule), annealing as a local refinement of
-the greedy result, glue pblocks overlapping their neighbours (Vivado accepts partially
-overlapping pblocks with an FLBO-1 warning and fills the shared sites from both; 13 of
-6,602 cells then landed outside their pblock, none with disjoint ones;
-`floorplan_validation/out/pblock_overlap_probe/`).
-
 *4 ns pair with stream register slices* (`*_4ns_slices`, same checkpoints): floorplanned
 228.2 MHz (WNS -0.381, 16 endpoints; without slices 222.4 MHz, -0.496, 40), free 250 MHz
 (+0.039). Slices remove every failing ready round trip (22 before, 0 now) and all but one
