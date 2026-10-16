@@ -51,7 +51,8 @@
  *	over an arbitrarily large window without any on-chip buffer.
  *
  *	For steady-state detection without a fixed observation time, the wrapper
- *	further reports the minimum and maximum of the latency and of the interval
+ *	optionally (INSTR_STEADY_STATE, build option instrumentation_steady_state,
+ *	about 1500 LUTs and 700 FFs) reports the minimum and maximum of the latency and of the interval
  *	within the sliding window (lat_win_min/max, int_win_min/max; recomputed by
  *	a sequential scan of the window after every completed output frame, so
  *	they lag a completion by at most 2*avg_n cycles), the cycles since the
@@ -83,6 +84,7 @@
  constexpr unsigned  AVG_N            = @AVG_N@;            // Max frames in averaging window
  constexpr unsigned  TUSER_WIDTH      = @TUSER_WIDTH@;      // Width of tUSER field on finnix output
  constexpr unsigned  NUM_TUSER_VALUES = @NUM_TUSER_VALUES@; // Number of round-robin tUSER values (1 = fixed at 0)
+ #define INSTR_STEADY_STATE @STEADY_STATE@              // 1: steady-state registers (window min/max, idle, pending age)
  using  TI = @TI@;  // IFM transaction word
  using  TO = @TO@;  // OFM transaction word
 
@@ -196,13 +198,16 @@
      ap_uint<32> &avg_fill_out,		// number of valid entries in sliding window (divisor)
      ap_uint<32> &run_cycles_lo,	// lower 32 bits of cycle count since cfg[0] rising edge
      ap_uint<32> &run_cycles_hi,	// upper 32 bits of cycle count since cfg[0] rising edge
-     ap_uint<32> &run_frames,		// completed output frames since cfg[0] rising edge
+     ap_uint<32> &run_frames		// completed output frames since cfg[0] rising edge
+#if INSTR_STEADY_STATE
+     ,
      ap_uint<32> &lat_win_min,		// minimum latency in the sliding window (0 while empty)
      ap_uint<32> &lat_win_max,		// maximum latency in the sliding window (0 while empty)
      ap_uint<32> &int_win_min,		// minimum interval in the sliding window (0 while empty)
      ap_uint<32> &int_win_max,		// maximum interval in the sliding window (0 while empty)
      ap_uint<32> &idle_cycles,		// cycles since the last completed output frame (or reset)
      ap_uint<32> &oldest_pending_age	// cycles since the start of the oldest pending frame (0 if none)
+#endif
  ) {
  #pragma HLS pipeline II=1 style=flp
 
@@ -216,12 +221,14 @@
      static bool  timestamp_unf = false;
  #pragma HLS reset variable=timestamp_ovf
  #pragma HLS reset variable=timestamp_unf
+#if INSTR_STEADY_STATE
      // Head of the timestamp queue held in a register so that the age of the oldest pending
      // frame can be reported continuously (hls::stream cannot be peeked).
      static bool     ts_head_valid = false;
      static clock_t  ts_head = 0;
  #pragma HLS reset variable=ts_head_valid
  #pragma HLS reset variable=ts_head
+#endif
 
      // Input Feed & Generation
      constexpr unsigned  LFSR_WIDTH = (TI::width+15)/16 * 16;
@@ -324,6 +331,7 @@
  #pragma HLS reset variable=int_sum
  #pragma HLS reset variable=prev_avg_n
 
+#if INSTR_STEADY_STATE
      // Sliding-Window Minimum/Maximum State: after every window update a sequential scan
      // over the valid entries recomputes the extremes (one entry per cycle, never in the
      // same cycle as a window update so that the buffers see at most two accesses per cycle).
@@ -351,6 +359,7 @@
  #pragma HLS reset variable=win_int_min
  #pragma HLS reset variable=win_int_max
  #pragma HLS reset variable=run_first_frame
+#endif
 
      // Running Throughput Measurement State (resets on rising edge of cfg[0])
      static bool  prev_cfg0  = false;
@@ -377,11 +386,14 @@
          run_active       = true;
          run_total_cycles = 0;
          run_frame_count  = 0;
+#if INSTR_STEADY_STATE
          run_first_frame  = true;
+#endif
      }
 
      TO  oval;
      bool const  got_oval = finnox.read_nb(oval);
+#if INSTR_STEADY_STATE
      bool const  complete = got_oval && (ocnt == OLEN-1);
 
      // Timestamp queue head: refill the head register when it is empty or consumed by the
@@ -390,8 +402,8 @@
      bool const  refill = !ts_head_valid || complete;
      clock_t  popped = 0;
      bool const  got_popped = refill && timestamps.read_nb(popped);
-     clock_t const  ts0   = ts_head_valid? ts_head : popped;
-     bool const     ts_ok = ts_head_valid || got_popped;
+     clock_t const  ts_head_now = ts_head_valid? ts_head : popped;
+     bool const     ts_head_ok  = ts_head_valid || got_popped;
      if(complete && !ts_head_valid) {
          ts_head_valid = false;  // direct pop consumed by this frame
      }
@@ -399,6 +411,9 @@
          ts_head_valid = got_popped;
          ts_head       = popped;
      }
+     // The window is updated exactly when a frame completes with a start timestamp
+     bool const  window_update = complete && ts_head_ok;
+#endif
 
      if(got_oval) {
          // Start of new output feature map
@@ -426,15 +441,55 @@
          }
 
          // Track frame position
-         if(!complete)  ocnt++;
+         if(ocnt != OLEN-1)  ocnt++;
          else {
-             if(!ts_ok)  timestamp_unf = true;
+             clock_t  ts0;
+#if INSTR_STEADY_STATE
+             // The sliding-window update follows below at function level (exclusive with the
+             // min/max scan); the first version of the steady-state logic kept it nested here
+             // and lost II=1 to carried dependences on the scanner state.
+             ts0 = ts_head_now;
+             if(!window_update)  timestamp_unf = true;  // == !ts_head_ok here
              else {
                  last_latency  = cnt_clk - ts0;	// completion - start
                  last_interval = cnt_clk - ts1;	// completion - previous completion
                  cur_min_latency = std::min(cur_min_latency, last_latency);
                  ts1 = cnt_clk;	// mark completion ^
              }
+#else
+             if(!timestamps.read_nb(ts0))  timestamp_unf = true;
+             else {
+                 last_latency  = cnt_clk - ts0;	// completion - start
+                 last_interval = cnt_clk - ts1;	// completion - previous completion
+                 cur_min_latency = std::min(cur_min_latency, last_latency);
+                 ts1 = cnt_clk;	// mark completion ^
+
+                 // Sliding-window average update
+                 // TODO: II=1 but depth is ~70 cycles, can we optimize this?
+                 ap_uint<32>  win = (avg_n == 0 || avg_n > AVG_N) ? ap_uint<32>(AVG_N) : avg_n;
+                 if(prev_avg_n != win) {
+                     avg_head = 0;
+                     avg_fill = 0;
+                     lat_sum  = 0;
+                     int_sum  = 0;
+                     prev_avg_n = win;
+                 }
+                 clock_t  old_lat = lat_buf[avg_head];
+                 clock_t  old_int = int_buf[avg_head];
+                 lat_buf[avg_head] = last_latency;
+                 int_buf[avg_head] = last_interval;
+                 if(avg_fill < win) {
+                     lat_sum += last_latency;
+                     int_sum += last_interval;
+                     avg_fill++;
+                 } else {
+                     lat_sum = lat_sum + last_latency - old_lat;
+                     int_sum = int_sum + last_interval - old_int;
+                 }
+                 avg_head++;
+                 if(avg_head >= ap_uint<clog2nz(AVG_N)+1>(win))  avg_head = 0;
+             }
+#endif
              ocnt = 0;
              if(run_active)  run_frame_count++;
 
@@ -442,10 +497,11 @@
          }
      }
 
+#if INSTR_STEADY_STATE
      // Sliding-window update on a completed frame, otherwise one step of the min/max scan
-     if(complete && ts_ok) {
+     // (the window buffers see at most two accesses per cycle)
+     if(window_update) {
          // Sliding-window average update
-         // TODO: II=1 but depth is ~70 cycles, can we optimize this?
          ap_uint<32>  win = (avg_n == 0 || avg_n > AVG_N) ? ap_uint<32>(AVG_N) : avg_n;
          if(prev_avg_n != win) {
              avg_head = 0;
@@ -463,7 +519,7 @@
          clock_t  old_int = int_buf[avg_head];
          lat_buf[avg_head] = last_latency;
          int_buf[avg_head] = last_interval;
-         int_valid[avg_head] = !run_first_frame;
+         int_valid[avg_head] = !run_first_frame;  // first frame of a run: no valid interval
          run_first_frame = false;
          if(avg_fill < win) {
              lat_sum += last_latency;
@@ -515,6 +571,7 @@
      // this cycle reads as idle for 0 cycles)
      idle_cycles        = cnt_clk - ts1;
      oldest_pending_age = ts_head_valid? clock_t(cnt_clk - ts_head) : clock_t(0);
+#endif
 
      // Advance Timestamp Counter
      cnt_clk++;
@@ -537,10 +594,12 @@
      run_cycles_lo = run_total_cycles(31,  0);
      run_cycles_hi = run_total_cycles(63, 32);
      run_frames    = run_frame_count;
+#if INSTR_STEADY_STATE
      lat_win_min = win_lat_min;
      lat_win_max = win_lat_max;
      int_win_min = win_int_min;
      int_win_max = win_int_max;
+#endif
 
  } // instrument()
 
@@ -563,13 +622,16 @@
      ap_uint<32> &avg_fill,
      ap_uint<32> &run_cycles_lo,
      ap_uint<32> &run_cycles_hi,
-     ap_uint<32> &run_frames,
+     ap_uint<32> &run_frames
+#if INSTR_STEADY_STATE
+     ,
      ap_uint<32> &lat_win_min,
      ap_uint<32> &lat_win_max,
      ap_uint<32> &int_win_min,
      ap_uint<32> &int_win_max,
      ap_uint<32> &idle_cycles,
      ap_uint<32> &oldest_pending_age
+#endif
  ) {
  #pragma HLS interface axis port=finnix
  #pragma HLS interface axis port=finnox
@@ -590,12 +652,14 @@
  #pragma HLS interface s_axilite bundle=ctrl port=run_cycles_lo
  #pragma HLS interface s_axilite bundle=ctrl port=run_cycles_hi
  #pragma HLS interface s_axilite bundle=ctrl port=run_frames
+#if INSTR_STEADY_STATE
  #pragma HLS interface s_axilite bundle=ctrl port=lat_win_min
  #pragma HLS interface s_axilite bundle=ctrl port=lat_win_max
  #pragma HLS interface s_axilite bundle=ctrl port=int_win_min
  #pragma HLS interface s_axilite bundle=ctrl port=int_win_max
  #pragma HLS interface s_axilite bundle=ctrl port=idle_cycles
  #pragma HLS interface s_axilite bundle=ctrl port=oldest_pending_age
+#endif
  #pragma HLS interface ap_ctrl_none port=return
 
  #pragma HLS dataflow disable_start_propagation
@@ -612,7 +676,11 @@
 
      // Main — writes to internal FIFO (enables II=1 in instrument)
      // TI and TO must be explicit: TI cannot be deduced from ap_uint<TI::width+...>
-     instrument<PENDING, ILEN, OLEN, KO, AVG_N, TI, TO>(finnix0, finnox0, cfg, seed, avg_n, mux_interval, status, latency, interval, checksum, min_latency, lat_sum_lo, lat_sum_hi, int_sum_lo, int_sum_hi, avg_fill, run_cycles_lo, run_cycles_hi, run_frames, lat_win_min, lat_win_max, int_win_min, int_win_max, idle_cycles, oldest_pending_age);
+     instrument<PENDING, ILEN, OLEN, KO, AVG_N, TI, TO>(finnix0, finnox0, cfg, seed, avg_n, mux_interval, status, latency, interval, checksum, min_latency, lat_sum_lo, lat_sum_hi, int_sum_lo, int_sum_hi, avg_fill, run_cycles_lo, run_cycles_hi, run_frames
+#if INSTR_STEADY_STATE
+         , lat_win_min, lat_win_max, int_win_min, int_win_max, idle_cycles, oldest_pending_age
+#endif
+     );
 
      // FIFO -> AXI-Stream: reconstruct hls::axis beat from packed internal word
      move<TI, TUSER_WIDTH>(finnix0, finnix);

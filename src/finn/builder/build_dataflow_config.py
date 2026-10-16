@@ -807,6 +807,14 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: (number of frames) used by the instrumentation wrapper for throughput measurement.
     instrumentation_avg_n: int = 64
 
+    #: (Only relevant if enable_instrumentation is True) Add the steady-state registers to the
+    #: instrumentation wrapper: minimum/maximum of latency and interval over the averaging
+    #: window, cycles since the last completed frame and the age of the oldest frame in flight.
+    #: They are required by the steady-state detection of live FIFO sizing (the PYNQ driver
+    #: falls back to a fixed observation time without them) and cost about 1500 LUTs and
+    #: 700 FFs. Enabled automatically for builds with auto_fifo_strategy == live_fifo.
+    instrumentation_steady_state: bool = False
+
     #: Whether pdb postmortem debugging will be launched when the build fails.
     enable_build_pdb_debug: bool = False
 

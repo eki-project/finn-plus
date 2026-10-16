@@ -2274,6 +2274,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
                 cfg.instrumentation_avg_n,
                 cfg.auto_fifo_depths and cfg.auto_fifo_strategy == AutoFIFOSizingMethod.LIVE_FIFO,
                 partition_model_dir=str(partition_model_dir),
+                instrumentation_steady_state=cfg.instrumentation_steady_state,
             )
         )
     elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
