@@ -351,34 +351,21 @@ def test_nodes_inserted_after_the_floorplan_get_their_own_unit() -> None:
 
 
 @pytest.mark.fpgadataflow
-def test_reset_hop_constraints_bound_every_hop_to_half_the_period() -> None:
-    """The kernel XDC gets one max-delay constraint on every reset_pipe register."""
-    from finn.transformation.fpgadataflow.create_stitched_ip import reset_hop_constraints
-
-    lines = reset_hop_constraints(10.0)
-    # The query runs at the kernel's scope root, not inside the last XPM instance that
-    # write_xdc left current.
-    assert lines[1] == "current_instance -quiet"
-    lines = [lines[0], *lines[2:]]
-    assert lines[1].startswith(
-        "set_max_delay -datapath_only -from [get_cells -quiet -hierarchical -regexp"
-    )
-    assert "(_rst|ap_rst_n_tree)/.*Pipe_reg" in lines[1]
-    # The registers sit below the IP instance wrapper and replicas carry a suffix.
+def test_reset_register_pattern_matches_tree_registers() -> None:
+    """The reset-register pattern matches the tree and per-node pipes and nothing else."""
     import re
 
-    pattern = re.search(r"-regexp \{(.*)\}\]", lines[1]).group(1)
+    from finn.transformation.fpgadataflow.create_stitched_ip import RESET_REGISTER_PATTERN
+
+    # The registers sit below the IP instance wrapper and replicas carry a suffix.
     for name in (
         "StreamingDataflowPartition_2_MVAU_rtl_4_rst/inst/genChain.Pipe_reg[0]",
         "ap_rst_n_tree/inst/genOne.Pipe_reg[0]_replica_3",
     ):
-        assert re.fullmatch(pattern, name), name
-    assert not re.fullmatch(pattern, "StreamingDataflowPartition_2_MVAU_rtl_4/inst/core/Pipe_reg")
-    assert lines[1].endswith("}] 5")
-    assert all(line.count("{") == line.count("}") for line in lines)
-    # Plain XDC only: Vivado rejects Tcl control flow in an IP's constraint file.
-    assert not any(line.split(" ")[0] in ("if", "set", "foreach") for line in lines)
-    assert len(lines) == 2
+        assert re.fullmatch(RESET_REGISTER_PATTERN, name), name
+    assert not re.fullmatch(
+        RESET_REGISTER_PATTERN, "StreamingDataflowPartition_2_MVAU_rtl_4/inst/core/Pipe_reg"
+    )
 
 
 @pytest.mark.fpgadataflow

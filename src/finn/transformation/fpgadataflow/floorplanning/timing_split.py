@@ -381,9 +381,10 @@ def classify(export: dict[str, Any], units: dict[str, Unit]) -> list[PathRecord]
             u.placed = Box(info["x0"], info["y0"], info["x1"], info["y1"])
     lookup = unit_lookup(units)
     # Vivado reports slack against a path's tightest requirement; a hop under a
-    # set_max_delay (the reset tree) would otherwise look worse than a path of the
-    # same length under the clock alone. Every slack is restated against the kernel
-    # period, the largest requirement seen, so the classes compare.
+    # set_max_delay (the reset tree in builds of 14-16 Oct 2026) would otherwise look
+    # worse than a path of the same length under the clock alone. Every slack is
+    # restated against the kernel period, the largest requirement seen, so the classes
+    # compare.
     period = max((float(p["requirement"]) for p in export["paths"]), default=0.0)
     records = []
     for p in export["paths"]:
@@ -755,7 +756,8 @@ def main(argv: list[str] | None = None) -> int:
         write_roots_file(design_units, roots)
         checkpoint = args.checkpoint if label == "floorplanned" else args.baseline
         jobs.append((label, checkpoint, roots, args.out / f"export_{label}.json"))
-    # The reset tree's registers carry a set_max_delay; exported as their own group.
+    # The reset tree's registers are exported as their own group (builds of 14-16 Oct
+    # 2026 also put them under a set_max_delay).
     from finn.transformation.fpgadataflow.create_stitched_ip import RESET_REGISTER_PATTERN
 
     reset_pattern = RESET_REGISTER_PATTERN

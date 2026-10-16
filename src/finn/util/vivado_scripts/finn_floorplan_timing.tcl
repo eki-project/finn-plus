@@ -117,7 +117,8 @@ puts "timing_split: [llength $unit_json] unit(s) measured in [expr {[clock secon
 # -- paths -------------------------------------------------------------------
 set t0 [clock seconds]
 # Two groups: the worst paths under the clock period alone, and the worst under a
-# tighter requirement (a set_max_delay, e.g. the reset tree's hops). Ranked together
+# tighter requirement (a set_max_delay, e.g. the reset tree's hops in builds of
+# 14-16 Oct 2026). Ranked together
 # by slack, a few hundred constrained registers would fill the whole export and hide
 # the clock paths, and -filter on get_timing_paths applies only after the worst paths
 # were picked. So the tighter group is taken first, and the clock-period group is

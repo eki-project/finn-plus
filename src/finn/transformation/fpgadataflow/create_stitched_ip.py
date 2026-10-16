@@ -158,38 +158,18 @@ def kernel_xdc_package_tcl(block_name: str) -> list[str]:
     ]
 
 
-def reset_hop_constraints(clk_ns: float) -> list[str]:
-    """XDC lines that bound every hop of the reset tree to half the clock period.
-
-    The placer is timing-driven: it moves cells until timing is met and no further,
-    so a chain of unconstrained reset registers is not strung out between its
-    source and its loads on its own -- with 1.47 ns of slack left, a tree replica
-    still drove a node's first register 302 tiles away (floorplanned mobilenetv1,
-    14 Oct 2026). A ``set_max_delay`` from every `reset_pipe` register (and the
-    replicas synthesis makes of them) is the requirement that makes the tools keep
-    each hop short. Datapath only: the hops are register to register in one clock.
-    The registers sit one level below the IP instance (``<cell>/inst/gen*.Pipe_reg``),
-    and synthesis names their replicas ``Pipe_reg[n]_replica*``; the pattern covers
-    both, so the kernel built on 14 Oct 2026 with a pattern that assumed no ``inst``
-    level and matched nothing is not repeated. The lines are plain XDC: Vivado reads
-    an IP's constraint file with ``if``, ``set`` and other Tcl control flow rejected
-    (``Designutils 20-1307``), and ``-quiet`` on the cell query is what covers a
-    kernel without reset registers.
-    """
-    limit = clk_ns / 2
-    return [
-        "# FINN+ reset pipeline: every hop of the reset tree within half the clock period",
-        # write_xdc -cell leaves the file inside the scope of the last XPM CDC instance
-        # it constrained (no closing revert), so without this the query below ran inside
-        # a FIFO's reset synchroniser, matched nothing, and the constraint was silently
-        # empty in every kernel with an XPM FIFO (16 Oct 2026). In a scoped XDC
-        # `current_instance -quiet` returns to the scope root, the kernel's `<block>_i`.
-        "current_instance -quiet",
-        (
-            "set_max_delay -datapath_only -from "
-            f"[get_cells -quiet -hierarchical -regexp {{{RESET_REGISTER_PATTERN}}}] {limit:g}"
-        ),
-    ]
+# The reset tree's hops carry no timing exception of their own: they are register to
+# register in the kernel clock and the period bounds them like every other path. A
+# `set_max_delay -datapath_only` of half the period on them (14-16 Oct 2026) was a
+# static margin from the time implementation ran at 10 ns whatever was requested (see
+# `vitis_linking_configuration.render_kernel_clock_tcl`), and with the clock fixed it
+# did harm: on the floorplanned vision transformer it alone turned a placement that
+# commits into `Place 30-99 'failed to commit all instances'` (same post-opt netlist and
+# pblocks with and without it, both ways round), and it made the kernel clock's
+# reported WNS -- and v++'s post-route frequency scaling -- a reset hop measured against
+# half the period. When appending to a `write_xdc -cell` file, start with
+# `current_instance -quiet`: the file ends inside the scope of the last XPM instance it
+# constrained, and an appended query runs there.
 
 
 class CreateStitchedIP(Transformation):
@@ -983,18 +963,6 @@ class CreateStitchedIP(Transformation):
                     f"write_verilog -force -mode synth_stub {block_name}.v",
                     f"write_checkpoint {block_name}.dcp",
                     *kernel_xdc_export_tcl(block_name),
-                    *(
-                        [
-                            f"set finn_xdc [open {block_name}.xdc a]",
-                            *[
-                                f"puts $finn_xdc {{{line}}}"
-                                for line in reset_hop_constraints(self.clk_ns)
-                            ],
-                            "close $finn_xdc",
-                        ]
-                        if self.reset_pipeline_stages > 0
-                        else []
-                    ),
                     (
                         f"report_utilization -hierarchical -hierarchical_depth 5 "
                         f"-file {block_name}_partition_util.rpt"
