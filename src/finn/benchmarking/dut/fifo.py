@@ -29,6 +29,10 @@ MAX_RAM_FIFO_BITS = 1 << 23
 
 
 class bench_fifo(MicrobenchDUT):
+    """Microbenchmark DUT of the StreamingFIFO (RTL)
+    operator; parameters in ``PARAMS``.
+    """
+
     NAME = "fifo"
     OP_TYPES = ("StreamingFIFO_rtl",)
     PARAMS = {
@@ -41,6 +45,7 @@ class bench_fifo(MicrobenchDUT):
 
     @staticmethod
     def validate(params: dict) -> Optional[str]:
+        """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         bits = DataType[params["dtype"]].bitwidth()
         elems, n, depth = int(params["elems"]), int(params["n"]), int(params["depth"])
         if elems < 1 or n < 1:
@@ -69,6 +74,7 @@ class bench_fifo(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
+        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "dtype": Choice(
                 ["BINARY", "UINT2", "UINT4", "INT4", "UINT8", "INT8", "INT16", "INT32"]
@@ -83,6 +89,7 @@ class bench_fifo(MicrobenchDUT):
 
     @classmethod
     def make_model(cls, params: dict, fpga_part: str):
+        """Build the single-node model for ``params`` and return it with its dut_info."""
         dtype = DataType[params["dtype"]]
         elems, n, depth = int(params["elems"]), int(params["n"]), int(params["depth"])
         normal_shape = [1, n * elems]

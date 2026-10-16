@@ -17,6 +17,10 @@ from finn.benchmarking.param_space import Choice, Divisor, Fixed, ParamSpace
 
 
 class bench_dwc(MicrobenchDUT):
+    """Microbenchmark DUT of the data width converter (StreamingDataWidthConverter HLS/RTL)
+    operator; parameters in ``PARAMS``.
+    """
+
     NAME = "dwc"
     OP_TYPES = ("StreamingDataWidthConverter_hls", "StreamingDataWidthConverter_rtl")
     PARAMS = {
@@ -30,6 +34,7 @@ class bench_dwc(MicrobenchDUT):
 
     @staticmethod
     def validate(params: dict) -> Optional[str]:
+        """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         backend = params.get("backend")
         if backend not in ("hls", "rtl"):
             return "backend must be hls or rtl"
@@ -53,6 +58,7 @@ class bench_dwc(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
+        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "backend": Choice(["hls", "rtl"]),
             "dtype": Choice(
@@ -66,6 +72,7 @@ class bench_dwc(MicrobenchDUT):
 
     @classmethod
     def make_model(cls, params: dict, fpga_part: str):
+        """Build the single-node model for ``params`` and return it with its dut_info."""
         dtype = DataType[params["dtype"]]
         bits = dtype.bitwidth()
         in_elems, out_elems = int(params["in_elems"]), int(params["out_elems"])

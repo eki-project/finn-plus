@@ -26,6 +26,7 @@ _DTYPES_HLS = ("INT", "UINT", "FLOAT32")
 
 
 def _dtype_ok(name: str) -> bool:
+    """Whether the datatype name is an INT/UINT type or FLOAT32."""
     return name.startswith("INT") or name.startswith("UINT") or name == "FLOAT32"
 
 
@@ -41,6 +42,10 @@ def rhs_shape_for(bcast: str, shape: list[int]) -> list[int]:
 
 
 class bench_eltwise(MicrobenchDUT):
+    """Microbenchmark DUT of the elementwise Add/Mul (ElementwiseBinaryOperation HLS/RTL)
+    operator; parameters in ``PARAMS``.
+    """
+
     NAME = "eltwise"
     OP_TYPES = (
         "ElementwiseAdd_hls",
@@ -62,6 +67,7 @@ class bench_eltwise(MicrobenchDUT):
 
     @staticmethod
     def validate(params: dict) -> Optional[str]:
+        """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         backend = params.get("backend")
         if backend not in ("hls", "rtl"):
             return "backend must be hls or rtl"
@@ -102,6 +108,7 @@ class bench_eltwise(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
+        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "backend": Choice(["hls", "hls", "hls", "rtl"]),
             "op": Choice(["Add", "Mul"]),
@@ -138,6 +145,7 @@ class bench_eltwise(MicrobenchDUT):
 
     @classmethod
     def make_model(cls, params: dict, fpga_part: str):
+        """Build the single-node model for ``params`` and return it with its dut_info."""
         backend, op = params["backend"], params["op"]
         lhs_dt, rhs_dt = DataType[params["lhs_dtype"]], DataType[params["rhs_dtype"]]
         shape = [int(x) for x in params["shape"]]

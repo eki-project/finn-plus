@@ -40,6 +40,7 @@ class LogTargetRegressor(TransformedTargetRegressor):
     back). ``regressor`` defaults to :class:`HistGradientBoostingRegressor`."""
 
     def __init__(self, regressor=None, func=signed_log1p, inverse_func=signed_expm1):
+        """Wrap ``regressor`` with the log1p/expm1 target transform."""
         if regressor is None:
             regressor = self._default_regressor()
         super().__init__(
@@ -48,6 +49,7 @@ class LogTargetRegressor(TransformedTargetRegressor):
 
     @staticmethod
     def _default_regressor():
+        """Regressor used when none is given."""
         return HistGradientBoostingRegressor(random_state=RANDOM_STATE)
 
 
@@ -61,4 +63,5 @@ class LogTargetMLPRegressor(LogTargetRegressor):
 
     @staticmethod
     def _default_regressor():
+        """Regressor used when none is given."""
         return MLPRegressor(early_stopping=True, max_iter=2000, random_state=RANDOM_STATE)

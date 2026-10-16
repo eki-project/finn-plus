@@ -76,6 +76,7 @@ class SampleStats:
     key_names: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
+        """Plain dict for ``sampling_stats.json``."""
         return asdict(self)
 
 
@@ -186,6 +187,7 @@ def sample_entry(
 
 
 def _expand_cartesian(entry: dict) -> list[dict]:
+    """Cartesian product of a grid config entry (every list value is a dimension)."""
     return [dict(zip(entry.keys(), values)) for values in itertools.product(*entry.values())]
 
 

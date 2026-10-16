@@ -527,6 +527,7 @@ def _oof_evaluate(
     over repeats for RepeatedKFold)."""
 
     def one(train_idx, test_idx):
+        """Fit on one split and return its index, prediction and error metrics."""
         fitted = clone(model).fit(X.iloc[train_idx], y[train_idx])
         pred = np.asarray(fitted.predict(X.iloc[test_idx]), dtype=float)
         y_test = y[test_idx]

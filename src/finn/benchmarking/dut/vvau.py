@@ -28,6 +28,10 @@ from finn.util.basic import is_versal
 
 
 class bench_vvau(MicrobenchDUT):
+    """Microbenchmark DUT of the vector-vector activation unit (VVAU HLS/RTL)
+    operator; parameters in ``PARAMS``.
+    """
+
     NAME = "vvau"
     OP_TYPES = ("VVAU_hls", "VVAU_rtl")
     PARAMS = {
@@ -47,6 +51,7 @@ class bench_vvau(MicrobenchDUT):
 
     @staticmethod
     def validate(params: dict) -> Optional[str]:
+        """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         backend = params.get("backend")
         if backend not in ("hls", "rtl"):
             return "backend must be hls or rtl"
@@ -96,6 +101,7 @@ class bench_vvau(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
+        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "backend": Choice(["hls", "hls", "rtl"]),
             "idt": Choice(["UINT2", "INT2", "UINT4", "INT4", "UINT8", "INT8"]),
@@ -116,6 +122,7 @@ class bench_vvau(MicrobenchDUT):
 
     @classmethod
     def make_model(cls, params: dict, fpga_part: str):
+        """Build the single-node model for ``params`` and return it with its dut_info."""
         backend = params["backend"]
         idt, wdt = DataType[params["idt"]], DataType[params["wdt"]]
         act = params.get("act")

@@ -25,6 +25,7 @@ class FTTransformer(nn.Module):
         dropout: float,
         pooling: str,
     ):
+        """Build the feature tokenizer, transformer encoder and regression head."""
         super().__init__()
         self.pooling = pooling
         self.weight = nn.Parameter(torch.empty(n_features, d_model))
@@ -47,6 +48,7 @@ class FTTransformer(nn.Module):
         self.head = nn.Linear(d_model, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Predict one value per row of ``x`` (batch, n_features)."""
         tokens = x.unsqueeze(-1) * self.weight + self.bias  # (batch, features, d_model)
         tokens = torch.cat([self.cls.expand(x.shape[0], -1, -1), tokens], dim=1)
         encoded = self.encoder(tokens)
@@ -55,6 +57,7 @@ class FTTransformer(nn.Module):
 
 
 def build_module(n_features: int, hp: dict) -> FTTransformer:
+    """Construct an FTTransformer from the hyperparameter dict."""
     return FTTransformer(
         n_features,
         hp["d_model"],
@@ -67,6 +70,7 @@ def build_module(n_features: int, hp: dict) -> FTTransformer:
 
 
 def _loss_fn(name: str):
+    """Loss module for the configured loss name (mse, mae or huber)."""
     if name == "mse":
         return nn.MSELoss()
     if name == "mae":
@@ -142,6 +146,7 @@ def train(
 
 
 def load_module(n_features: int, hp: dict, state: dict) -> FTTransformer:
+    """Rebuild a module from hyperparameters and a numpy state dict."""
     model = build_module(n_features, hp)
     model.load_state_dict({k: torch.as_tensor(v) for k, v in state.items()})
     model.eval()
@@ -149,6 +154,7 @@ def load_module(n_features: int, hp: dict, state: dict) -> FTTransformer:
 
 
 def predict(model: FTTransformer, X: np.ndarray, threads: int) -> np.ndarray:
+    """Predict ``X`` with the fitted model."""
     torch.set_num_threads(max(1, threads))
     with torch.no_grad():
         out = model(torch.as_tensor(X, dtype=torch.float32))

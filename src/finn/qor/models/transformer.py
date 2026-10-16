@@ -37,6 +37,7 @@ _HP_KEYS = (
 
 
 def torch_available() -> bool:
+    """Whether torch is importable (checked via find_spec)."""
     return importlib.util.find_spec("torch") is not None
 
 
@@ -79,6 +80,7 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
         random_state=RANDOM_STATE,
         verbose=0,
     ):
+        """Store the hyperparameters (sklearn convention: no validation here)."""
         self.d_model = d_model
         self.n_layers = n_layers
         self.n_heads = n_heads
@@ -106,15 +108,18 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
             raise ImportError("TabTransformerRegressor requires torch")
 
     def _hp(self) -> dict:
+        """Hyperparameters of the torch module as a dict."""
         return {k: getattr(self, k) for k in _HP_KEYS}
 
     @staticmethod
     def _dense(X) -> np.ndarray:
+        """Dense float array from a dense or sparse input."""
         if sparse.issparse(X):
             X = X.toarray()
         return np.asarray(X, dtype=np.float32)
 
     def _transform_target(self, y: np.ndarray) -> np.ndarray:
+        """Apply the configured target transform."""
         if self.target_transform == "log1p":
             return signed_log1p(y)
         if self.target_transform == "standardize":
@@ -124,6 +129,7 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
         raise ValueError(f"unknown target_transform {self.target_transform!r}")
 
     def _inverse_target(self, y: np.ndarray) -> np.ndarray:
+        """Invert the configured target transform."""
         if self.target_transform == "log1p":
             return signed_expm1(y)
         if self.target_transform == "standardize":
@@ -132,6 +138,7 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
 
     # -- sklearn API -----------------------------------------------------------------------
     def fit(self, X, y):
+        """Fit the model on ``X``/``y`` (see the class docstring)."""
         self.check_runtime()
         from finn.qor.models import _torch_impl
 
@@ -165,6 +172,7 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
         return self
 
     def predict(self, X):
+        """Predict ``X`` with the fitted model."""
         check_is_fitted(self, "state_dict_")
         self.check_runtime()
         from finn.qor.models import _torch_impl
@@ -179,6 +187,7 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
         return self._inverse_target(_torch_impl.predict(module, X, int(self.torch_threads)))
 
     def __sklearn_tags__(self):
+        """sklearn estimator tags (regressor, sparse input accepted)."""
         tags = super().__sklearn_tags__()
         tags.input_tags.sparse = True
         tags.non_deterministic = False
@@ -186,8 +195,10 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
 
     # -- persistence: no torch objects in the pickle -----------------------------------------
     def __getstate__(self):
+        """Pickle without the cached runtime objects."""
         return dict(self.__dict__)
 
     def __setstate__(self, state):
+        """Restore the state; runtime objects are rebuilt lazily."""
         self.__dict__.update(state)
         _CACHE.pop(id(self), None)

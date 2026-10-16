@@ -26,6 +26,7 @@ class Dimension(Protocol):
 
 
 def _weighted_choice(rng: random.Random, values: Sequence, weights: Optional[Sequence[float]]):
+    """Draw one of ``values`` with the given (unnormalized) weights."""
     if weights is None:
         return rng.choice(list(values))
     return rng.choices(list(values), weights=list(weights), k=1)[0]
@@ -39,6 +40,7 @@ class Choice:
     weights: Optional[list[float]] = None
 
     def sample(self, rng: random.Random, partial: dict) -> Any:
+        """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         return _weighted_choice(rng, self.values, self.weights)
 
 
@@ -52,6 +54,7 @@ class IntRange:
     step: int = 1
 
     def sample(self, rng: random.Random, partial: dict) -> int:
+        """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         if self.log:
             value = int(round(math.exp(rng.uniform(math.log(self.lo), math.log(self.hi)))))
         else:
@@ -71,11 +74,13 @@ class Pow2Range:
     weights: Optional[list[float]] = None
 
     def values(self) -> list[int]:
+        """All powers of two in ``[lo, hi]``."""
         e_lo = math.ceil(math.log2(self.lo))
         e_hi = math.floor(math.log2(self.hi))
         return [2**e for e in range(e_lo, e_hi + 1)]
 
     def sample(self, rng: random.Random, partial: dict) -> int:
+        """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         return _weighted_choice(rng, self.values(), self.weights)
 
 
@@ -89,6 +94,7 @@ class FloatRange:
     step: Optional[float] = None
 
     def sample(self, rng: random.Random, partial: dict) -> float:
+        """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         if self.log:
             value = math.exp(rng.uniform(math.log(self.lo), math.log(self.hi)))
         else:
@@ -124,6 +130,7 @@ class Divisor:
     hi: Optional[int] = None
 
     def sample(self, rng: random.Random, partial: dict) -> int:
+        """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         n = int(partial[self.of])
         candidates = [d for d in divisors(n, self.pow2) if d >= self.lo]
         if self.hi is not None:
@@ -142,6 +149,7 @@ class Derived:
     fn: Callable[[dict], Any]
 
     def sample(self, rng: random.Random, partial: dict) -> Any:
+        """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         return self.fn(partial)
 
 
@@ -152,6 +160,7 @@ class Fixed:
     value: Any
 
     def sample(self, rng: random.Random, partial: dict) -> Any:
+        """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         return self.value
 
 
@@ -178,6 +187,7 @@ def sample_params(space: ParamSpace, rng: random.Random, fixed: Optional[dict] =
 
 
 def _hashable(value: Any) -> Any:
+    """Hashable form of a sampled value (lists become tuples) for the case lookup."""
     if isinstance(value, list):
         return tuple(_hashable(v) for v in value)
     if isinstance(value, dict):
@@ -196,6 +206,7 @@ class Conditional:
     key: Optional[Callable[[Any], Any]] = None
 
     def sample(self, rng: random.Random, partial: dict) -> Any:
+        """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         value = partial.get(self.on)
         if self.key is not None:
             value = self.key(value)

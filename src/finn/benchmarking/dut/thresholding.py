@@ -24,10 +24,15 @@ from finn.util.basic import MAX_ALLOWED_AP_INT_W, is_versal
 
 
 def _is_int_type(name: str) -> bool:
+    """Whether the datatype name is an INT/UINT type."""
     return name.startswith("INT") or name.startswith("UINT")
 
 
 class bench_thresholding(MicrobenchDUT):
+    """Microbenchmark DUT of the multi-threshold activation (Thresholding HLS/RTL)
+    operator; parameters in ``PARAMS``.
+    """
+
     NAME = "thresholding"
     OP_TYPES = ("Thresholding_hls", "Thresholding_rtl")
     PARAMS = {
@@ -45,6 +50,7 @@ class bench_thresholding(MicrobenchDUT):
 
     @staticmethod
     def validate(params: dict) -> Optional[str]:
+        """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         backend = params.get("backend")
         if backend not in ("hls", "rtl"):
             return "backend must be hls or rtl"
@@ -97,6 +103,7 @@ class bench_thresholding(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
+        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "backend": Choice(["hls", "rtl"]),
             "idt": Choice(
@@ -125,6 +132,7 @@ class bench_thresholding(MicrobenchDUT):
 
     @classmethod
     def make_model(cls, params: dict, fpga_part: str):
+        """Build the single-node model for ``params`` and return it with its dut_info."""
         idt, odt = DataType[params["idt"]], DataType[params["odt"]]
         ch, pe = int(params["ch"]), int(params["pe"])
         nhw = [int(x) for x in params["nhw"]]

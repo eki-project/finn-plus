@@ -111,6 +111,7 @@ class bench_mvau(MicrobenchDUT):
 
     @staticmethod
     def validate(params: dict) -> Optional[str]:
+        """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         backend = params.get("backend")
         if backend not in ("hls", "rtl"):
             return "backend must be hls or rtl"
@@ -176,6 +177,7 @@ class bench_mvau(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
+        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "backend": Choice(["hls", "hls", "rtl"]),
             "idt": Conditional(
@@ -352,6 +354,7 @@ class bench_mvau(MicrobenchDUT):
 
     @staticmethod
     def _apply_sparsity(W: np.ndarray, sparsity_type: str, amount: float) -> np.ndarray:
+        """Zero out weights according to the sparsity type and amount of ``params``."""
         mw, mh = W.shape
         if sparsity_type == "none" or amount == 0:
             # keep the dense reference point of a sparsity sweep instead of skipping it
@@ -384,6 +387,7 @@ class bench_mvau(MicrobenchDUT):
 
     @classmethod
     def make_model(cls, params: dict, fpga_part: str):
+        """Build the single-node model for ``params`` and return it with its dut_info."""
         idt, wdt = DataType[params["idt"]], DataType[params["wdt"]]
         act = params.get("act")
         act = DataType[act] if act is not None else None

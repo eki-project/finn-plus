@@ -19,6 +19,10 @@ from finn.benchmarking.param_space import Choice, Conditional, Divisor, Fixed, P
 
 
 class bench_swg(MicrobenchDUT):
+    """Microbenchmark DUT of the sliding window generator (ConvolutionInputGenerator RTL)
+    operator; parameters in ``PARAMS``.
+    """
+
     NAME = "swg"
     OP_TYPES = ("ConvolutionInputGenerator_rtl",)
     PARAMS = {
@@ -37,6 +41,7 @@ class bench_swg(MicrobenchDUT):
 
     @staticmethod
     def validate(params: dict) -> Optional[str]:
+        """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         idt = DataType[params["idt"]]
         ifm_ch, simd = int(params["ifm_ch"]), int(params["simd"])
         ifm_h, ifm_w = (int(x) for x in params["ifm_dim"])
@@ -82,6 +87,7 @@ class bench_swg(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
+        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "idt": Choice(["BINARY", "UINT2", "INT2", "UINT4", "INT4", "UINT8", "INT8"]),
             "ifm_ch": Choice([3, 4, 8, 16, 32, 64, 128, 256, 512, 1024]),
@@ -119,6 +125,7 @@ class bench_swg(MicrobenchDUT):
 
     @classmethod
     def make_model(cls, params: dict, fpga_part: str):
+        """Build the single-node model for ``params`` and return it with its dut_info."""
         idt = DataType[params["idt"]]
         ifm_ch, simd = int(params["ifm_ch"]), int(params["simd"])
         ifm_h, ifm_w = (int(x) for x in params["ifm_dim"])

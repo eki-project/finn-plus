@@ -74,6 +74,7 @@ def pipeline_exchange_dir(create: bool = False) -> Optional[Path]:
 
 
 def _kind_dirname(kind: str, followup: bool) -> str:
+    """Directory name of an artifact kind (``build_artifacts[_followup]``)."""
     if kind not in KINDS:
         raise ValueError(f"unknown artifact kind {kind!r}, expected one of {KINDS}")
     return f"{kind}_artifacts" + ("_followup" if followup else "")

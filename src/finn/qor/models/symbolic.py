@@ -25,10 +25,12 @@ from finn.qor.models.sklearn_extras import RANDOM_STATE
 
 
 def pysr_available() -> bool:
+    """Whether pysr is importable (checked via find_spec, never importing it)."""
     return importlib.util.find_spec("pysr") is not None
 
 
 def sympy_available() -> bool:
+    """Whether sympy is importable."""
     return importlib.util.find_spec("sympy") is not None
 
 
@@ -44,6 +46,7 @@ CUSTOM_UNARY_OPERATORS: dict[str, tuple[str, Any]] = {
 
 
 def _sympy():
+    """Lazy import of sympy."""
     import sympy
 
     return sympy
@@ -147,6 +150,7 @@ class SymbolicRegressor(BaseEstimator, RegressorMixin):
         random_state=RANDOM_STATE,
         verbosity=0,
     ):
+        """Store the hyperparameters (sklearn convention: no validation here)."""
         self.niterations = niterations
         self.binary_operators = binary_operators
         self.unary_operators = unary_operators
@@ -177,6 +181,7 @@ class SymbolicRegressor(BaseEstimator, RegressorMixin):
 
     @staticmethod
     def _dense(X) -> np.ndarray:
+        """Dense float array from a dense or sparse input."""
         if sparse.issparse(X):
             X = X.toarray()
         return np.asarray(X, dtype=np.float64)
@@ -198,6 +203,7 @@ class SymbolicRegressor(BaseEstimator, RegressorMixin):
         return sympy.latex(expr)
 
     def _function(self):
+        """Cached numpy function of the fitted expression (sympy lambdify)."""
         import sympy
 
         fn = _CACHE.get(id(self))
@@ -209,6 +215,7 @@ class SymbolicRegressor(BaseEstimator, RegressorMixin):
 
     # -- sklearn API -----------------------------------------------------------------------
     def fit(self, X, y):
+        """Fit the model on ``X``/``y`` (see the class docstring)."""
         if not pysr_available():
             raise ImportError("SymbolicRegressor.fit requires pysr (and Julia)")
         import sympy
@@ -291,6 +298,7 @@ class SymbolicRegressor(BaseEstimator, RegressorMixin):
         return self
 
     def predict(self, X):
+        """Predict ``X`` with the fitted model."""
         check_is_fitted(self, "expr_srepr_")
         self.check_runtime()
         X = self._dense(check_array(X, accept_sparse=True))
@@ -303,13 +311,16 @@ class SymbolicRegressor(BaseEstimator, RegressorMixin):
         return np.nan_to_num(out, nan=0.0, posinf=np.finfo(float).max, neginf=-np.finfo(float).max)
 
     def __sklearn_tags__(self):
+        """sklearn estimator tags (regressor, sparse input accepted)."""
         tags = super().__sklearn_tags__()
         tags.input_tags.sparse = True
         return tags
 
     def __getstate__(self):
+        """Pickle without the cached runtime objects."""
         return dict(self.__dict__)
 
     def __setstate__(self, state):
+        """Restore the state; runtime objects are rebuilt lazily."""
         self.__dict__.update(state)
         _CACHE.pop(id(self), None)

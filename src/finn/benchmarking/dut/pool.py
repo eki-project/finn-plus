@@ -19,6 +19,7 @@ from finn.transformation.fpgadataflow.minimize_accumulator_width import Minimize
 
 
 def _is_int_type(name: str) -> bool:
+    """Whether the datatype name is an INT/UINT type."""
     return name.startswith("INT") or name.startswith("UINT")
 
 
@@ -28,6 +29,10 @@ def quant_avg_pool_accum_bits(ibits: int, k: int) -> int:
 
 
 class bench_pool(MicrobenchDUT):
+    """Microbenchmark DUT of the pooling (Pool HLS)
+    operator; parameters in ``PARAMS``.
+    """
+
     NAME = "pool"
     OP_TYPES = ("Pool_hls",)
     PARAMS = {
@@ -42,6 +47,7 @@ class bench_pool(MicrobenchDUT):
 
     @staticmethod
     def validate(params: dict) -> Optional[str]:
+        """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         function = params.get("function")
         if function not in ("MaxPool", "QuantAvgPool"):
             return "function must be MaxPool or QuantAvgPool"
@@ -81,6 +87,7 @@ class bench_pool(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
+        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "function": Choice(["MaxPool", "QuantAvgPool"]),
             "idt": Choice(["UINT2", "INT2", "UINT4", "INT4", "UINT8", "INT8"]),
@@ -95,6 +102,7 @@ class bench_pool(MicrobenchDUT):
 
     @classmethod
     def make_model(cls, params: dict, fpga_part: str):
+        """Build the single-node model for ``params`` and return it with its dut_info."""
         function = params["function"]
         idt = DataType[params["idt"]]
         odt = idt if function == "MaxPool" else DataType[params["odt"]]

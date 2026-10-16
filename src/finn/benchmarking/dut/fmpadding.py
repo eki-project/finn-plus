@@ -18,6 +18,10 @@ from finn.benchmarking.param_space import Choice, Divisor, ParamSpace
 
 
 class bench_fmpadding(MicrobenchDUT):
+    """Microbenchmark DUT of the feature map padding (FMPadding RTL)
+    operator; parameters in ``PARAMS``.
+    """
+
     NAME = "fmpadding"
     OP_TYPES = ("FMPadding_rtl",)
     PARAMS = {
@@ -30,6 +34,7 @@ class bench_fmpadding(MicrobenchDUT):
 
     @staticmethod
     def validate(params: dict) -> Optional[str]:
+        """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         idt = DataType[params["idt"]]
         if not idt.allowed(0):
             return "idt must be able to represent zero"
@@ -56,6 +61,7 @@ class bench_fmpadding(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
+        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "idt": Choice(["BINARY", "UINT2", "INT2", "UINT4", "INT4", "UINT8", "INT8"]),
             "ch": Choice([3, 4, 8, 16, 32, 64, 128, 256, 512, 1024]),
@@ -81,6 +87,7 @@ class bench_fmpadding(MicrobenchDUT):
 
     @classmethod
     def make_model(cls, params: dict, fpga_part: str):
+        """Build the single-node model for ``params`` and return it with its dut_info."""
         idt = DataType[params["idt"]]
         ch, simd = int(params["ch"]), int(params["simd"])
         idim_h, idim_w = (int(x) for x in params["idim"])
