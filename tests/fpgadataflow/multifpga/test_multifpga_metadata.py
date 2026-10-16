@@ -20,7 +20,7 @@ from finn.transformation.fpgadataflow.multifpga.backend import get_backend
 from finn.transformation.fpgadataflow.multifpga.create_network_metadata import CreateNetworkMetadata
 from finn.transformation.fpgadataflow.multifpga.metadata import DataDirection
 from finn.util.basic import get_metadata_prop_path, make_build_dir
-from finn.util.exception import FINNError, FINNMultiFPGAConfigError
+from finn.util.exception import FINNError, FINNInternalError, FINNMultiFPGAConfigError
 from finn.util.fpgadataflow import get_device_id, set_device_id
 from tests.fpgadataflow.test_set_folding import make_multi_fclayer_model
 
@@ -254,6 +254,69 @@ def test_aurora_metadata_path_serialization() -> None:
     moved = build_dir / "moved.yaml"
     path.rename(moved)
     assert AuroraNetworkMetadata.load(moved).loaded_from_path == moved
+
+
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
+@pytest.mark.parametrize(
+    "connections",
+    [
+        [(0, "n0", 1, "n1"), (1, "n1", 2, "n2")],
+        [(0, "n0", 1, "n1"), (1, "n1", 2, "n2"), (2, "n2", 1, "n3"), (1, "n3", 0, "n4")],
+    ],
+    ids=["simplex_chain", "duplex_chain"],
+)
+def test_aurora_metadata_partner_links(connections: list[tuple[int, str, int, str]]) -> None:
+    """Test that both endpoints of a cable point to each other's link. In both chains the
+    middle device connects to device 0 on link 0 and to device 2 on link 1, so the cabling
+    is not symmetric.
+    """
+    meta = AuroraNetworkMetadata(links_per_device=2)
+    for connection in connections:
+        meta.add_connection(*connection)
+    cabling = {
+        (device, endpoint.link_index): (endpoint.partner_device, endpoint.partner_link_index)
+        for device, endpoints in meta.data.items()
+        for endpoint in endpoints
+    }
+    assert cabling == {(0, 0): (1, 0), (1, 0): (0, 0), (1, 1): (2, 0), (2, 0): (1, 1)}
+
+    # The endpoints are found by their content
+    for sender_device, sender_node, receiver_device, receiver_node in connections:
+        tx = meta.get_endpoint(
+            sender_device, sender_node, receiver_device, receiver_node, DataDirection.TX
+        )
+        rx = meta.get_endpoint(
+            receiver_device, receiver_node, sender_device, sender_node, DataDirection.RX
+        )
+        assert tx.partner_link_index == rx.link_index
+        assert rx.partner_link_index == tx.link_index
+
+
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
+def test_aurora_metadata_get_endpoint_missing() -> None:
+    """Test that looking up a connection that does not exist raises."""
+    meta = AuroraNetworkMetadata(links_per_device=2)
+    meta.add_connection(0, "n0", 1, "n1")
+    # Wrong direction: n0 only sends to n1
+    with pytest.raises(FINNInternalError, match="found 0"):
+        meta.get_endpoint(0, "n0", 1, "n1", DataDirection.RX)
+
+
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
+def test_aurora_metadata_partner_link_mismatch() -> None:
+    """Test that a connection is rejected if it reuses an endpoint whose partner link does not
+    match the link used on the other device.
+    """
+    meta = AuroraNetworkMetadata(links_per_device=2)
+    meta.add_connection(0, "n0", 1, "n1")
+    # Simulate devices that are out of sync: the reverse connection reuses link 0 on both
+    # devices, but the endpoint on device 1 claims to be cabled to link 1 of device 0
+    meta.data[1][0].partner_link_index = 1
+    with pytest.raises(FINNInternalError, match="already cabled to link 1 of device 0"):
+        meta.add_connection(1, "n1", 0, "n2")
 
 
 @pytest.mark.multifpga

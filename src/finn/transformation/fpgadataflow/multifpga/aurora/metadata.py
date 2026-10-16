@@ -20,17 +20,23 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class AuroraNetworkKernelMetadata:
-    """Keeps track of a single kernel on a device. It stores the path to
-    the packaged kernel, with which device this kernel communicates, and which kernels on both
-    devices are responsible for communication in both directions.
-    """
+class AuroraLinkEndpoint:
+    """Dataclass to keep track of a connection between two devices, considering one
+    of the two endpoints. It tracks the AuroraFlow kernel XO file used for this endpoint,
+    which device it connects to, which link/port-index this endpoint and the other connected
+    endpoint use, as well as which kernels communicate in each direction."""
 
     aurora_xo: Path | None
     """Path to the kernel XO file. If it has not been set yet, this is left as None."""
 
     partner_device: int
     """ID of the partner device."""
+
+    link_index: int | None
+    """Index of the QSFP port / link of the FPGA that this endpoint sits at."""
+
+    partner_link_index: int | None
+    """Index of the QSFP port / link that the other endpoint occupies."""
 
     connecting_kernels: dict[DataDirection, tuple[str, str] | None]
     """Connections with other devices. One entry for RX, one for TX.
@@ -51,11 +57,11 @@ class AuroraNetworkKernelMetadata:
 @dataclass
 class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
     """Defines an AuroraFlow based network. On each device is a list of
-    AuroraNetworkKernelMetadata objects which describe the configuration of
+    AuroraLinkEndpoint objects which describe the configuration of
     a single AuroraFlow kernel.
     """
 
-    data: dict[int, list[AuroraNetworkKernelMetadata]] = field(default_factory=dict)
+    data: dict[int, list[AuroraLinkEndpoint]] = field(default_factory=dict)
     links_per_device: int = 2
     # Not serialized, since it is only valid for the file it was loaded from. Set by load().
     loaded_from_path: Path | None = field(default=None, metadata={"serialize": "omit"})
@@ -90,7 +96,7 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
             p = self.loaded_from_path
         p.write_text(str(self.to_yaml()))
 
-    def __getitem__(self, key: int) -> list[AuroraNetworkKernelMetadata]:
+    def __getitem__(self, key: int) -> list[AuroraLinkEndpoint]:
         """Get kernels on the given device."""
         if key not in self.data:
             raise FINNInternalError(
@@ -101,12 +107,12 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
             )
         return self.data[key]
 
-    def __setitem__(self, key: int, value: list[AuroraNetworkKernelMetadata]) -> None:
+    def __setitem__(self, key: int, value: list[AuroraLinkEndpoint]) -> None:
         """Set the specified kernel data."""
         self.data[key] = value
 
     def _has_free_connection(
-        self, kernel: AuroraNetworkKernelMetadata, direction: DataDirection, partner: int
+        self, kernel: AuroraLinkEndpoint, direction: DataDirection, partner: int
     ) -> bool:
         """Return whether the given kernel has a free spot/kernel
         in the given direction with the given partner device."""
@@ -120,8 +126,9 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         other_node: str,
         direction: DataDirection,
         create_devices_implicitly: bool = True,
-    ) -> None:
-        """Add a single connection to the table (unidirectional)."""
+    ) -> int:
+        """Add a single connection to the table (unidirectional).
+        Returns the QSFP port / link that was used for this connection."""
         # First check that the devices exist or create them if necessary
         if on_device not in self.data.keys():
             if create_devices_implicitly:
@@ -146,7 +153,12 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         for aurora_kernel in self.data[on_device]:
             if self._has_free_connection(aurora_kernel, direction, other_device):
                 aurora_kernel.connecting_kernels[direction] = (on_node, other_node)
-                return
+                if aurora_kernel.link_index is None:
+                    raise FINNInternalError(
+                        f"Link index of existing connection is not set! ({on_device}) "
+                        f"{on_node} -> ({other_device}) {other_node}"
+                    )
+                return aurora_kernel.link_index
 
         # Check if we already used all ports on this device. If yes, we cannot map
         # the partitioning.
@@ -162,16 +174,24 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
 
         # Leave the path as None for now - this will be initialized by the AuroraFlow preparation
         # Instantiate new kernel for this device
+        utilized_port_count = len(self.data[on_device])
         self.data[on_device].append(
-            AuroraNetworkKernelMetadata(
+            AuroraLinkEndpoint(
                 aurora_xo=None,
                 partner_device=other_device,
                 connecting_kernels={DataDirection.TX: None, DataDirection.RX: None},
+                link_index=utilized_port_count,
+                partner_link_index=None,
             )
         )
 
         # Add the connection
         self.data[on_device][-1].connecting_kernels[direction] = (on_node, other_node)
+
+        # Return which port this connection sits on
+        link_index = self.data[on_device][-1].link_index
+        assert link_index is not None
+        return link_index
 
     def add_connection(
         self,
@@ -186,12 +206,38 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         If a kernel has an unused channel, it is
         utilized before creating a new kernel.
         """
-        self._add_single_connection(
+        sender_link = self._add_single_connection(
             sender_device, sender_node, receiver_device, receiver_node, DataDirection.TX
         )
-        self._add_single_connection(
+        receiver_link = self._add_single_connection(
             receiver_device, receiver_node, sender_device, sender_node, DataDirection.RX
         )
+
+        # Both endpoints sit at the two ends of the same cable, so each one has to point to the
+        # link of the other. An endpoint whose other direction is already in use must already
+        # point to the same partner link, otherwise the two devices are out of sync.
+        for endpoint, partner_link in (
+            (
+                self.get_endpoint(
+                    sender_device, sender_node, receiver_device, receiver_node, DataDirection.TX
+                ),
+                receiver_link,
+            ),
+            (
+                self.get_endpoint(
+                    receiver_device, receiver_node, sender_device, sender_node, DataDirection.RX
+                ),
+                sender_link,
+            ),
+        ):
+            if endpoint.partner_link_index not in (None, partner_link):
+                raise FINNInternalError(
+                    f"Cannot connect {sender_node} [{sender_device}, link {sender_link}] -> "
+                    f"{receiver_node} [{receiver_device}, link {receiver_link}]: the endpoint at "
+                    f"link {endpoint.link_index} is already cabled to link "
+                    f"{endpoint.partner_link_index} of device {endpoint.partner_device}."
+                )
+            endpoint.partner_link_index = partner_link
 
     def node_is_sender(self, node: str) -> bool:
         """Return whether the given node acts as a sender (TX) on its device."""
@@ -224,17 +270,42 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
                     return node_tuple[1]
         return None
 
-    def get_unprepared_aurora_kernels(self) -> list[tuple[int, int]]:
-        """Return a list of all device:kernel_index combinations which do not yet have
+    def get_endpoint(
+        self,
+        device: int,
+        node: str,
+        partner_device: int,
+        partner_node: str,
+        direction: DataDirection,
+    ) -> AuroraLinkEndpoint:
+        """Return the endpoint on `device` that connects `node` with `partner_node` on
+        `partner_device` in the given direction. The node order follows `connecting_kernels`:
+        for TX, `node` sends to `partner_node`, for RX, `node` receives from `partner_node`.
+        The endpoint is searched by its content, not by its position in the list of
+        endpoints of the device.
+        """
+        matches = [
+            endpoint
+            for endpoint in self[device]
+            if endpoint.partner_device == partner_device
+            and endpoint.connecting_kernels[direction] == (node, partner_node)
+        ]
+        if len(matches) != 1:
+            raise FINNInternalError(
+                f"Expected exactly one AuroraFlow endpoint on device {device} for the "
+                f"{direction.name} connection {node} [{device}] <-> {partner_node} "
+                f"[{partner_device}], but found {len(matches)}."
+            )
+        return matches[0]
+
+    def get_unprepared_aurora_kernels(self) -> list[tuple[int, AuroraLinkEndpoint]]:
+        """Return a list of all (device, endpoint) combinations which do not yet have
         an associated AuroraFlow kernel XO file. This can be used for the packaging transformations.
         This also lists paths pointing to nowhere.
         """
         results = []
         for device in self.data.keys():
-            for index in range(len(self[device])):
-                if self[device][index].aurora_xo is None:
-                    results.append((device, index))
-                else:
-                    if not cast("Path", self[device][index].aurora_xo).exists():
-                        results.append((device, index))
+            for endpoint in self[device]:
+                if endpoint.aurora_xo is None or not cast("Path", endpoint.aurora_xo).exists():
+                    results.append((device, endpoint))
         return results

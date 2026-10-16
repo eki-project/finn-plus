@@ -115,10 +115,17 @@ class AddAuroraToLinkConfig(Transformation):
                 dummy_per_device[device] = 0
 
             # Loop through all auroras
-            for index, aurora_data in enumerate(metadata[device]):
+            for aurora_data in metadata[device]:
                 if aurora_data is None:
                     raise FINNInternalError(
                         f"Aurora metadata for device " f"{device} is completely missing."
+                    )
+                # The QSFP port of the endpoint. Its position in the metadata list may differ.
+                index = aurora_data.link_index
+                if index is None:
+                    raise FINNInternalError(
+                        f"Aurora metadata for device {device} is incomplete: missing link index "
+                        f"of the endpoint connected to device {aurora_data.partner_device}!"
                     )
                 if aurora_data.aurora_xo is None:
                     raise FINNInternalError(

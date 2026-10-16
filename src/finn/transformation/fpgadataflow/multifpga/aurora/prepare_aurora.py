@@ -10,7 +10,10 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 
 from finn.builder.build_dataflow_config import MFVerbosity, MultiFPGAConfiguration
-from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
+from finn.transformation.fpgadataflow.multifpga.aurora.metadata import (
+    AuroraLinkEndpoint,
+    AuroraNetworkMetadata,
+)
 from finn.util.basic import make_build_dir
 from finn.util.exception import (
     FINNInternalError,
@@ -160,11 +163,18 @@ class PrepareAuroraFlow(Transformation):
         if self.verbosity == MFVerbosity.HIGH:
             log.info(f"Packaging kernels with PART={self.part} and PLATFORM={self.platform}")
 
-        # Package all Aurora kernels concurrently
+        # Package all Aurora kernels concurrently. The kernel is specific to the QSFP port, so it
+        # is packaged for the link index of the endpoint, not for its position in the metadata.
         futures: list[Future] = []
-        dev_index: list[tuple[int, int]] = []
+        endpoints: list[AuroraLinkEndpoint] = []
         with ThreadPoolExecutor(max_workers=get_settings().num_default_workers) as tpe:
-            for device, index in metadata.get_unprepared_aurora_kernels():
+            for device, endpoint in metadata.get_unprepared_aurora_kernels():
+                index = endpoint.link_index
+                if index is None:
+                    raise FINNInternalError(
+                        f"Cannot package AuroraFlow kernel on device {device} connected to device "
+                        f"{endpoint.partner_device}: the link index of the endpoint is missing."
+                    )
                 if self.verbosity.value > MFVerbosity.LOW.value:
                     log.info(f"Packaging AuroraFlow core number {index} for device {device}.")
                 futures.append(
@@ -175,13 +185,12 @@ class PrepareAuroraFlow(Transformation):
                         index,
                     )
                 )
-                dev_index.append((device, index))
+                endpoints.append(endpoint)
             tpe.shutdown()
 
         # Store results in the metadata
-        for i in range(len(futures)):
-            device, index = dev_index[i]
-            metadata[device][index].aurora_xo = futures[i].result()
+        for endpoint, future in zip(endpoints, futures, strict=True):
+            endpoint.aurora_xo = future.result()
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Package all aurora kernels required by the model in parallel.
