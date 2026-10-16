@@ -2578,3 +2578,25 @@ reach 125 MHz unscaled. Kernel clock WNS floorplanned (density 0.45) +0.009, fre
 hbm_aclk +0.066 / +0.117. All worst 2,000 paths on both sides are intra-unit, in the
 attention units (mean endpoint distance 24 tiles against 16). Pushed on to 6 ns (`*_6ns`),
 where the scaled frequency separates them.
+
+**Clock push: the free placement reaches the higher frequency on both models (16 Oct
+2026).** Same checkpoints, no reset-hop exception, clock hook active; v++ scales a failing
+kernel clock:
+
+| | requested | floorplanned | free |
+|---|---|---|---|
+| mobilenetv1, per_node | 250 MHz | 222.4 MHz (WNS -0.496, 40 endpoints) | 250 MHz (WNS +0.020) |
+| transformer, density 0.45 | 167 MHz | 120.6 MHz (WNS -2.300) | 129.7 MHz (WNS -1.717) |
+
+*MobileNet*: the floorplanned design fails on inter-unit paths (33 of the 40 failing
+exported paths; 22 of them ready round trips): ConvolutionInputGenerator <-> FIFO and
+FIFO <-> MVAU handshakes across 4 to 475 tiles (MVAU unit 211 and its input FIFO 210 sit
+475 apart). The free design's worst paths stay inside two large MVAUs. *Transformer*: both
+sides fail inside the attention units (intra-unit, 2,000 of 2,000 paths); the pblocks only
+add distance (19 tiles mean against 16).
+
+Next: the 4 ns MobileNet pair with `stream_register_slices` (`*_4ns_slices`), the fix for
+exactly the class that fails -- its 15 Oct measurement was made on 10 ns placements and does
+not count. Open for the transformer: the floorplan has nothing to win where the limit is
+deep logic inside one unit; whether per-layer pblocks should stay off such designs (or be
+sized by measured path depth) is a design question, not yet measured.
