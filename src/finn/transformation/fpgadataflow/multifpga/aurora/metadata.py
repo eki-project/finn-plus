@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import json
+import networkx as nx
 import numpy as np
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -320,6 +322,20 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
                 if endpoint.aurora_xo is None or not cast("Path", endpoint.aurora_xo).exists():
                     results.append((device, endpoint))
         return results
+
+    def export(self, path: Path) -> None:
+        """Export the metadata using NetworkX node_link_data.
+        Can be used to configure cabling and switch."""
+        g = nx.Graph()
+        for device, endpoints in self.data.items():
+            for endpoint in endpoints:
+                if endpoint.connecting_kernels[DataDirection.TX] is not None:
+                    g.add_edge(
+                        (device, endpoint.link_index),
+                        (endpoint.partner_device, endpoint.partner_link_index),
+                    )
+        path.write_text(json.dumps(nx.node_link_data(g), indent=4))
+        log.info(f"Exported Multi-FPGA node-link data to {path}")
 
     def plot(
         self,

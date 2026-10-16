@@ -123,3 +123,11 @@ class NetworkMetadata(ABC):
         as well, and with the build configuration board specific details.
         Overwrite this method if possible."""
         log.warning("Cannot plot metadata for the chosen backend!")
+
+    @abstractmethod
+    def export(self, path: Path) -> None:
+        """Export the metadata to the given path. In many cases this can be
+        a NetworkX graph, serialized as a JSON via node_link_data, but it might also
+        be in any other format. The exported file should be used as an information
+        source for further non-FINN MultiFPGA related tasks, such as cabling, switch setup,
+        etc."""

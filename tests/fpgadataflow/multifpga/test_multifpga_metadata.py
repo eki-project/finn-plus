@@ -1,5 +1,7 @@
 import pytest
 
+import json
+import networkx as nx
 import onnx.helper as oh
 from copy import deepcopy
 from onnx import TensorProto
@@ -15,7 +17,10 @@ from finn.builder.build_dataflow_config import (
     MFVerbosity,
     MultiFPGAConfiguration,
 )
-from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
+from finn.transformation.fpgadataflow.multifpga.aurora.metadata import (
+    AuroraLinkEndpoint,
+    AuroraNetworkMetadata,
+)
 from finn.transformation.fpgadataflow.multifpga.backend import get_backend
 from finn.transformation.fpgadataflow.multifpga.create_network_metadata import CreateNetworkMetadata
 from finn.transformation.fpgadataflow.multifpga.metadata import DataDirection
@@ -357,6 +362,57 @@ def test_aurora_metadata_plot(
             assert not path.exists()
         case _:
             raise NotImplementedError(f"No checks implemented for topology {topology.name}")
+
+
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
+def test_aurora_metadata_export() -> None:
+    """Test that the exported node-link JSON contains exactly one undirected edge without
+    attributes per cable between the (device, link) ports, regardless of whether the cable is
+    used in one or both directions. The ports must follow the link indices, not the order of
+    the endpoints in the metadata.
+    """
+
+    def endpoint(
+        link: int,
+        partner: int,
+        partner_link: int,
+        tx: tuple[str, str] | None,
+        rx: tuple[str, str] | None,
+    ) -> AuroraLinkEndpoint:
+        return AuroraLinkEndpoint(
+            aurora_xo=None,
+            partner_device=partner,
+            link_index=link,
+            partner_link_index=partner_link,
+            connecting_kernels={DataDirection.TX: tx, DataDirection.RX: rx},
+        )
+
+    # 0 -> 1 -> 2 -> 1 -> 0 -> 1: the cable between 0 and 1 carries data in both directions, the
+    # cable between 1 and 2 only from 1 to 2. The link indices do not match the positions of the
+    # endpoints in the lists.
+    meta = AuroraNetworkMetadata(
+        data={
+            0: [endpoint(1, 1, 1, tx=("n0", "n1"), rx=("n5", "n4"))],
+            1: [
+                endpoint(0, 2, 1, tx=("n1", "n2"), rx=None),
+                endpoint(1, 0, 1, tx=("n4", "n5"), rx=("n1", "n0")),
+            ],
+            2: [endpoint(1, 1, 0, tx=None, rx=("n2", "n1"))],
+        }
+    )
+
+    path = Path(make_build_dir("test_aurora_metadata_export_")) / "cabling.json"
+    meta.export(path)
+    g = nx.node_link_graph(json.loads(path.read_text()))
+    assert not g.is_directed()
+    assert not g.is_multigraph()
+    # The edges are undirected, so compare the ports of each cable regardless of their order
+    assert sorted(tuple(sorted((u, v))) for u, v in g.edges) == [
+        ((0, 1), (1, 1)),
+        ((1, 0), (2, 1)),
+    ]
+    assert all(not d for _, _, d in g.edges(data=True))
 
 
 @pytest.mark.multifpga

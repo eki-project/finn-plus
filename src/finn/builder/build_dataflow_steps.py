@@ -2073,6 +2073,12 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                     # The diagram is only informational, so it must not abort the build
                     log.warning(f"Could not plot the Multi-FPGA network, skipping the diagram: {e}")
 
+                # Export the link data - this may be relevant for configuring Multi-FPGA backends
+                metadata.export(cfg.get_deploy_directory() / "cabling.json")
+
+                # Also dump the metadata itself for details
+                metadata.save(cfg.get_report_directory() / "multifpga_metadata.yaml")
+
                 # Build the backend
                 model = model.transform(backend.prepare_kernels(cfg))
 
