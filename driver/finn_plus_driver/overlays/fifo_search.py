@@ -650,8 +650,9 @@ def search_bottom_up_exact(
     lb_cost = _lower_bound_entry_cost(ctx, lb)
     ctx.log(f"Lower bounds: {list(lb)} (cost {lb_cost:.3f} kB), box upper corner: {list(ub)}")
 
-    heap: List[Tuple[float, Tuple[int, ...]]] = [(lb_cost, lb)]
+    heap: List[Tuple[float, Tuple[int, ...]]] = [(round(lb_cost, 9), lb)]
     visited = {lb}
+    cost_model = ctx.cost_model
     cap_hit = False
     num_popped = 0
     abort_reason = None
@@ -739,17 +740,25 @@ def search_bottom_up_exact(
                 )
                 break
 
+        # A child differs from its parent in one FIFO, so its cost is the parent's cost plus
+        # the cost difference of that FIFO; recomputing it over all FIFOs made every pop
+        # O(num_fifos * |dependency_set|) in Python, comparable to the hardware time on
+        # large DUTs.
         for e in dependency_set:
-            nxt = lattice.next_up(e, depths[e])
+            cur = depths[e]
+            nxt = lattice.next_up(e, cur)
             if nxt is None:
                 cap_hit = True
                 continue
-            child = list(depths)
-            child[e] = nxt
-            child_t = tuple(child)
+            child_t = depths[:e] + (nxt,) + depths[e + 1 :]
             if child_t not in visited:
                 visited.add(child_t)
-                heapq.heappush(heap, (ctx.cost(child_t), child_t))
+                # rounded well below the cost of a single bit so that accumulated rounding
+                # cannot reorder configurations of equal cost relative to a direct computation
+                child_cost = round(
+                    cost + cost_model.cost_fifo(e, nxt) - cost_model.cost_fifo(e, cur), 9
+                )
+                heapq.heappush(heap, (child_cost, child_t))
 
     heap_min = heap[0][0] if heap else None
     if found is not None:
