@@ -2616,3 +2616,32 @@ the greedy result, glue pblocks overlapping their neighbours (Vivado accepts par
 overlapping pblocks with an FLBO-1 warning and fills the shared sites from both; 13 of
 6,602 cells then landed outside their pblock, none with disjoint ones;
 `floorplan_validation/out/pblock_overlap_probe/`).
+
+*4 ns pair with stream register slices* (`*_4ns_slices`, same checkpoints): floorplanned
+228.2 MHz (WNS -0.381, 16 endpoints; without slices 222.4 MHz, -0.496, 40), free 250 MHz
+(+0.039). Slices remove every failing ready round trip (22 before, 0 now) and all but one
+failing inter-unit pair. What is left: the forward path from ConvolutionInputGenerator unit
+273 into FIFO 274, 178 tiles away (6 levels, -0.381; FIFO inputs get no slice by design),
+and 9-level paths inside MVAU unit 280 (-0.129, endpoints 136 tiles apart). Both are
+distance the packer created: 274 is one of the long jumps between consecutive units (see
+the gap analysis below), and 280's pblock spans two distant DSP columns.
+
+*Why consecutive units end up far apart* (4 ns pair, consecutive units in dataflow order):
+the free placement has 234 of 282 pairs touching or overlapping (median gap 0, max 183
+tiles); the floorplan 8 of 286 (median 4, p90 41, max 453). The 13 jumps of 100 tiles or
+more carry half of the floorplan's total gap. An offline packer replay shows the cause for
+MVAUs 130, 150 and 211: no feasible rectangle starts within reach of their predecessor,
+because each needs ~71 DSPs (90 rows in two DSP columns that lie far apart) and the units
+packed just before hold that area. The greedy packer never reserves room for a large unit
+still to come, and the small unit before it is packed without knowing where it will land.
+
+*Overlapping pblocks* (probe, `floorplan_validation/out/pblock_overlap_probe/`, U55C part):
+partially overlapping sibling pblocks are accepted with DRC warning FLBO-1 only, and both
+units use the shared columns (1,590 and 1,115 cells); 13 of 6,602 cells were placed
+outside their pblocks (0 with disjoint pblocks). Nested pblocks are accepted without a
+warning; the child takes the shared area almost alone, and 377 cells landed outside.
+Overlap keeps one pblock per layer but cannot remove a long jump, only move it.
+
+Options under discussion (not decided): pack every large unit first (generalising the
+chain-carrier rule, by measured footprint); a refinement pass (local annealing) over the
+greedy packing; glue pblocks overlapping their neighbour's edge.
