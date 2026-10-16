@@ -2572,3 +2572,9 @@ MobileNet FIFO depth file names 13 such FIFOs (`split_large_fifos` is gone too).
   Vitis scales a failing clock, so the achieved frequency is the comparison.
 - Reference on the new code from scratch, with fresh FIFO sizing:
   `v2_mobilenetv1_baseline_5ns`; its `fifo_sizing.json` feeds the floorplanned v2 variant.
+
+*Transformer at 8 ns* (`*_8ns`, no reset-hop exception; hook `10.000 ns -> 8.000 ns`): both
+reach 125 MHz unscaled. Kernel clock WNS floorplanned (density 0.45) +0.009, free +0.151;
+hbm_aclk +0.066 / +0.117. All worst 2,000 paths on both sides are intra-unit, in the
+attention units (mean endpoint distance 24 tiles against 16). Pushed on to 6 ns (`*_6ns`),
+where the scaled frequency separates them.
