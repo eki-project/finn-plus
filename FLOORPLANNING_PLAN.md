@@ -2629,3 +2629,29 @@ Overlap keeps one pblock per layer but cannot remove a long jump, only move it.
 Options under discussion (not decided): pack every large unit first (generalising the
 chain-carrier rule, by measured footprint); a refinement pass (local annealing) over the
 greedy packing; glue pblocks overlapping their neighbour's edge.
+
+**Packer refinement against the long jumps (16-17 Oct 2026, `0a44ff4b4`; decided by Linus:
+long-jump fix first, then overlapping glue pblocks, each measured before the next).**
+Measured offline on the four fixtures and the mobilenetv1 4 ns and transformer unit sets
+(`packer.py` against `pack()`, ~4 s per greedy pack):
+
+| variant | effect |
+|---|---|
+| jumping units packed first, learnt over passes | worse on 4 of 6: the jumps move between the pre-placed units |
+| start rows level with placed neighbours | longest gap 405 -> 241, 473 -> 203; resnet18 slightly worse |
+| + rip-up-and-replace refinement (sum objective) | 100+ jumps 17/12/17/17/11/9 -> 2/1/10/6/6/5, 4 min per pack |
+| + local searches during refinement | half the time, similar result |
+| + longest-gap-first acceptance, midpoint starts | longest gap 72/53/99/88/143/89 |
+| as committed (same-SLR edges, crossing partners as anchors) | 72/53/118/114/181/89, 0/0/3/1/3/0 jumps, 90-210 s |
+
+Ordering cannot fix the jumps; a search that may move what is already placed can. The
+acceptance rule matters most: with a summed objective one 390-tile jump scores like ten
+39-tile hops, but only the first fails timing once streams are registered. Twelve passes
+instead of four cut the summed gap by a quarter but not the longest gap, at five times the
+run time.
+
+Builds (250 MHz, stream register slices, all from the v2 5 ns checkpoints in
+`tmp/v2_mn_baseline_5ns_b`): `v2_mobilenetv1_baseline_4ns_slices` (free),
+`v2_mobilenetv1_per_node_4ns_slices_oldpack` (greedy packer, control, worktree
+finn-plus-v2) and `v2_mobilenetv1_per_node_4ns_slices` (refined packer, worktree
+finn-plus-v2b).
