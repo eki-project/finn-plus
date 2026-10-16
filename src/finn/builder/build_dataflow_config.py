@@ -261,6 +261,14 @@ class MFTopology(str, Enum):
     """Same start and end node, but not returning on the same path.
     A -> B -> C -> D -> A."""
 
+    ARBITRARY_OPEN = "arbitrary_open"
+    """No constraints other that inputs are on device 0 and outputs on device N.
+    This can be used when forks/joins to different devices are in the graph."""
+
+    ARBITRARY_CLOSED = "arbitrary_closed"
+    """No constraints other that inputs and outputs are all on device 0.
+    This can be used when forks/joins to different devices are in the graph."""
+
 
 @dataclass
 class MultiFPGAConfiguration:

@@ -225,6 +225,20 @@ class AuroraPartitioner(MILPPartitioner):
                                 "The node cannot fit on a device of this type."
                             )
 
+        # If we can expect a fork, some strategies may not yield the desired mapping
+        if (
+            self.mfcfg.topology
+            in [MFTopology.SIMPLEX_CHAIN, MFTopology.DUPLEX_CHAIN, MFTopology.RING]
+            and not self.mfcfg.single_stream_network
+        ):
+            log.error(
+                f"The configuration allows for forks and joins across different devices "
+                f"(single_stream_network=False). The topology {self.mfcfg.topology.name} "
+                f"however does not allow forks/joins across different devices. It is highly "
+                f"recommended to switch to another topology if the aforementioned "
+                f"fork/join case should be allowed."
+            )
+
     def __init__(self, cfg: DataflowBuildConfig, modelwrapper: ModelWrapper) -> None:
         """Run some checks to ensure partitioning is possible. The MILP itself is defined in
         `_build_model` once `solve()` is called.
@@ -256,6 +270,32 @@ class AuroraPartitioner(MILPPartitioner):
     def _build_model(self) -> None:
         """Define the variables, constraints and the objective of the partitioning MILP."""
         self.model.verbose = 0
+
+        # Define some helper lists
+        input_nodes = [
+            node
+            for node in self.modelwrapper.graph.node
+            if self.modelwrapper.find_direct_predecessors(node) is None
+        ]
+        output_nodes = [
+            node
+            for node in self.modelwrapper.graph.node
+            if self.modelwrapper.find_direct_successors(node) is None
+        ]
+        if len(input_nodes) > 1:
+            log.warning(
+                "There are multiple input nodes. "
+                "All input nodes will be constrained to the same "
+                "device. To change this, "
+                "pass custom device constraints to the partitioner."
+            )
+        if len(output_nodes) > 1:
+            log.warning(
+                "There are multiple output nodes. "
+                "All output nodes will be constrained to the same "
+                "device. To change this, "
+                "pass custom device constraints to the partitioner."
+            )
 
         # self.devices[node][device] = 1: Node <node> is on device <device>
         self.devices = {
@@ -382,34 +422,36 @@ class AuroraPartitioner(MILPPartitioner):
                     self.device_diff[node.name][suc.name]
                     >= self.chosen_device[suc.name] - self.chosen_device[node.name]
                 )
-                self.model += self.device_diff[node.name][suc.name] <= 1
-                self.model += self.device_diff[node.name][suc.name] >= 0
+
+                # Topology-specific constraints regarding device diffs
+                match self.mfcfg.topology:
+                    case MFTopology.SIMPLEX_CHAIN:
+                        # In a simplex chain, the device order is strict, and no
+                        # jumps or forks are allowed
+                        self.model += self.device_diff[node.name][suc.name] <= 1
+                        self.model += self.device_diff[node.name][suc.name] >= 0
+                    case MFTopology.DUPLEX_CHAIN:
+                        raise NotImplementedError()
+                    case MFTopology.RING:
+                        # In a ring, just as in a simplex chain, the device difference is almost
+                        # always 1: Only the last jump from N back to 0 is allowed to be larger
+                        if suc.name not in [node.name for node in output_nodes]:
+                            self.model += self.device_diff[node.name][suc.name] <= 1
+                            self.model += self.device_diff[node.name][suc.name] >= 0
+                    case (
+                        MFTopology.ARBITRARY
+                        | MFTopology.ARBITRARY_OPEN
+                        | MFTopology.ARBITRARY_CLOSED
+                    ):
+                        # No constraints on the device difference (warned once below)
+                        pass
+                    case _:
+                        raise FINNInternalError(
+                            f"Device difference constraints for topology "
+                            f"{self.mfcfg.topology.name} are not implemented!"
+                        )
 
         # Setting topology requirements
-        input_nodes = [
-            node
-            for node in self.modelwrapper.graph.node
-            if self.modelwrapper.find_direct_predecessors(node) is None
-        ]
-        output_nodes = [
-            node
-            for node in self.modelwrapper.graph.node
-            if self.modelwrapper.find_direct_successors(node) is None
-        ]
-        if len(input_nodes) > 1:
-            log.warning(
-                "There are multiple input nodes. "
-                "All input nodes will be constrained to the same "
-                "device. To change this, "
-                "pass custom device constraints to the partitioner."
-            )
-        if len(output_nodes) > 1:
-            log.warning(
-                "There are multiple output nodes. "
-                "All output nodes will be constrained to the same "
-                "device. To change this, "
-                "pass custom device constraints to the partitioner."
-            )
         match self.mfcfg.topology:
             case MFTopology.SIMPLEX_CHAIN:
                 for node in input_nodes:
@@ -424,6 +466,64 @@ class AuroraPartitioner(MILPPartitioner):
                         self.model += self.chosen_device[suc.name] >= self.chosen_device[node.name]
 
             case MFTopology.DUPLEX_CHAIN:
+                for node in input_nodes:
+                    self.model += self.chosen_device[node.name] == 0
+                for node in output_nodes:
+                    self.model += self.chosen_device[node.name] == 0
+
+                # TODO: Don't allow back and forth on devices with more ports than 2
+
+            case MFTopology.RING:
+                for node in input_nodes:
+                    self.model += self.chosen_device[node.name] == 0
+                for node in output_nodes:
+                    self.model += self.chosen_device[node.name] == 0
+
+                # Same constraint as in SIMPLEX_CHAIN, with the exception of the last node
+                for node in self.modelwrapper.graph.node:
+                    for suc in self.get_successors(node):
+                        if suc not in output_nodes:
+                            self.model += (
+                                self.chosen_device[suc.name] >= self.chosen_device[node.name]
+                            )
+                        else:
+                            # The ring closes only from the last device. Otherwise, with forks,
+                            # a branch could jump back to device 0 early (e.g. from device 1).
+                            self.model += self.chosen_device[node.name] == self.mfcfg.num_fpgas - 1
+
+            case MFTopology.ARBITRARY:
+                log.warning(
+                    "Topology ARBITRARY was chosen. The MILP will not be constrained to a "
+                    "specific topology! Connections between devices are not necessarily "
+                    "monotonic or fixed (e.g. 0 -> 12 -> 86 -> 1 is allowed). Be aware that "
+                    "this may result in non-performant networking patterns."
+                )
+
+            case MFTopology.ARBITRARY_OPEN:
+                log.warning(
+                    f"Topology {self.mfcfg.topology.name} chosen. No "
+                    f"constraints for inner connections will be set."
+                )
+                if self.mfcfg.single_stream_network:
+                    log.warning(
+                        f"Topology {self.mfcfg.topology.name} chosen. single_stream_network=True "
+                        f"is set - more restrictive topologies could be used."
+                    )
+                for node in input_nodes:
+                    self.model += self.chosen_device[node.name] == 0
+                for node in output_nodes:
+                    self.model += self.chosen_device[node.name] == self.mfcfg.num_fpgas - 1
+
+            case MFTopology.ARBITRARY_CLOSED:
+                log.warning(
+                    f"Topology {self.mfcfg.topology.name} chosen. No "
+                    f"constraints for inner connections will be set."
+                )
+                if self.mfcfg.single_stream_network:
+                    log.warning(
+                        f"Topology {self.mfcfg.topology.name} chosen. single_stream_network=True "
+                        f"is set - more restrictive topologies could be used."
+                    )
                 for node in input_nodes:
                     self.model += self.chosen_device[node.name] == 0
                 for node in output_nodes:
@@ -570,6 +670,7 @@ class AuroraPartitioner(MILPPartitioner):
                     self.model += self.max_util >= self.resource_use_relative[device][resource]
 
             # Objective function
+            # TODO: Connection costs for models that split/join across different devices
             # For detailed explanations refer to their docstrings (build_dataflow_config.py)
             match self.mfcfg.partition_strategy:
                 case PartitioningStrategy.BALANCE_RESOURCE:

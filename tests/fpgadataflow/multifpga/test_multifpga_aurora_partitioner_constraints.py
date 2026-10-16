@@ -61,3 +61,32 @@ def test_duplex_chain_rejects_revisiting_devices() -> None:
     )
     with pytest.raises(FINNMultiFPGAUnsolvableError):
         AuroraPartitioner(cfg, chain_model(7)).solve()
+
+
+@pytest.mark.multifpga
+@pytest.mark.usefixtures("mocked_resources")
+def test_ring() -> None:
+    """Test that a ring passes the devices in the order of their IDs and closes with the edge
+    from device N-1 back to device 0, which is the only edge allowed to jump back.
+    """
+    raise NotImplementedError
+
+
+@pytest.mark.multifpga
+@pytest.mark.usefixtures("mocked_resources")
+def test_arbitrary_open() -> None:
+    """Test that ARBITRARY_OPEN places the input nodes on device 0 and the output nodes on device
+    N-1, and does not constrain the devices of the nodes in between (e.g. a fork may be split
+    across devices that are not neighbours).
+    """
+    raise NotImplementedError
+
+
+@pytest.mark.multifpga
+@pytest.mark.usefixtures("mocked_resources")
+def test_arbitrary_closed() -> None:
+    """Test that ARBITRARY_CLOSED places the input and output nodes on device 0, and does not
+    constrain the devices of the nodes in between (e.g. a fork may be split across devices that
+    are not neighbours).
+    """
+    raise NotImplementedError
