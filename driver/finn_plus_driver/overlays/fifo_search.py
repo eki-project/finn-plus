@@ -20,6 +20,7 @@ information in ``EvalResult``; how an oracle obtains it (hardware, RTL simulatio
 simulation) is irrelevant here, so no PYNQ import must ever be added to this module.
 """
 
+import bisect
 import heapq
 import math
 import random
@@ -123,7 +124,14 @@ class FeasibilityCheck:
 
 
 class CostModel(Protocol):
-    """Cost of a depth configuration; ``cost_fifo`` must be non-decreasing in the depth."""
+    """Cost of a depth configuration; ``cost_fifo`` must be non-decreasing in the depth.
+
+    ``unit`` names the unit of the cost for logs and reports. ``realize`` maps a configuration
+    the search found onto the one to build: the same for a cost that is monotone in the depth,
+    deeper for a model whose cost envelope is taken (see ``PrimitiveCost``).
+    """
+
+    unit: str
 
     def cost(self, depths: Sequence[int]) -> float:
         """Total cost of a configuration (to be minimised)."""
@@ -133,9 +141,15 @@ class CostModel(Protocol):
         """Cost contribution of FIFO ``i`` at the given depth."""
         ...
 
+    def realize(self, depths: Sequence[int]) -> Tuple[int, ...]:
+        """The configuration to build for a configuration found by the search."""
+        ...
+
 
 class TotalBitsCost:
     """Total FIFO storage in kB: ``sum((depth + offset) * width)`` as reported by the driver."""
+
+    unit = "kB"
 
     def __init__(self, widths: Sequence[int], offset: int = 1):
         """Widths in bits per FIFO (indexed by FIFO ID) and the depth offset of the driver."""
@@ -152,71 +166,244 @@ class TotalBitsCost:
         """Total storage of a configuration in kB."""
         return sum(self.cost_fifo(i, d) for i, d in enumerate(depths))
 
+    def realize(self, depths: Sequence[int]) -> Tuple[int, ...]:
+        """Bits are monotone in the depth: the found configuration is the one to build."""
+        return tuple(int(d) for d in depths)
+
 
 class PrimitiveCost:
-    """Placeholder for a cost model counting FPGA primitives (SRL/BRAM/URAM steps).
+    """FPGA primitives (LUTs, FFs, RAMB18, URAM288) from the tables FINN exports at build time.
 
-    The metric is not defined yet. Once it is, ``breakpoints`` lets the lattice restrict the
-    candidate depths of a FIFO to the depths at which its cost changes, which shrinks the search
-    space without any loss in that metric.
+    ``tables`` is the ``fifo_cost_tables`` entry of the driver's ``settings.json``, written by
+    ``MakePYNQDriver`` from ``finn.util.fifo_cost``: for every FIFO id the ladder
+    ``steps = [[largest depth of the step, [lut, ff, bram18, uram]], ...]`` of the RTL FIFO
+    (``finn-rtllib/fifo/hdl/fifo.sv``) at the FIFO's width and ``ram_style``, plus the
+    ``weights`` that turn the vector into a scalar (LUT equivalents of the target device's
+    capacity). Depths in the tables are real FIFO depths; this class takes the driver's
+    capacity register values and adds ``offset`` before the lookup.
+
+    The scalar cost of the RTL is not monotone in the depth (one URAM above depth 2028 can be
+    cheaper than eight RAMB18 below it), but feasibility is: a FIFO may always be made deeper.
+    ``cost_fifo`` therefore returns the *envelope* ``min(cost(d') for d' >= d)``, which is
+    non-decreasing as the searches require, and ``realize`` maps a found configuration onto the
+    depths that attain the envelope (the largest depth of the cheapest step at or above). The
+    envelope is constant between the undominated steps, so ``breakpoints`` (their largest
+    depths, in register units) is a lossless candidate set for the lattice. Beyond the last
+    tabulated depth the vector is extrapolated with the slope of the last two steps.
     """
 
-    def __init__(self, widths: Sequence[int], offset: int = 1):
-        """Widths in bits per FIFO and the depth offset of the driver."""
-        self.widths = list(widths)
+    unit = "LUTeq"
+
+    def __init__(self, tables: Dict, offset: int = 1):
+        """Build the lookup from the exported tables and the depth offset of the driver."""
+        self.resources = list(tables["resources"])
+        self.weights = [float(tables["weights"].get(r, 0.0)) for r in self.resources]
+        self.weights_source = tables.get("weights_source")
         self.offset = offset
+        fifos = tables["fifos"]
+        self.num_fifos = len(fifos)
+        self.ram_styles: List[str] = []
+        self._max_depths: List[List[int]] = []
+        self._vectors: List[List[List[float]]] = []
+        self._scalars: List[List[float]] = []
+        self._envelope: List[List[int]] = []  # per step: index of the cheapest step at/above
+        self._breakpoints: List[List[int]] = []
+        for i in range(self.num_fifos):
+            entry = fifos[str(i)]
+            steps = entry["steps"]
+            if not steps:
+                raise ValueError(f"empty cost table for FIFO {i}")
+            max_depths = [int(s[0]) for s in steps]
+            vectors = [[float(x) for x in s[1]] for s in steps]
+            if any(len(v) != len(self.resources) for v in vectors):
+                raise ValueError(f"cost table of FIFO {i} does not match the resource list")
+            scalars = [self._scalar(v) for v in vectors]
+            envelope = [0] * len(steps)
+            best = len(steps) - 1
+            for k in range(len(steps) - 1, -1, -1):
+                if scalars[k] < scalars[best]:
+                    best = k
+                envelope[k] = best
+            self.ram_styles.append(entry.get("ram_style", "auto"))
+            self._max_depths.append(max_depths)
+            self._vectors.append(vectors)
+            self._scalars.append(scalars)
+            self._envelope.append(envelope)
+            self._breakpoints.append(
+                [max_depths[k] - offset for k in range(len(steps)) if envelope[k] == k]
+            )
+
+    def _scalar(self, vector: Sequence[float]) -> float:
+        """Weighted sum of a primitive vector."""
+        return sum(w * v for w, v in zip(self.weights, vector))
+
+    def _step(self, i: int, depth: int) -> Optional[int]:
+        """Index of the step of FIFO ``i`` that contains register value ``depth`` (None beyond)."""
+        k = bisect.bisect_left(self._max_depths[i], depth + self.offset)
+        return k if k < len(self._max_depths[i]) else None
+
+    def _extrapolate(self, i: int, depth: int) -> List[float]:
+        """Vector beyond the table: the last step continued with the slope of the last two."""
+        max_depths, vectors = self._max_depths[i], self._vectors[i]
+        last = vectors[-1]
+        if len(vectors) < 2:
+            return list(last)
+        span = max_depths[-1] - max_depths[-2]
+        extra = depth + self.offset - max_depths[-1]
+        return [v + (v - p) / span * extra for v, p in zip(last, vectors[-2])]
+
+    def vector_fifo(self, i: int, depth: int) -> List[float]:
+        """Primitive vector of FIFO ``i`` at the depth ``realize`` would build for ``depth``."""
+        if depth >= UNBOUNDED_DEPTH:
+            return [math.inf] * len(self.resources)
+        k = self._step(i, depth)
+        if k is None:
+            return self._extrapolate(i, depth)
+        return list(self._vectors[i][self._envelope[i][k]])
+
+    def vector(self, depths: Sequence[int]) -> Dict[str, float]:
+        """Summed primitive vector of a configuration, keyed by resource."""
+        total = [0.0] * len(self.resources)
+        for i, d in enumerate(depths):
+            total = [t + v for t, v in zip(total, self.vector_fifo(i, d))]
+        return dict(zip(self.resources, total))
 
     def cost_fifo(self, i: int, depth: int) -> float:
-        """Not defined yet."""
-        raise NotImplementedError("The FPGA primitive cost metric is defined later.")
+        """Envelope cost of FIFO ``i`` in LUT equivalents; unbounded FIFOs are infinite."""
+        if depth >= UNBOUNDED_DEPTH:
+            return math.inf
+        k = self._step(i, depth)
+        if k is None:
+            return self._scalar(self._extrapolate(i, depth))
+        return self._scalars[i][self._envelope[i][k]]
 
     def cost(self, depths: Sequence[int]) -> float:
-        """Not defined yet."""
-        raise NotImplementedError("The FPGA primitive cost metric is defined later.")
+        """Total envelope cost of a configuration in LUT equivalents."""
+        return sum(self.cost_fifo(i, d) for i, d in enumerate(depths))
+
+    def realize(self, depths: Sequence[int]) -> Tuple[int, ...]:
+        """Per FIFO the largest depth of the cheapest step at or above the given depth.
+
+        Never smaller than the input, so a feasible configuration stays feasible; beyond the
+        tables and for unbounded FIFOs the depth is kept.
+        """
+        out = []
+        for i, d in enumerate(depths):
+            d = int(d)
+            k = self._step(i, d) if d < UNBOUNDED_DEPTH else None
+            out.append(d if k is None else self._max_depths[i][self._envelope[i][k]] - self.offset)
+        return tuple(out)
 
     def breakpoints(self, i: int) -> List[int]:
-        """Depths at which the cost of FIFO ``i`` changes (hook for a lattice restriction)."""
-        raise NotImplementedError("The FPGA primitive cost metric is defined later.")
+        """Register values at which the envelope cost of FIFO ``i`` changes (ascending)."""
+        return list(self._breakpoints[i])
+
+    def describe(self) -> Dict:
+        """The weighting, for the report."""
+        return {
+            "unit": self.unit,
+            "resources": list(self.resources),
+            "weights": dict(zip(self.resources, self.weights)),
+            "weights_source": self.weights_source,
+        }
 
 
 class Lattice:
-    """Candidate depths per FIFO: integer ranges ``[lower_i, upper_i]`` with a common step.
+    """Candidate depths per FIFO within ``[lower_i, upper_i]``.
 
-    Every access of the search strategies to neighbouring or intermediate depths goes through
-    this class, so that a candidate set based on cost breakpoints can replace the ranges later
-    without touching the searches.
+    Without ``candidates`` the candidates of a FIFO are the integers of its range at a common
+    ``step``. With ``candidates`` (one ascending list per FIFO, e.g. ``PrimitiveCost.
+    breakpoints``) they are the listed depths inside the range plus the two bounds; beyond the
+    last listed depth the spacing of the last two is continued, which is the right thing for
+    a cost ladder whose top tier has a constant period. Every access of the search strategies
+    to neighbouring or intermediate depths goes through this class.
     """
 
-    def __init__(self, lower: Sequence[int], upper: Sequence[int], step: int = 1):
-        """Per-FIFO lower and upper bounds (inclusive) and the step between candidates."""
+    def __init__(
+        self,
+        lower: Sequence[int],
+        upper: Sequence[int],
+        step: int = 1,
+        candidates: Optional[Sequence[Sequence[int]]] = None,
+    ):
+        """Per-FIFO bounds (inclusive), the integer step and/or the candidate lists."""
         if len(lower) != len(upper):
             raise ValueError("lower and upper bounds must have the same length")
         self.lower = tuple(int(x) for x in lower)
         self.upper = tuple(max(int(u), lo) for u, lo in zip(upper, self.lower))
         self.step = step
+        self.candidates = None
+        if candidates is not None:
+            if len(candidates) != len(self.lower):
+                raise ValueError("one candidate list per FIFO is required")
+            self.candidates = [sorted(set(int(c) for c in cs)) for cs in candidates]
+        self._cands: Dict[int, List[int]] = {}
 
     @property
     def num_fifos(self) -> int:
         """Number of FIFOs."""
         return len(self.lower)
 
+    def restrict(self, lower: Sequence[int], upper: Sequence[int]) -> "Lattice":
+        """The same lattice on other bounds."""
+        return Lattice(lower, upper, self.step, self.candidates)
+
+    def cands(self, i: int) -> Optional[List[int]]:
+        """Ascending candidate depths of FIFO ``i`` (``None`` for an integer range)."""
+        if self.candidates is None:
+            return None
+        cached = self._cands.get(i)
+        if cached is not None:
+            return cached
+        lo, up = self.lower[i], self.upper[i]
+        listed = self.candidates[i]
+        cs = [c for c in listed if lo < c < up]
+        if len(listed) >= 2 and up > listed[-1]:
+            period = listed[-1] - listed[-2]
+            c = listed[-1] + period
+            while c < up:
+                cs.append(c)
+                c += period
+        cs = [lo] + cs + ([up] if up > lo else [])
+        self._cands[i] = cs
+        return cs
+
     def next_up(self, i: int, depth: int) -> Optional[int]:
         """Next larger candidate depth of FIFO ``i``, or ``None`` at the upper bound."""
-        nxt = depth + self.step
-        return nxt if nxt <= self.upper[i] else None
+        cs = self.cands(i)
+        if cs is None:
+            nxt = depth + self.step
+            return nxt if nxt <= self.upper[i] else None
+        k = bisect.bisect_right(cs, depth)
+        return cs[k] if k < len(cs) else None
 
     def next_down(self, i: int, depth: int) -> Optional[int]:
         """Next smaller candidate depth of FIFO ``i``, or ``None`` at the lower bound."""
-        nxt = depth - self.step
-        return nxt if nxt >= self.lower[i] else None
+        cs = self.cands(i)
+        if cs is None:
+            nxt = depth - self.step
+            return nxt if nxt >= self.lower[i] else None
+        k = bisect.bisect_left(cs, depth) - 1
+        return cs[k] if k >= 0 else None
 
-    def mid(self, i: int, lo: int, hi: int) -> int:
-        """Candidate depth in the middle of ``[lo, hi]`` for FIFO ``i``."""
-        return (lo + hi) // 2
+    def mid(self, i: int, lo: int, hi: int) -> Optional[int]:
+        """Candidate depth in the middle of ``[lo, hi]`` for FIFO ``i`` (``None`` without one)."""
+        cs = self.cands(i)
+        if cs is None:
+            return (lo + hi) // 2 if lo <= hi else None
+        left, right = bisect.bisect_left(cs, lo), bisect.bisect_right(cs, hi)
+        return cs[(left + right - 1) // 2] if left < right else None
 
     def clamp(self, depths: Sequence[int]) -> Tuple[int, ...]:
-        """Clamp a configuration into the lattice bounds."""
-        return tuple(min(max(int(d), lo), up) for d, lo, up in zip(depths, self.lower, self.upper))
+        """Clamp a configuration into the bounds and, with candidates, up to the next one."""
+        out = []
+        for i, (d, lo, up) in enumerate(zip(depths, self.lower, self.upper)):
+            d = min(max(int(d), lo), up)
+            cs = self.cands(i)
+            if cs is not None:
+                d = cs[bisect.bisect_left(cs, d)]
+            out.append(d)
+        return tuple(out)
 
     def contains(self, depths: Sequence[int]) -> bool:
         """Return whether a configuration lies within the lattice bounds."""
@@ -346,6 +533,7 @@ class SearchResult:
     incumbent_trace: List[Tuple[int, float]] = field(default_factory=list)
     pareto: List[Dict] = field(default_factory=list)
     extra: Dict = field(default_factory=dict)
+    cost_unit: str = "kB"
 
 
 class SearchContext:
@@ -472,6 +660,10 @@ def search_binary(ctx: SearchContext, order: str = "largest_first", **_ignored) 
                 budget_exhausted = True
                 break
             mid = ctx.lattice.mid(fifo_id, low, high)
+            if mid is None:
+                # no candidate left in [low, high]: every depth there costs the same as the
+                # best working depth
+                break
             test_depths = fifo_depths.copy()
             test_depths[fifo_id] = mid
             entry = ctx.cache.evaluate(
@@ -513,7 +705,7 @@ def search_binary(ctx: SearchContext, order: str = "largest_first", **_ignored) 
 
         fifo_depths[fifo_id] = best_working_depth
         ctx.log(f"  FIFO {fifo_id} minimized to depth {best_working_depth}")
-        ctx.log(f"  Total FIFO Size (kB): {ctx.cost(fifo_depths)}")
+        ctx.log(f"  Total FIFO cost ({_unit(ctx)}): {ctx.cost(fifo_depths)}")
 
     final = tuple(fifo_depths)
     final_entry = ctx.cache.get(final)
@@ -562,6 +754,8 @@ def compute_lower_bounds(ctx: SearchContext) -> Tuple[int, ...]:
                 best = low
                 break
             mid = ctx.lattice.mid(fifo_id, low, high)
+            if mid is None:
+                break
             probe = [UNBOUNDED_DEPTH] * ctx.num_fifos
             probe[fifo_id] = mid
             entry = ctx.cache.evaluate(
@@ -608,6 +802,11 @@ def _lower_bound_entry_cost(ctx: SearchContext, lb: Tuple[int, ...]) -> float:
     return ctx.cost(lb)
 
 
+def _unit(ctx: SearchContext) -> str:
+    """Unit of the cost model for log lines."""
+    return getattr(ctx.cost_model, "unit", "kB")
+
+
 # ---------------------------------------------------------------------------------------
 # bottom_up_exact: best-first search from the lower bounds upwards (Stuijk et al. 2008)
 # ---------------------------------------------------------------------------------------
@@ -646,9 +845,12 @@ def search_bottom_up_exact(
 
     lb = tuple(lower_bounds) if lower_bounds is not None else compute_lower_bounds(ctx)
     ub = _upper_bounds(ctx, upper_bound_factor)
-    lattice = Lattice(lb, ub, ctx.lattice.step)
+    lattice = ctx.lattice.restrict(lb, ub)
     lb_cost = _lower_bound_entry_cost(ctx, lb)
-    ctx.log(f"Lower bounds: {list(lb)} (cost {lb_cost:.3f} kB), box upper corner: {list(ub)}")
+    ctx.log(
+        f"Lower bounds: {list(lb)} (cost {lb_cost:.3f} {_unit(ctx)}), "
+        f"box upper corner: {list(ub)}"
+    )
 
     heap: List[Tuple[float, Tuple[int, ...]]] = [(round(lb_cost, 9), lb)]
     visited = {lb}
@@ -677,7 +879,7 @@ def search_bottom_up_exact(
         entry.info["status"] = "PASS" if feasible else "FAIL"
         r = entry.result
         ctx.log(
-            f"  Pop {num_popped}: cost {cost:.3f} kB depths {list(depths)} -> "
+            f"  Pop {num_popped}: cost {cost:.3f} {_unit(ctx)} depths {list(depths)} -> "
             f"{entry.info['status']} (interval {r.interval}, latency {r.latency}, "
             f"deadlock {r.deadlock}, open {len(heap)})"
         )
@@ -809,8 +1011,12 @@ def search_bottom_up_exact(
 
 
 def _branch_fifo(ctx: SearchContext, lo: Tuple[int, ...], hi: Tuple[int, ...]) -> int:
-    """FIFO to branch on: the one with the largest cost range within the box."""
-    best, best_range = -1, -1.0
+    """FIFO to branch on: the one with the largest cost range within the box.
+
+    Returns -1 when no FIFO has a positive cost range, i.e. every point of the box costs the
+    same as its upper corner (which was just evaluated): nothing cheaper is in the box.
+    """
+    best, best_range = -1, 0.0
     for e, (lo_e, hi_e) in enumerate(zip(lo, hi)):
         if hi_e > lo_e:
             rng = ctx.cost_model.cost_fifo(e, hi_e) - ctx.cost_model.cost_fifo(e, lo_e)
@@ -850,9 +1056,12 @@ def search_top_down_bnb(
 
     lb = tuple(lower_bounds) if lower_bounds is not None else compute_lower_bounds(ctx)
     ub = _upper_bounds(ctx, upper_bound_factor)
-    lattice = Lattice(lb, ub, ctx.lattice.step)
+    lattice = ctx.lattice.restrict(lb, ub)
     lb_cost = _lower_bound_entry_cost(ctx, lb)
-    ctx.log(f"Lower bounds: {list(lb)} (cost {lb_cost:.3f} kB), box upper corner: {list(ub)}")
+    ctx.log(
+        f"Lower bounds: {list(lb)} (cost {lb_cost:.3f} {_unit(ctx)}), "
+        f"box upper corner: {list(ub)}"
+    )
 
     # Incumbent: the seed. ``inferred`` marks an incumbent derived from peaks that has not been
     # evaluated directly; it is confirmed at the end.
@@ -870,7 +1079,7 @@ def search_top_down_bnb(
             incumbent, incumbent_cost, incumbent_result = depths, cost, result
             incumbent_inferred = inferred
             incumbent_trace.append((ctx.cache.num_evaluations, cost))
-            ctx.log(f"  New incumbent: cost {cost:.3f} kB depths {list(depths)}")
+            ctx.log(f"  New incumbent: cost {cost:.3f} {_unit(ctx)} depths {list(depths)}")
         if not inferred and cost < best_evaluated[1]:
             best_evaluated = (depths, cost, result)
 
@@ -938,7 +1147,10 @@ def search_top_down_bnb(
         improve(hi, entry.cost, entry.result, inferred=False)
         peak = entry.result.peak
         if peak is not None:
-            tight = tuple(min(h, max(lo_e, int(p))) for lo_e, h, p in zip(lo, hi, peak))
+            # snapped up to the lattice candidates: same cost, more slack
+            tight = lattice.clamp(
+                tuple(min(h, max(lo_e, int(p))) for lo_e, h, p in zip(lo, hi, peak))
+            )
             if tight != hi:
                 cached = ctx.cache.get(tight)
                 if cached is not None:
@@ -949,7 +1161,15 @@ def search_top_down_bnb(
         if lo == hi:
             continue
         e = _branch_fifo(ctx, lo, hi)
+        if e < 0:
+            continue
+        # a positive cost range in e implies a candidate in [lo_e, hi_e) (the cost is
+        # constant between candidates), so m < hi_e exists
         m = lattice.mid(e, lo[e], hi[e])
+        if m is None or m >= hi[e]:
+            m = lattice.next_down(e, hi[e])
+        if m is None or m < lo[e]:
+            continue
         keep_large = (lo[:e] + (m + 1,) + lo[e + 1 :], hi)
         shrink = (lo, hi[:e] + (m,) + hi[e + 1 :])
         # dfs explores the shrink child first (pushed last)
@@ -1044,7 +1264,9 @@ def run_search(strategy: str, ctx: SearchContext, **kwargs) -> SearchResult:
         raise ValueError(
             f"Unknown search_strategy: {strategy} (available: {sorted(SEARCH_STRATEGIES)})"
         )
-    return SEARCH_STRATEGIES[strategy](ctx, **kwargs)
+    result = SEARCH_STRATEGIES[strategy](ctx, **kwargs)
+    result.cost_unit = _unit(ctx)
+    return result
 
 
 def resolve_strategy_name(
@@ -1098,6 +1320,9 @@ def search_result_to_dict(result: SearchResult) -> Dict:
     return {
         "search_strategy": result.strategy,
         "fifo_depths": list(result.depths),
+        # the *_kB keys are kept for the consumers of the report; with a primitive cost model
+        # they hold that model's scalar (see cost_unit)
+        "cost_unit": result.cost_unit,
         "total_kB": _finite(result.cost),
         "optimal_proven": result.optimal_proven,
         "lower_bound_total_kB": _finite(result.lower_bound_cost),

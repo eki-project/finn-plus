@@ -11,12 +11,12 @@ Run from the driver directory with: python -m pytest tests
 import pytest
 
 import json
-
 from finn_plus_driver.overlays.fifo_search import (
     STALL_IRDY,
     STALL_IVLD,
     STALL_STICKY_SHIFT,
     UNBOUNDED_DEPTH,
+    PrimitiveCost,
     TotalBitsCost,
 )
 from finn_plus_driver.overlays.live_fifo import (
@@ -38,6 +38,7 @@ from test_fifo_search import (
     FEASIBLE_LATENCY,
     MockOracle,
     brute_force_optimum,
+    synthetic_tables,
 )
 
 
@@ -49,12 +50,13 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
     come from the ``MockOracle`` predicate.
     """
 
-    def __init__(self, mock, widths, paced_peaks, extended_hw=True):
+    def __init__(self, mock, widths, paced_peaks, extended_hw=True, fifo_cost_tables=None):
         """Bypass the PYNQ overlay constructor and set up the emulation state."""
         # no super().__init__(): the PYNQ Overlay would load a bitfile
         self.error = False
         self.fifo_widths = {str(i): w for i, w in enumerate(widths)}
         self.num_fifos = len(widths)
+        self.fifo_cost_tables = fifo_cost_tables
         self.folding_config = {"Defaults": {}}
         self.fifo_depth_offset = 1
         self.hw_capabilities = {"peak_occupancy": False, "sticky_stall_flags": False}
@@ -127,13 +129,17 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         return (False, False, 1, 0, latency, latency, interval, latency, interval, 0, 0)
 
 
-def make_overlay(extended_hw=True):
+def make_overlay(extended_hw=True, cost_tables=False):
     """Instance with a 4-FIFO predicate whose optimum differs from the binary search result."""
     # FIFO 0 and 1 are coupled; shrinking the wide FIFO 1 pays off more than FIFO 0
     mock = MockOracle(4, [({0, 1}, 8), ({1}, 2), ({2}, 3), ({3}, 1)])
     widths = [8, 64, 16, 32]
     paced_peaks = [6, 6, 5, 4]
-    return EmulatedLiveFIFOOverlay(mock, widths, paced_peaks, extended_hw=extended_hw), mock
+    tables = synthetic_tables(widths, max_depth=16) if cost_tables else None
+    overlay = EmulatedLiveFIFOOverlay(
+        mock, widths, paced_peaks, extended_hw=extended_hw, fifo_cost_tables=tables
+    )
+    return overlay, mock
 
 
 @pytest.fixture(autouse=True)
@@ -317,3 +323,91 @@ class _nowarn:
     def __exit__(self, *exc):
         """Exit without suppressing anything."""
         return False
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"search_strategy": "binary_largest_first"},
+        {"search_strategy": "bottom_up_exact"},
+        {"search_strategy": "top_down_bnb"},
+    ],
+)
+def test_experiment_fifosizing_with_primitive_cost(tmp_path, kwargs):
+    """cost_model="primitives" searches the cost ladder and exports the realized depths."""
+    overlay, mock = make_overlay(cost_tables=True)
+    overlay.experiment_fifosizing(report_dir=str(tmp_path), cost_model="primitives", **kwargs)
+    strategy = kwargs["search_strategy"]
+    report_dir = tmp_path / strategy / "both"
+    with open(report_dir / "fifo_sizing_report.json") as f:
+        sizing = json.load(f)
+    with open(report_dir / "fifo_config.json") as f:
+        fifo_config = json.load(f)
+
+    cost_model = PrimitiveCost(overlay.fifo_cost_tables, offset=1)
+    search = sizing["search"]
+    assert sizing["cost_model"] == "primitives" and sizing["cost_unit"] == "LUTeq"
+    assert search["cost_model"] == "primitives" and search["cost_unit"] == "LUTeq"
+    measured = [search["fifo_depths"][i] for i in range(4)]
+    realized = [search["realized_fifo_depths"][i] for i in range(4)]
+    assert mock.feasible(measured) and mock.feasible(realized)
+    assert realized == list(cost_model.realize(measured))
+    assert all(r >= m for r, m in zip(realized, measured))
+    assert [sizing["fifo_depths"][str(i)] for i in range(4)] == [r + 1 for r in realized]
+    assert [fifo_config["fifo_depths"][f"StreamingFIFO_rtl_{i}"] for i in range(4)] == [
+        r + 1 for r in realized
+    ]
+    assert sizing["total_cost"] == pytest.approx(cost_model.cost(realized))
+    assert sizing["total_cost"] == pytest.approx(search["total_kB"])
+    assert sizing["fifo_size_total_kB"] == pytest.approx(
+        TotalBitsCost([8, 64, 16, 32]).cost(realized)
+    )
+    prim = sizing["primitive_cost"]
+    assert prim["unit"] == "LUTeq" and prim["weights"]["bram18"] == 30.0
+    assert prim["total"] == cost_model.vector(realized)
+    assert prim["scalar"] == pytest.approx(sizing["total_cost"])
+    assert (
+        prim["fifos"]["1"]["depth"] == realized[1] + 1 and prim["fifos"]["1"]["ram_style"] == "auto"
+    )
+    assert sum(prim["fifos"][str(i)]["lut"] for i in range(4)) == prim["total"]["lut"]
+    # the search only evaluated candidate depths (or the unbounded probes / start depths)
+    lattice = overlay.make_cost_model("primitives", (6, 6, 5, 4))[1]
+    for it in search["all_iterations"].values():
+        for i, d in enumerate(it["fifo_depths"]):
+            assert d >= UNBOUNDED_DEPTH or d in lattice.cands(i) or d == (6, 6, 5, 4)[i]
+    optimum = brute_force_optimum(mock, cost_model, [6, 6, 5, 4])
+    if strategy.startswith("binary_"):
+        assert sizing["total_cost"] >= optimum - 1e-9
+    else:
+        assert search["optimal_proven"], search["abort_reason"]
+        assert sizing["total_cost"] == pytest.approx(optimum)
+
+
+def test_bits_cost_model_still_reports_primitives(tmp_path):
+    """With tables available the default bits search reports the primitive vector as well."""
+    overlay, mock = make_overlay(cost_tables=True)
+    overlay.experiment_fifosizing(report_dir=str(tmp_path), search_strategy="bottom_up_exact")
+    with open(tmp_path / "bottom_up_exact" / "both" / "fifo_sizing_report.json") as f:
+        sizing = json.load(f)
+    assert sizing["cost_model"] == "bits" and sizing["cost_unit"] == "kB"
+    assert sizing["total_cost"] == pytest.approx(sizing["fifo_size_total_kB"])
+    regs = [sizing["search"]["fifo_depths"][i] for i in range(4)]
+    assert sizing["search"]["realized_fifo_depths"] == regs
+    assert sizing["primitive_cost"]["total"]["lut"] > 0
+    optimum = brute_force_optimum(mock, TotalBitsCost([8, 64, 16, 32]), [6, 6, 5, 4])
+    assert sizing["fifo_size_total_kB"] == pytest.approx(optimum)
+
+
+def test_primitive_cost_model_needs_tables(tmp_path):
+    """Without fifo_cost_tables in the settings the primitive cost model is refused."""
+    overlay, mock = make_overlay()
+    with pytest.raises(ValueError, match="fifo_cost_tables"):
+        overlay.experiment_fifosizing(
+            report_dir=str(tmp_path), search_strategy="top_down_bnb", cost_model="primitives"
+        )
+    with pytest.raises(ValueError, match="Unknown cost_model"):
+        overlay.experiment_fifosizing(report_dir=str(tmp_path), cost_model="joules")
+    # no tables: the report says so instead of failing
+    overlay.experiment_fifosizing(report_dir=str(tmp_path), search_strategy="binary_forward")
+    with open(tmp_path / "binary_forward" / "both" / "fifo_sizing_report.json") as f:
+        assert json.load(f)["primitive_cost"] is None
