@@ -32,7 +32,13 @@ module tb #(
     // TODO: make configurable or adjust automatically?
 	int unsigned  INSTR_READ_PERIOD = 10000,
     // 16-bit LFSR seed for generating fixed random data
-    int unsigned LFSR_SEED = 1
+    int unsigned LFSR_SEED = 1,
+    // minimum interval (cycles) between IFM starts (0 = no throttling)
+    int unsigned THROTTLE_INTERVAL = 0,
+    // sliding window size (frames) of the averages and the window min/max
+    int unsigned AVG_WINDOW = 8,
+    // number of completed output frames after which the simulation stops
+    int unsigned NUM_FRAMES = 16
 )();
 
 
@@ -61,7 +67,31 @@ uwire axilite_ctrl_wready;
 uwire [3:0]axilite_ctrl_wstrb = 4'b1111;
 logic  axilite_ctrl_wvalid = 0;
 
-
+// Register map of the instrumentation wrapper (instrumentation.template.cpp, s_axilite
+// bundle ctrl; every port occupies 16 bytes from status on: data + valid register)
+localparam logic [31:0]  ADDR_CFG                = 'h010;
+localparam logic [31:0]  ADDR_SEED               = 'h018;
+localparam logic [31:0]  ADDR_AVG_N              = 'h020;
+localparam logic [31:0]  ADDR_MUX_INTERVAL       = 'h028;
+localparam logic [31:0]  ADDR_STATUS             = 'h030;
+localparam logic [31:0]  ADDR_LATENCY            = 'h040;
+localparam logic [31:0]  ADDR_INTERVAL           = 'h050;
+localparam logic [31:0]  ADDR_CHECKSUM           = 'h060;
+localparam logic [31:0]  ADDR_MIN_LATENCY        = 'h070;
+localparam logic [31:0]  ADDR_LAT_SUM_LO         = 'h080;
+localparam logic [31:0]  ADDR_LAT_SUM_HI         = 'h090;
+localparam logic [31:0]  ADDR_INT_SUM_LO         = 'h0a0;
+localparam logic [31:0]  ADDR_INT_SUM_HI         = 'h0b0;
+localparam logic [31:0]  ADDR_AVG_FILL           = 'h0c0;
+localparam logic [31:0]  ADDR_RUN_CYCLES_LO      = 'h0d0;
+localparam logic [31:0]  ADDR_RUN_CYCLES_HI      = 'h0e0;
+localparam logic [31:0]  ADDR_RUN_FRAMES         = 'h0f0;
+localparam logic [31:0]  ADDR_LAT_WIN_MIN        = 'h100;
+localparam logic [31:0]  ADDR_LAT_WIN_MAX        = 'h110;
+localparam logic [31:0]  ADDR_INT_WIN_MIN        = 'h120;
+localparam logic [31:0]  ADDR_INT_WIN_MAX        = 'h130;
+localparam logic [31:0]  ADDR_IDLE_CYCLES        = 'h140;
+localparam logic [31:0]  ADDR_OLDEST_PENDING_AGE = 'h150;
 
 
 dut_wrapper dut_wrapper_inst (
@@ -86,19 +116,12 @@ dut_wrapper dut_wrapper_inst (
 );
 
 //---------------------------------------------------------------------------
+// AXI-lite access tasks
 
-initial begin
-	$timeformat(-9, 2, " ns");
-	// perform reset
-	repeat(100)  @(posedge ap_clk);
-	ap_rst_n <= 1;
-	$display("Reset complete");
-    repeat(100) @(posedge ap_clk);
-    // instrumentation wrapper configuration:
-    // set up LFSR seed + start data generation + output sink
-    axilite_ctrl_awaddr  <= 'h10;
+task automatic axi_write(input logic [31:0] addr, input logic [31:0] data);
+    axilite_ctrl_awaddr  <= addr;
     axilite_ctrl_awvalid <= 1;
-    axilite_ctrl_wdata   <= (LFSR_SEED << 16) | 'b11;
+    axilite_ctrl_wdata   <= data;
     axilite_ctrl_wvalid  <= 1;
     repeat(8) begin
         @(posedge ap_clk);
@@ -108,62 +131,106 @@ initial begin
     axilite_ctrl_awvalid <= 0;
     axilite_ctrl_awaddr  <= 'x;
     axilite_ctrl_wdata   <= 'x;
+    @(posedge ap_clk);
+endtask : axi_write
+
+task automatic axi_read(input logic [31:0] addr, output logic [31:0] data);
+    data = 'x;
+    axilite_ctrl_araddr  <= addr;
+    axilite_ctrl_arvalid <= 1;
+    repeat(8) begin
+        @(posedge ap_clk);
+        if(axilite_ctrl_rvalid) begin
+            data = axilite_ctrl_rdata;
+            break;
+        end
+    end
+    axilite_ctrl_arvalid <= 0;
+    axilite_ctrl_araddr  <= 'x;
+    @(posedge ap_clk);
+endtask : axi_read
+
+//---------------------------------------------------------------------------
+
+int unsigned  errors = 0;
+
+initial begin
+    logic [31:0]  status, latency, interval, checksum, min_latency, avg_fill, run_frames;
+    logic [31:0]  lat_win_min, lat_win_max, int_win_min, int_win_max;
+    logic [31:0]  idle_cycles, oldest_pending_age;
+    logic [31:0]  prev_run_frames;
+
+	$timeformat(-9, 2, " ns");
+    prev_run_frames = 0;
+	// perform reset
+	repeat(100)  @(posedge ap_clk);
+	ap_rst_n <= 1;
+	$display("Reset complete");
+    repeat(100) @(posedge ap_clk);
+
+    // instrumentation wrapper configuration: LFSR seed, window size, no tUSER multiplexing,
+    // then start the data generation (cfg[0]) with the throttle interval (cfg[31:1])
+    axi_write(ADDR_SEED, LFSR_SEED << 16);
+    axi_write(ADDR_AVG_N, AVG_WINDOW);
+    axi_write(ADDR_MUX_INTERVAL, 0);
+    axi_write(ADDR_CFG, (THROTTLE_INTERVAL << 1) | 1);
+
     while(1) begin
-        axilite_ctrl_araddr  <= 'h18;
-        axilite_ctrl_arvalid <= 1;
-        repeat(8) begin
-            @(posedge ap_clk);
-            if(axilite_ctrl_rvalid) begin
-                $display("[t=%0t] STATUS_I = %0d", $time, axilite_ctrl_rdata);
-                break;
+        axi_read(ADDR_STATUS,             status);
+        axi_read(ADDR_LATENCY,            latency);
+        axi_read(ADDR_INTERVAL,           interval);
+        axi_read(ADDR_CHECKSUM,           checksum);
+        axi_read(ADDR_MIN_LATENCY,        min_latency);
+        axi_read(ADDR_AVG_FILL,           avg_fill);
+        axi_read(ADDR_RUN_FRAMES,         run_frames);
+        axi_read(ADDR_LAT_WIN_MIN,        lat_win_min);
+        axi_read(ADDR_LAT_WIN_MAX,        lat_win_max);
+        axi_read(ADDR_INT_WIN_MIN,        int_win_min);
+        axi_read(ADDR_INT_WIN_MAX,        int_win_max);
+        axi_read(ADDR_IDLE_CYCLES,        idle_cycles);
+        axi_read(ADDR_OLDEST_PENDING_AGE, oldest_pending_age);
+        $display("[t=%0t] STATUS = %0d  FRAMES = %0d  LATENCY = %0d  INTERVAL = %0d  CHECKSUM = %8x",
+                 $time, status, run_frames, latency, interval, checksum);
+        $display("[t=%0t] MIN_LATENCY = %0d  AVG_FILL = %0d  LAT_WIN = [%0d, %0d]  INT_WIN = [%0d, %0d]  IDLE = %0d  OLDEST_PENDING_AGE = %0d",
+                 $time, min_latency, avg_fill, lat_win_min, lat_win_max, int_win_min, int_win_max, idle_cycles, oldest_pending_age);
+
+        // Steady-state register checks (the window extremes lag a completion by up to
+        // 2*AVG_WINDOW cycles, so only invariants are checked)
+        if(status != 0) begin
+            $error("Timestamp overflow/underflow reported: status = %0d", status);
+            errors++;
+        end
+        if(lat_win_min > lat_win_max || int_win_min > int_win_max) begin
+            $error("Window minimum above window maximum");
+            errors++;
+        end
+        if(run_frames >= 2 && avg_fill >= 2) begin
+            // at least one frame of the run has a valid interval in the window
+            if(int_win_max == 0 || int_win_min == 0) begin
+                $error("Empty interval window after %0d frames", run_frames);
+                errors++;
+            end
+            if(lat_win_min < min_latency) begin
+                $error("Window minimum latency %0d below the running minimum %0d", lat_win_min, min_latency);
+                errors++;
             end
         end
-        axilite_ctrl_araddr  <= 'h20;
-        axilite_ctrl_arvalid <= 1;
-        repeat(8) begin
-            @(posedge ap_clk);
-            if(axilite_ctrl_rvalid) begin
-                $display("[t=%0t] STATUS_O = %0d", $time, axilite_ctrl_rdata);
-                break;
-            end
+        if(avg_fill > AVG_WINDOW) begin
+            $error("Window fill %0d exceeds the configured window %0d", avg_fill, AVG_WINDOW);
+            errors++;
         end
-        axilite_ctrl_araddr  <= 'h28;
-        axilite_ctrl_arvalid <= 1;
-        repeat(8) begin
-            @(posedge ap_clk);
-            if(axilite_ctrl_rvalid) begin
-                $display("[t=%0t] LATENCY = %0d", $time, axilite_ctrl_rdata);
-                break;
-            end
+        if(run_frames == prev_run_frames && run_frames > 0 && idle_cycles < INSTR_READ_PERIOD) begin
+            $error("No frame completed during the read period but idle_cycles = %0d", idle_cycles);
+            errors++;
         end
-        axilite_ctrl_araddr  <= 'h38;
-        axilite_ctrl_arvalid <= 1;
-        repeat(8) begin
-            @(posedge ap_clk);
-            if(axilite_ctrl_rvalid) begin
-                $display("[t=%0t] INTERVAL = %0d", $time, axilite_ctrl_rdata);
-                break;
-            end
+        prev_run_frames = run_frames;
+
+        if(run_frames >= NUM_FRAMES) begin
+            $display("%0d frames completed, stopping simulation (%0d errors)", run_frames, errors);
+            if(errors == 0)  $display("INSTRUMENTATION TESTBENCH PASSED");
+            else             $display("INSTRUMENTATION TESTBENCH FAILED");
+            $finish;
         end
-        axilite_ctrl_araddr  <= 'h48;
-        axilite_ctrl_arvalid <= 1;
-        repeat(8) begin
-            @(posedge ap_clk);
-            if(axilite_ctrl_rvalid) begin
-                $display("[t=%0t] CHECKSUM = %8x", $time, axilite_ctrl_rdata);
-                if(axilite_ctrl_rdata) begin
-                    $display("Nonzero checksum detected, stopping simulation");
-                    $finish;
-                    // TODO: simulate for configurable number of frames, like this:
-                    // if(axilite_ctrl_rdata[31:24] == 47) begin
-                    //     $display("Frame number 48 detected, stopping simulation");
-                    //     $finish;
-                    // end
-                end
-                break;
-            end
-        end
-        axilite_ctrl_arvalid <= 0;
         repeat(INSTR_READ_PERIOD)  @(posedge ap_clk);
     end
 end
