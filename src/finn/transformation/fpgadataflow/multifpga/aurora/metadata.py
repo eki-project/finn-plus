@@ -2,21 +2,31 @@
 
 from __future__ import annotations
 
+import contextlib
+import numpy as np
+from collections import defaultdict
 from dataclasses import dataclass, field
 from mashumaro.mixins.yaml import DataClassYAMLMixin
+from matplotlib.figure import Figure
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
 # Needs to be outside the type-checking block, so that DataClassYAMLMixin can pick it up
 # for automatic serialization.
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
+from finn.builder.build_dataflow_config import MFTopology
 from finn.transformation.fpgadataflow.multifpga.metadata import DataDirection, NetworkMetadata
-from finn.util.exception import FINNInternalError, FINNMultiFPGAConfigError
+from finn.util.exception import FINNInternalError, FINNMultiFPGAConfigError, FINNUserError
+from finn.util.fpgadataflow import get_device_id
+from finn.util.logging import log
+from finn.util.platforms import platforms
 
 if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
     from typing import Self
 
-    from finn.builder.build_dataflow_config import MultiFPGAConfiguration
+    from finn.builder.build_dataflow_config import DataflowBuildConfig, MultiFPGAConfiguration
 
 
 @dataclass
@@ -70,8 +80,9 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
     def create_from_multifpga_configuration(
         cls, mfcfg: MultiFPGAConfiguration
     ) -> AuroraNetworkMetadata:
-        """Create an empty metadata object, using the configured number of links per device."""
-        return cls(links_per_device=mfcfg.links_per_device)
+        """Create an empty metadata object, using the configured topology and number of links
+        per device."""
+        return cls(topology=mfcfg.topology, links_per_device=mfcfg.links_per_device)
 
     @classmethod
     def load(cls, p: Path) -> Self:
@@ -309,3 +320,394 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
                 if endpoint.aurora_xo is None or not cast("Path", endpoint.aurora_xo).exists():
                     results.append((device, endpoint))
         return results
+
+    def plot(
+        self,
+        path: Path,
+        model: ModelWrapper | None = None,
+        cfg: DataflowBuildConfig | None = None,
+    ) -> None:
+        """Draw the cabling of the AuroraFlow network. The image format is given by the suffix
+        of `path` (e.g. `.svg` or `.png`).
+
+        Every FPGA is a box and every used QSFP port a square `Q<link index>` on its edge. A cable
+        is a thick line between two ports, with one arrow per used direction, labelled with the
+        sending and receiving SDP. If `model` is given, arrows inside the boxes show how the data
+        passes through the SDPs of each FPGA, from the port (or host) it arrives at to the port
+        (or host) it leaves through. If `cfg` is given, the platform interfaces of the ports are
+        listed.
+        """
+        if not self.data:
+            log.warning("Cannot plot the Multi-FPGA network: the metadata contains no devices.")
+            return
+        devices = sorted(self.data)
+        box = np.array([5.2, 3.2])  # Width and height of an FPGA box
+        pitch = box[0] + 3.8  # Distance between the centers of neighbouring boxes
+        port_size, lane = 0.56, 0.14  # Side of a port square, offset of the TX/RX arrows
+        colors = {
+            "background": "#0b0f19",
+            "fpga": "#111827",
+            "fpga_edge": "#3b82f6",
+            "port": "#1d4ed8",
+            "port_edge": "#93c5fd",
+            "cable": "#1e3a8a",
+            "data": "#38bdf8",
+            "compute": "#818cf8",
+            "compute_fill": "#1e1b4b",
+            "host": "#64748b",
+            "text": "#e5e7eb",
+            "muted": "#94a3b8",
+        }
+
+        def short(node: str) -> str:
+            """Shorten the default SDP node names."""
+            return node.replace("StreamingDataflowPartition", "SDP")
+
+        # 1. Place the FPGAs (their box centers) according to the topology
+        match self.topology:
+            case MFTopology.SIMPLEX_CHAIN | MFTopology.DUPLEX_CHAIN:
+                # Chains pass the devices in the order of their IDs, so a row from left to right
+                # follows the data. The way back of a duplex chain uses the same cables and shows
+                # up as a second arrow on each of them, so it needs no other arrangement.
+                centers = {d: np.array([i * pitch, 0.0]) for i, d in enumerate(devices)}
+            case MFTopology.RING:
+                # Clockwise on a circle, starting on the left. The radius keeps neighbouring
+                # boxes `pitch` apart, so the cable closing the ring is as long as the others.
+                radius = pitch / (2 * np.sin(np.pi / len(devices))) if len(devices) > 1 else 0
+                angles = np.pi - 2 * np.pi * np.arange(len(devices)) / len(devices)
+                centers = {
+                    d: radius * np.array([np.cos(a), np.sin(a)])
+                    for d, a in zip(devices, angles, strict=True)
+                }
+            case _:
+                log.error(
+                    f"Cannot plot the Multi-FPGA network: no layout algorithm is implemented for "
+                    f"the topology '{self.topology.value}' yet."
+                )
+                return
+
+        # 2. Collect the cables, each as the sorted pair of the (device, link) ports it connects
+        cables = sorted(
+            {
+                tuple(sorted([(d, e.link_index), (e.partner_device, e.partner_link_index)]))
+                for d in devices
+                for e in self[d]
+            }
+        )
+        cable_number = {port: i for i, cable in enumerate(cables) for port in cable}
+
+        # 3. Put every port on the side of its box that faces the partner device. A side is
+        # given by its outward normal, e.g. (1, 0) for the right side.
+        endpoints_per_side: dict[
+            tuple[int, tuple[int, int]], list[AuroraLinkEndpoint]
+        ] = defaultdict(list)
+        for device in devices:
+            for e in self[device]:
+                dx, dy = centers[e.partner_device] - centers[device]
+                normal = (int(np.sign(dx)), 0) if abs(dx) >= abs(dy) else (0, int(np.sign(dy)))
+                endpoints_per_side[(device, normal)].append(e)
+        ports = {}
+        for (device, normal), endpoints in endpoints_per_side.items():
+            along = np.array([-normal[1], normal[0]])  # Direction along the side
+            # Order the ports by the position of their partner along the side, so that cables do
+            # not cross. Several cables to the same device are ordered by their number, mirrored
+            # on the two devices (`along` points the other way there), so that they run parallel.
+            endpoints.sort(
+                key=lambda e, device=device, along=along: (
+                    centers[e.partner_device] @ along,
+                    cable_number[(device, e.link_index)] * along.sum(),
+                )
+            )
+            # Spread the ports evenly along the side
+            for i, e in enumerate(endpoints):
+                offset = (i + 1) / (len(endpoints) + 1) - 0.5
+                ports[(device, e.link_index)] = (
+                    centers[device] + (np.array(normal) / 2 + along * offset) * box
+                )
+
+        def pin(device: int, e: AuroraLinkEndpoint, direction: DataDirection) -> np.ndarray:
+            """Return where the arrow of one direction of a cable meets the port of `e`. The
+            two directions use parallel lanes, each shifted to the left of its data direction.
+            """
+            p, q = ports[(device, e.link_index)], ports[(e.partner_device, e.partner_link_index)]
+            left = np.array([p[1] - q[1], q[0] - p[0]]) / np.linalg.norm(q - p)
+            return p + left * (lane if direction == DataDirection.TX else -lane)
+
+        # 4. Set up a dark figure. Its size follows the extent of the layout, with room for the
+        # title above and for the host connections and notes below.
+        corners = np.array([c + s * box / 2 for c in centers.values() for s in (-1, 1)])
+        low = corners.min(axis=0) - [1.5, 3.4]
+        high = corners.max(axis=0) + np.array([1.5, 1.4])
+        fig = Figure(figsize=tuple((high - low) * 0.45), facecolor=colors["background"])
+        ax = fig.add_axes((0, 0, 1, 1))
+        ax.set_xlim(low[0], high[0])
+        ax.set_ylim(low[1], high[1])
+        ax.set_axis_off()
+
+        def arrow(start: np.ndarray, end: np.ndarray, color: str, **kwargs: Any) -> None:
+            """Draw an arrow. `patchA` and `patchB` cut it off at the outline of these shapes."""
+            ax.add_patch(
+                FancyArrowPatch(
+                    tuple(start),
+                    tuple(end),
+                    arrowstyle="-|>",
+                    mutation_scale=11,
+                    linewidth=1.5,
+                    color=color,
+                    zorder=3,
+                    **kwargs,
+                )
+            )
+
+        # 5. Draw the FPGAs and their ports
+        for device, center in centers.items():
+            ax.add_patch(
+                FancyBboxPatch(
+                    tuple(center - box / 2),
+                    *box,
+                    boxstyle="round,pad=0,rounding_size=0.35",
+                    facecolor=colors["fpga"],
+                    edgecolor=colors["fpga_edge"],
+                    linewidth=1.6,
+                    zorder=1,
+                )
+            )
+            # Title in the top left corner, out of the way of ports in the middle of the top side
+            ax.text(
+                *(center + np.array([-box[0] / 2 + 0.35, box[1] / 2 - 0.45])),
+                f"FPGA {device}",
+                color=colors["text"],
+                fontsize=11,
+                fontweight="bold",
+                ha="left",
+                va="center",
+            )
+        port_patches = {}
+        for (device, link), point in ports.items():
+            port_patches[(device, link)] = ax.add_patch(
+                FancyBboxPatch(
+                    tuple(point - port_size / 2),
+                    port_size,
+                    port_size,
+                    boxstyle="round,pad=0,rounding_size=0.08",
+                    facecolor=colors["port"],
+                    edgecolor=colors["port_edge"],
+                    linewidth=1.2,
+                    zorder=4,
+                )
+            )
+            ax.text(
+                *point,
+                f"Q{link}",
+                color="white",
+                fontsize=7,
+                fontweight="bold",
+                ha="center",
+                va="center",
+                zorder=5,
+            )
+
+        # 6. Draw the cables: a thick line per cable, and an arrow per used direction from the
+        # sending to the receiving port, labelled with the SDPs on both sides
+        for a, b in cables:
+            ax.plot(
+                *np.array([ports[a], ports[b]]).T,
+                color=colors["cable"],
+                linewidth=10,
+                solid_capstyle="round",
+                zorder=2,
+            )
+        for device in devices:
+            for e in self[device]:
+                nodes = e.connecting_kernels[DataDirection.TX]
+                if nodes is None:
+                    continue
+                partner = self.get_endpoint(
+                    e.partner_device, nodes[1], device, nodes[0], DataDirection.RX
+                )
+                start = pin(device, e, DataDirection.TX)
+                end = pin(e.partner_device, partner, DataDirection.RX)
+                arrow(
+                    start,
+                    end,
+                    colors["data"],
+                    patchA=port_patches[(device, e.link_index)],
+                    patchB=port_patches[(e.partner_device, partner.link_index)],
+                )
+                # Put the label on the outer side of the lane. If it would be upside down, turn
+                # it, and then also reverse the text, so that its arrow still follows the data.
+                dx, dy = end - start
+                angle = np.degrees(np.arctan2(dy, dx))
+                label = f"{short(nodes[0])} → {short(nodes[1])}"
+                if not -90 < angle <= 90:
+                    angle -= 180 * np.sign(angle)
+                    label = f"{short(nodes[1])} ← {short(nodes[0])}"
+                outward = (start - ports[(device, e.link_index)]) / lane
+                ax.text(
+                    *((start + end) / 2 + outward * 0.3),
+                    label,
+                    color=colors["data"],
+                    fontsize=7,
+                    rotation=angle,
+                    rotation_mode="anchor",
+                    ha="center",
+                    va="center",
+                )
+
+        # 7. With the model: follow the data through the SDPs of each FPGA, from where it enters
+        # the FPGA (a port or the host) to where it leaves it, and draw every such path as two
+        # arrows through a compute block that names the first and the last SDP on the path
+        if model is not None:
+            # Where data enters an FPGA: (device, first SDP, point, port square or None)
+            entries: list[tuple[int, str, np.ndarray, FancyBboxPatch | None]] = []
+            # Where data leaves an FPGA, per SDP: (point, port square or None)
+            exits: dict[str, list[tuple[np.ndarray, FancyBboxPatch | None]]] = defaultdict(list)
+            for device in devices:
+                for e in self[device]:
+                    port_patch = port_patches[(device, e.link_index)]
+                    if (rx := e.connecting_kernels[DataDirection.RX]) is not None:
+                        entries.append(
+                            (device, rx[0], pin(device, e, DataDirection.RX), port_patch)
+                        )
+                    if (tx := e.connecting_kernels[DataDirection.TX]) is not None:
+                        exits[tx[0]].append((pin(device, e, DataDirection.TX), port_patch))
+
+            # The host is connected to the bottom of the FPGAs with the model inputs and outputs
+            host_x = box[0] / 2 - 0.5
+            for tensor in model.graph.input:
+                for node in model.find_consumers(tensor.name) or []:
+                    device = cast("int", get_device_id(node))
+                    point = centers[device] + np.array([-host_x, -box[1] / 2])
+                    arrow(point - [0, 1.0], point, colors["host"])
+                    ax.text(
+                        *(point - [0, 1.3]),
+                        "host in",
+                        color=colors["muted"],
+                        fontsize=7,
+                        ha="center",
+                        va="center",
+                    )
+                    entries.append((device, node.name, point, None))
+            for tensor in model.graph.output:
+                node = model.find_producer(tensor.name)
+                device = cast("int", get_device_id(node))
+                point = centers[device] + np.array([host_x, -box[1] / 2])
+                arrow(point, point - [0, 1.0], colors["host"])
+                ax.text(
+                    *(point - [0, 1.3]),
+                    "host out",
+                    color=colors["muted"],
+                    fontsize=7,
+                    ha="center",
+                    va="center",
+                )
+                exits[node.name].append((point, None))
+
+            # Search forward from every entry through the SDPs on the same FPGA. Every exit on
+            # the way gives a path: (start, start port, end, end port, label of the block).
+            paths: dict[int, list[tuple]] = defaultdict(list)
+            for device, first, start, start_patch in entries:
+                todo, seen = [first], set()
+                while todo:
+                    name = todo.pop()
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                    label = short(first) if name == first else f"{short(first)} … {short(name)}"
+                    paths[device] += [
+                        (start, start_patch, end, end_patch, label)
+                        for end, end_patch in exits[name]
+                    ]
+                    successors = model.find_direct_successors(model.get_node_from_name(name))
+                    todo += [s.name for s in successors or [] if get_device_id(s) == device]
+
+            for device, device_paths in paths.items():
+                # Stack the blocks of an FPGA, ordered by the height of the ports they connect,
+                # so that the arrows of different paths do not cross
+                device_paths.sort(key=lambda path: -(path[0][1] + path[2][1]))
+                step = min(0.85, (box[1] - 1.3) / len(device_paths))
+                for i, (start, start_patch, end, end_patch, label) in enumerate(device_paths):
+                    height = -0.25 + ((len(device_paths) - 1) / 2 - i) * step
+                    center = centers[device] + np.array([0, height])
+                    ax.add_patch(
+                        FancyBboxPatch(
+                            tuple(center - [1.3, 0.3]),
+                            2.6,
+                            0.6,
+                            boxstyle="round,pad=0,rounding_size=0.15",
+                            facecolor=colors["compute_fill"],
+                            edgecolor=colors["compute"],
+                            linewidth=1.2,
+                            zorder=4,
+                        )
+                    )
+                    ax.text(
+                        *center,
+                        f"⚙ {label}",
+                        color=colors["text"],
+                        fontsize=7,
+                        ha="center",
+                        va="center",
+                        zorder=5,
+                    )
+                    # The data enters the block slightly above its middle, on the side facing
+                    # where it comes from, and leaves it slightly below, on the side facing where
+                    # it goes. This keeps a path that returns through the same port readable.
+                    side_in = np.sign(start[0] - center[0]) or -1
+                    side_out = np.sign(end[0] - center[0]) or 1
+                    block_in = center + np.array([side_in * 1.3, 0.12])
+                    block_out = center + np.array([side_out * 1.3, -0.12])
+                    arrow(
+                        start,
+                        block_in,
+                        colors["compute"],
+                        patchA=start_patch,
+                        connectionstyle="arc3,rad=0.1",
+                    )
+                    arrow(
+                        block_out,
+                        end,
+                        colors["compute"],
+                        patchB=end_patch,
+                        connectionstyle="arc3,rad=0.1",
+                    )
+
+        # 8. Title, and notes on how to read the diagram
+        ax.text(
+            low[0] + 0.6,
+            high[1] - 0.7,
+            f"AuroraFlow network: {len(devices)} FPGAs, {self.topology.value.replace('_', ' ')}",
+            color=colors["text"],
+            fontsize=13,
+            fontweight="bold",
+            va="center",
+        )
+        notes = [
+            "Thick lines: cables between the QSFP ports Q<link index>. "
+            "Arrows: data, from the sending to the receiving SDP."
+        ]
+        if model is not None:
+            notes.append("⚙: SDPs the data passes on an FPGA (first … last).")
+        if cfg is not None and cfg.board in platforms:
+            # Platforms without known QSFP interface names raise, they are left out then
+            with contextlib.suppress(FINNUserError):
+                platform = platforms[cfg.board]()
+                notes.append(
+                    f"Board {cfg.board}: "
+                    + ", ".join(
+                        f"Q{link} = {platform.get_qsfp_gt_interface(link)}"
+                        for link in sorted({link for _, link in ports})
+                    )
+                )
+        ax.text(
+            low[0] + 0.6,
+            low[1] + 0.5,
+            "\n".join(notes),
+            color=colors["muted"],
+            fontsize=8,
+            va="bottom",
+            linespacing=1.6,
+        )
+
+        fig.savefig(path, facecolor=fig.get_facecolor())
+        log.info(f"Saved a diagram of the Multi-FPGA network to {path}")

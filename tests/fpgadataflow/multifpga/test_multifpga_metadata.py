@@ -22,6 +22,7 @@ from finn.transformation.fpgadataflow.multifpga.metadata import DataDirection
 from finn.util.basic import get_metadata_prop_path, make_build_dir
 from finn.util.exception import FINNError, FINNInternalError, FINNMultiFPGAConfigError
 from finn.util.fpgadataflow import get_device_id, set_device_id
+from tests.fpgadataflow.multifpga.utils import chain_model, make_chain_partitioning_cfg
 from tests.fpgadataflow.test_set_folding import make_multi_fclayer_model
 
 
@@ -317,6 +318,45 @@ def test_aurora_metadata_partner_link_mismatch() -> None:
     meta.data[1][0].partner_link_index = 1
     with pytest.raises(FINNInternalError, match="already cabled to link 1 of device 0"):
         meta.add_connection(1, "n1", 0, "n2")
+
+
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
+@pytest.mark.parametrize(
+    ("topology", "device_ids"),
+    [
+        (MFTopology.SIMPLEX_CHAIN, [0, 1, 1, 2]),
+        (MFTopology.DUPLEX_CHAIN, [0, 1, 2, 2, 1, 0]),
+        (MFTopology.RING, [0, 1, 2, 0]),
+        (MFTopology.ARBITRARY, [0, 1, 2]),
+    ],
+)
+@pytest.mark.parametrize("with_model", [True, False])
+def test_aurora_metadata_plot(
+    topology: MFTopology, device_ids: list[int], with_model: bool
+) -> None:
+    """Test that the network diagram is written for the topologies with a layout, and skipped
+    for the others.
+    """
+    model = chain_model(len(device_ids))
+    for node, device in zip(model.graph.node, device_ids, strict=True):
+        set_device_id(node, device)
+    cfg = make_chain_partitioning_cfg(max(device_ids) + 1, topology=topology)
+    model = model.transform(
+        CreateNetworkMetadata(cast("MultiFPGAConfiguration", cfg.multifpga_configuration))
+    )
+    meta = AuroraNetworkMetadata.load_from_model(model)
+    assert meta.topology == topology
+
+    path = Path(make_build_dir("test_aurora_metadata_plot_")) / "network_cabling.png"
+    meta.plot(path, model if with_model else None, cfg)
+    match topology:
+        case MFTopology.SIMPLEX_CHAIN | MFTopology.DUPLEX_CHAIN | MFTopology.RING:
+            assert path.stat().st_size > 0
+        case MFTopology.ARBITRARY:
+            assert not path.exists()
+        case _:
+            raise NotImplementedError(f"No checks implemented for topology {topology.name}")
 
 
 @pytest.mark.multifpga

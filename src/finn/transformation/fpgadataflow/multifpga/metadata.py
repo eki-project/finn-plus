@@ -8,14 +8,17 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+# Needs to be outside the type-checking block, so that subclasses using mashumaro can serialize it
+from finn.builder.build_dataflow_config import MFTopology
 from finn.util.basic import get_metadata_prop_path
+from finn.util.logging import log
 
 if TYPE_CHECKING:
     from pathlib import Path
     from qonnx.core.modelwrapper import ModelWrapper
     from typing import Self
 
-    from finn.builder.build_dataflow_config import MultiFPGAConfiguration
+    from finn.builder.build_dataflow_config import DataflowBuildConfig, MultiFPGAConfiguration
 
 
 class DataDirection(str, Enum):
@@ -32,14 +35,15 @@ class NetworkMetadata(ABC):
     devices, as well as which nodes on the devices are responsible for communication.
     """
 
+    topology: MFTopology = MFTopology.SIMPLEX_CHAIN
+    """Topology the devices were partitioned for. Used e.g. to choose the layout in `plot()`."""
+
     @classmethod
-    def create_from_multifpga_configuration(
-        cls, mfcfg: MultiFPGAConfiguration  # noqa: ARG003
-    ) -> NetworkMetadata:
+    def create_from_multifpga_configuration(cls, mfcfg: MultiFPGAConfiguration) -> NetworkMetadata:
         """Create an empty metadata object. Subclasses can override this to read the settings
         they need from the Multi-FPGA configuration.
         """
-        return cls()
+        return cls(topology=mfcfg.topology)
 
     @classmethod
     def load_from_model(cls, model: ModelWrapper) -> Self:
@@ -107,3 +111,15 @@ class NetworkMetadata(ABC):
         get_partner_node(B, RX) returns A. (get_partner_node(A, RX) would return None,
         since A is not a receiving from any node.)
         """  # noqa
+
+    def plot(
+        self,
+        path: Path,  # noqa: ARG002
+        model: ModelWrapper | None = None,  # noqa: ARG002
+        cfg: DataflowBuildConfig | None = None,  # noqa: ARG002
+    ) -> None:
+        """Plot the metadata in an image at the given path. If the model (with SDPs and their
+        device IDs) is given, the connections between the ports inside each device can be drawn
+        as well, and with the build configuration board specific details.
+        Overwrite this method if possible."""
+        log.warning("Cannot plot metadata for the chosen backend!")

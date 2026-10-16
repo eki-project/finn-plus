@@ -2042,7 +2042,7 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
             else:
                 # Multi FPGA
                 log.info(
-                    "Detected a Multi-FPGA configuration. " "Running Multi-FPGA specific steps..."
+                    "Detected a Multi-FPGA configuration. Running Multi-FPGA specific steps..."
                 )
                 mfcfg = cfg.multifpga_configuration
                 if mfcfg.partitioning is not None:
@@ -2062,8 +2062,18 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                                 ", but a forking node was found after "
                                 "StreamingDataflowPartition creation!"
                             )
+
+                # Create and optionally plot the metadata
                 model = model.transform(CreateNetworkMetadata(mfcfg))
                 backend = get_backend(mfcfg.network_backend)
+                metadata = backend.metadata_type.load_from_model(model)
+                try:
+                    metadata.plot(cfg.get_report_directory() / "network_cabling.svg", model, cfg)
+                except Exception as e:
+                    # The diagram is only informational, so it must not abort the build
+                    log.warning(f"Could not plot the Multi-FPGA network, skipping the diagram: {e}")
+
+                # Build the backend
                 model = model.transform(backend.prepare_kernels(cfg))
 
             # Create / package XOs for all SDPs
