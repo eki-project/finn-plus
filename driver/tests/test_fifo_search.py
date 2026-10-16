@@ -16,6 +16,7 @@ from finn_plus_driver.overlays.fifo_search import (
     EvaluationCache,
     FeasibilityCheck,
     Lattice,
+    PrimitiveCost,
     SearchBudget,
     SearchContext,
     TotalBitsCost,
@@ -125,9 +126,45 @@ def random_instance(rng, num_fifos=None, box_limit=30000):
     return MockOracle(n, constraints), widths, max_depths
 
 
-def make_context(oracle, widths, start_depths, stop_condition="both", budget=None, **kwargs):
+def synthetic_tables(widths, max_depth=64, rng=None):
+    """Cost tables in the ``fifo_cost_tables`` format with a non-monotone ladder per FIFO.
+
+    Depths are real FIFO depths (register value + 1). Every few depths the LUTs grow; now and
+    then a "memory tier" adds a RAMB18 and drops LUTs, sometimes by more than the tile costs,
+    so that a deeper step can be cheaper than a shallower one (as in the real ladder).
+    """
+    rng = rng or random.Random(0)
+    fifos = {}
+    for i, w in enumerate(widths):
+        steps = []
+        d = rng.randint(2, 5)
+        lut, bram = w // 2 + 10, 0
+        while d < max_depth:
+            steps.append([d, [lut, w, bram, 0]])
+            d += rng.randint(2, 8)
+            if rng.random() < 0.3:
+                bram += 1
+                lut = max(10, lut - rng.randint(0, 45))
+            else:
+                lut += rng.randint(1, 10)
+        steps.append([max_depth, [lut, w, bram, 0]])
+        fifos[str(i)] = {"width": w, "ram_style": "auto", "steps": steps}
+    return {
+        "resources": ["lut", "ff", "bram18", "uram"],
+        "weights": {"lut": 1.0, "ff": 0.5, "bram18": 30.0, "uram": 400.0},
+        "weights_source": "test",
+        "fpgapart": None,
+        "versal": False,
+        "max_depth": max_depth,
+        "fifos": fifos,
+    }
+
+
+def make_context(
+    oracle, widths, start_depths, stop_condition="both", budget=None, cost_model=None, **kwargs
+):
     """Search context with the targets measured at ``start_depths``."""
-    cost_model = TotalBitsCost(widths)
+    cost_model = cost_model if cost_model is not None else TotalBitsCost(widths)
     cache = EvaluationCache(oracle, cost_model)
     target = cache.evaluate(start_depths, role="target")
     assert oracle.feasible(start_depths)
@@ -388,3 +425,117 @@ def test_cache_reuses_evaluations_only_with_requested_data():
     assert oracle.calls == 2
     cache.evaluate((3, 3), reuse=False)
     assert oracle.calls == 3 and cache.num_evaluations == 3
+
+
+# ---------------------------------------------------------------------------------------
+# Primitive cost tables and the candidate lattice
+# ---------------------------------------------------------------------------------------
+
+
+def test_primitive_cost_table_lookup():
+    """Envelope lookup, realization, breakpoints, vectors and extrapolation on a small table."""
+    tables = {
+        "resources": ["lut", "ff", "bram18", "uram"],
+        "weights": {"lut": 1, "ff": 0, "bram18": 100, "uram": 1000},
+        "fifos": {
+            "0": {
+                "width": 8,
+                "ram_style": "block",
+                # scalars 10, 20, 150, 130, 140: the third step is dominated by the fourth
+                "steps": [
+                    [4, [10, 5, 0, 0]],
+                    [8, [20, 5, 0, 0]],
+                    [12, [150, 5, 0, 0]],
+                    [16, [30, 5, 1, 0]],
+                    [24, [40, 5, 1, 0]],
+                ],
+            }
+        },
+    }
+    cm = PrimitiveCost(tables, offset=1)
+    assert cm.num_fifos == 1 and cm.unit == "LUTeq" and cm.ram_styles == ["block"]
+    # register value + offset is the depth looked up
+    assert cm.cost_fifo(0, 0) == 10 and cm.cost_fifo(0, 3) == 10 and cm.cost_fifo(0, 4) == 20
+    assert cm.cost_fifo(0, 9) == 130 and cm.cost_fifo(0, 15) == 130 and cm.cost_fifo(0, 16) == 140
+    assert cm.vector_fifo(0, 9) == [30, 5, 1, 0]
+    assert cm.realize([9]) == (15,) and cm.realize([3]) == (3,) and cm.realize([16]) == (23,)
+    assert cm.breakpoints(0) == [3, 7, 15, 23]
+    assert cm.cost_fifo(0, UNBOUNDED_DEPTH) == float("inf")
+    assert cm.realize([UNBOUNDED_DEPTH]) == (UNBOUNDED_DEPTH,)
+    # beyond the table: the last step continued with the slope of the last two
+    assert cm.cost_fifo(0, 31) == pytest.approx(50 + 100)
+    assert cm.realize([31]) == (31,)
+    assert cm.cost([15]) == 130 and cm.vector([15]) == {"lut": 30, "ff": 5, "bram18": 1, "uram": 0}
+    assert cm.describe()["weights"]["bram18"] == 100
+    # the envelope is non-decreasing in the register value
+    costs = [cm.cost_fifo(0, r) for r in range(0, 40)]
+    assert all(a <= b for a, b in zip(costs, costs[1:]))
+    with pytest.raises(ValueError):
+        PrimitiveCost({"resources": ["lut"], "weights": {}, "fifos": {"0": {"steps": []}}})
+
+
+def test_lattice_with_candidates():
+    """Candidates inside the bounds plus the bounds; the last spacing continues beyond."""
+    lat = Lattice([1, 3], [20, 10], candidates=[[4, 8, 12], [2, 5, 9, 30]])
+    assert lat.cands(0) == [1, 4, 8, 12, 16, 20]
+    assert lat.cands(1) == [3, 5, 9, 10]
+    assert lat.next_up(0, 1) == 4 and lat.next_up(0, 5) == 8 and lat.next_up(0, 20) is None
+    assert lat.next_down(0, 8) == 4 and lat.next_down(0, 5) == 4 and lat.next_down(0, 1) is None
+    assert lat.mid(0, 1, 20) == 8 and lat.mid(0, 5, 7) is None and lat.mid(0, 9, 12) == 12
+    assert lat.clamp([5, 0]) == (8, 3) and lat.clamp([99, 10]) == (20, 10)
+    restricted = lat.restrict([4, 5], [12, 9])
+    assert restricted.cands(0) == [4, 8, 12] and restricted.cands(1) == [5, 9]
+    assert restricted.contains((8, 9)) and not restricted.contains((13, 9))
+    # the integer lattice is unchanged
+    plain = Lattice([1], [4])
+    assert plain.cands(0) is None and plain.mid(0, 1, 4) == 2 and plain.mid(0, 5, 4) is None
+    assert plain.restrict([2], [3]).next_up(0, 3) is None
+
+
+def test_exact_strategies_find_the_optimum_with_primitive_cost():
+    """With a non-monotone primitive ladder the searches minimise the cost envelope exactly."""
+    rng = random.Random(99)
+    num_candidates, num_total = 0, 0
+    for _ in range(60):
+        oracle, widths, max_depths = random_instance(rng, box_limit=4000)
+        tables = synthetic_tables(widths, max_depth=max(max_depths) + 8, rng=rng)
+        cost_model = PrimitiveCost(tables, offset=1)
+        optimum = brute_force_optimum(oracle, cost_model, max_depths)
+        candidates = [cost_model.breakpoints(i) for i in range(len(widths))]
+        lattice = Lattice([1] * len(widths), max_depths, candidates=candidates)
+        num_candidates += sum(len(lattice.cands(i)) for i in range(len(widths)))
+        num_total += sum(max_depths)
+
+        for strategy, kwargs in (
+            ("bottom_up_exact", {}),
+            ("top_down_bnb", {"node_order": "dfs"}),
+            ("top_down_bnb", {"node_order": "best_bound", "seed_strategy": None}),
+        ):
+            ctx = make_context(
+                oracle, widths, tuple(max_depths), cost_model=cost_model, lattice=lattice
+            )
+            res = run_search(strategy, ctx, upper_bound_factor=1.0, **kwargs)
+            assert res.optimal_proven, res.abort_reason
+            assert res.cost_unit == "LUTeq"
+            assert oracle.feasible(res.depths)
+            assert res.cost == pytest.approx(optimum)
+            realized = cost_model.realize(res.depths)
+            assert all(r >= d for r, d in zip(realized, res.depths))
+            assert oracle.feasible(realized) and cost_model.cost(realized) == pytest.approx(optimum)
+            # the true (non-envelope) cost of the realized configuration is the envelope cost
+            true_cost = sum(
+                cost_model._scalars[i][cost_model._step(i, d)] for i, d in enumerate(realized)
+            )
+            assert true_cost == pytest.approx(optimum)
+
+        for order in ("largest_first", "random"):
+            ctx = make_context(
+                oracle, widths, tuple(max_depths), cost_model=cost_model, lattice=lattice
+            )
+            res = run_search(f"binary_{order}", ctx)
+            assert oracle.feasible(res.depths) and res.cost >= optimum - 1e-9
+            # the binary search only tests candidate depths
+            for entry in ctx.cache.log[1:]:
+                i, d = entry.info["tested_fifo"], entry.info["tested_depth"]
+                assert d in lattice.cands(i)
+    assert num_candidates < num_total / 2

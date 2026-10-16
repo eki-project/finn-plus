@@ -14,6 +14,8 @@ from finn_plus_driver.overlays.fifo_search import (
     EvalResult,
     EvaluationCache,
     FeasibilityCheck,
+    Lattice,
+    PrimitiveCost,
     SearchBudget,
     SearchContext,
     TotalBitsCost,
@@ -276,9 +278,16 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         seed=1,
         fifo_widths=dict(),
         folding_config=None,
+        fifo_cost_tables=None,
         **kwargs,
     ):
-        """Initialize live FIFO overlay."""
+        """Initialize live FIFO overlay.
+
+        ``fifo_widths``, ``folding_config`` and ``fifo_cost_tables`` come from the
+        ``driver_information`` of ``settings.json`` (written by ``MakePYNQDriver``); the cost
+        tables carry the FPGA primitive cost ladder of every FIFO for ``cost_model="primitives"``
+        and the primitive report of the final configuration.
+        """
         super().__init__(
             bitfile_name,
             platform=platform,
@@ -291,6 +300,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.error = False
         self.fifo_widths = fifo_widths
         self.num_fifos = len(self.fifo_widths)
+        self.fifo_cost_tables = fifo_cost_tables
 
         # The settings preserve the folding configuration needed for a
         # follow-up build with FIFO depths measured from this exact design.
@@ -468,6 +478,59 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         """FIFO widths in bits as a list indexed by FIFO ID."""
         return [self.fifo_widths[str(i)] for i in range(self.num_fifos)]
 
+    def primitive_cost_model(self):
+        """The ``PrimitiveCost`` of this accelerator, or ``None`` without cost tables."""
+        if self.fifo_cost_tables is None:
+            return None
+        cost_model = PrimitiveCost(self.fifo_cost_tables, offset=self.fifo_depth_offset)
+        if cost_model.num_fifos != self.num_fifos:
+            raise ValueError(
+                "fifo_cost_tables in settings.json cover %d FIFOs, the design has %d"
+                % (cost_model.num_fifos, self.num_fifos)
+            )
+        return cost_model
+
+    def make_cost_model(self, cost_model, start_depths):
+        """The cost model and lattice of a search: ``"bits"`` (kB of storage, integer depths)
+        or ``"primitives"`` (FPGA primitives from the exported tables, candidate depths at the
+        steps of the cost ladder). The lattice spans ``[1, start]`` per FIFO like the default
+        of ``SearchContext``; the exact searches widen it to their box."""
+        lower = [1] * self.num_fifos
+        if cost_model == "bits":
+            model = TotalBitsCost(self.fifo_width_list(), offset=self.fifo_depth_offset)
+            return model, Lattice(lower, start_depths)
+        if cost_model == "primitives":
+            model = self.primitive_cost_model()
+            if model is None:
+                raise ValueError(
+                    "cost_model='primitives' needs fifo_cost_tables in settings.json "
+                    "(written by builds with the current FINN+ version)"
+                )
+            candidates = [model.breakpoints(i) for i in range(self.num_fifos)]
+            return model, Lattice(lower, start_depths, candidates=candidates)
+        raise ValueError(f"Unknown cost_model: {cost_model} (available: bits, primitives)")
+
+    def primitive_report(self, depths):
+        """Primitive vector of a configuration (register values), ``None`` without tables."""
+        model = self.primitive_cost_model()
+        if model is None:
+            return None
+        realized = model.realize(depths)
+        report = {
+            **model.describe(),
+            "total": model.vector(realized),
+            "scalar": model.cost(realized),
+            "fifos": {
+                str(i): {
+                    "depth": realized[i] + self.fifo_depth_offset,
+                    "ram_style": model.ram_styles[i],
+                    **dict(zip(model.resources, model.vector_fifo(i, realized[i]))),
+                }
+                for i in range(self.num_fifos)
+            },
+        }
+        return report
+
     def run_fifo_search(
         self,
         search_strategy,
@@ -482,6 +545,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         avg_window_size=64,
         poll_interval_s=0.0003,
         cap_factor=4.0,
+        cost_model="bits",
         **strategy_kwargs,
     ):
         """Run a FIFO depth search strategy on the hardware oracle.
@@ -515,13 +579,20 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         avg_window_size, poll_interval_s, cap_factor :
             Sliding window written to the instrumentation (clamped to the build's maximum),
             poll period in seconds and cap factor of the steady-state detection.
+        cost_model : str
+            ``"bits"`` minimises the storage in kB over integer depths; ``"primitives"``
+            minimises the FPGA primitives of the RTL FIFO (LUT equivalents of the device
+            capacity, from the ``fifo_cost_tables`` of ``settings.json``) over the depths at
+            which that cost changes, and ``realized_fifo_depths`` are the (deeper or equal)
+            depths that attain the cost of the found configuration.
         strategy_kwargs :
             Passed on to the strategy (seed_strategy, upper_bound_factor, node_order, pareto,
             pareto_cost_limit, allow_unreliable_flags).
 
         Returns a dict with the keys of the original binary search (duration, fifo_depths,
         log_total_fifo_size, log_interval, log_min_latency, log_latency, all_iterations) plus
-        ``search`` (the strategy summary) and ``result`` (the ``SearchResult``).
+        ``search`` (the strategy summary), ``result`` (the ``SearchResult``), ``cost_model``
+        (its name and the model object) and ``realized_fifo_depths``.
         """
         if isinstance(start_depth, (list, tuple)):
             start_depths = tuple(int(d) for d in start_depth)
@@ -529,7 +600,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             start_depths = tuple([int(start_depth)] * self.num_fifos)
 
         widths = self.fifo_width_list()
-        cost_model = TotalBitsCost(widths, offset=self.fifo_depth_offset)
+        cost_model_name = cost_model
+        cost_model, lattice = self.make_cost_model(cost_model_name, start_depths)
         oracle = LiveFIFOOracle(
             self,
             iteration_runtime,
@@ -563,6 +635,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             start_depths,
             widths,
             cache=cache,
+            lattice=lattice,
             budget=budget,
             log=print,
             rng=random,
@@ -590,6 +663,9 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         return {
             "duration": duration,
             "fifo_depths": list(result.depths),
+            "realized_fifo_depths": list(cost_model.realize(result.depths)),
+            "cost_model": cost_model_name,
+            "cost_model_obj": cost_model,
             "log_total_fifo_size": log_total_fifo_size,
             "log_interval": log_interval,
             "log_min_latency": log_min_latency,
@@ -597,6 +673,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             "all_iterations": cache_to_iterations(cache),
             "search": {
                 **search_result_to_dict(result),
+                "cost_model": cost_model_name,
                 "stop_condition": stop_condition,
                 "relaxation": relaxation,
                 "iteration_runtime_s": iteration_runtime,
@@ -648,16 +725,17 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         log_interval,
         report_dir,
         stop_condition="interval",
+        unit="kB",
     ):
         """Generate and save FIFO sizing visualization graph."""
-        # Round total FIFO size to integer kB values
+        # Round total FIFO size to integer values
         log_total_fifo_size = [int(round(x)) for x in log_total_fifo_size]
 
         fig, ax1 = plt.subplots()
 
         color = "tab:red"
         ax1.set_xlabel("Iteration")
-        ax1.set_ylabel("Total FIFO Size [kB]", color=color)
+        ax1.set_ylabel(f"Total FIFO cost [{unit}]", color=color)
         ax1.plot(range(len(log_total_fifo_size)), log_total_fifo_size, color=color)
         ax1.tick_params(axis="y", labelcolor=color)
         ax1.set_xlim(left=0)
@@ -727,7 +805,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                 label="Proven lower bound",
             )
         ax.set_xlabel("Hardware evaluation")
-        ax.set_ylabel("Total FIFO Size [kB]")
+        ax.set_ylabel(f"Total FIFO cost [{result.cost_unit}]")
         ax.set_xlim(left=0)
         ax.set_ylim(bottom=0)
         ax.set_title(
@@ -747,9 +825,14 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         sub-directory, default: the strategy name), ``max_evaluations``,
         ``max_runtime_s``, ``iteration_runtime_factor`` (safety factor on the per-evaluation
         runtime heuristic), ``hw_capabilities`` ("auto" or a bool overriding the probe of the
-        virtual FIFO extensions) and the strategy-specific ``seed_strategy``,
-        ``upper_bound_factor``, ``node_order``, ``pareto``, ``pareto_cost_limit``,
-        ``allow_unreliable_flags``.
+        virtual FIFO extensions), ``cost_model`` (``"bits"``, the default, or
+        ``"primitives"``, see ``run_fifo_search``) and the strategy-specific
+        ``seed_strategy``, ``upper_bound_factor``, ``node_order``, ``pareto``,
+        ``pareto_cost_limit``, ``allow_unreliable_flags``.
+
+        The exported ``fifo_config.json`` holds the realized depths (for ``"primitives"`` the
+        depths attaining the cost of the found configuration, never shallower); the report
+        lists the primitive vector of that configuration whenever cost tables are available.
 
         Steady-state detection (``LiveFIFOOracle``, needs the steady-state registers of the
         instrumentation wrapper; older bitfiles fall back to the fixed runtime):
@@ -779,6 +862,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         steady_state_kwargs = {
             k: kwargs[k] for k in ("poll_interval_s", "cap_factor") if k in kwargs
         }
+        cost_model = kwargs.get("cost_model", "bits")
         strategy_kwargs = {k: kwargs[k] for k in STRATEGY_KWARGS if k in kwargs}
         is_binary = search_strategy.startswith("binary_")
         base_report_dir = kwargs.get("report_dir")
@@ -822,6 +906,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         print("STOP CONDITION: %s" % stop_condition)
         print("RELAXATION: %.1f%%" % (relaxation * 100))
         print("RELAXATION SWEEP: %s" % ("Enabled" if relaxation_sweep else "Disabled"))
+        print("COST MODEL: %s" % cost_model)
         if strategy_kwargs:
             print("STRATEGY KWARGS: %s" % strategy_kwargs)
         if max_evaluations is not None or max_runtime_s is not None:
@@ -850,10 +935,14 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             max_evaluations=max_evaluations,
             max_runtime_s=max_runtime_s,
             **steady_state_kwargs,
+            cost_model=cost_model,
             **strategy_kwargs,
         )
 
-        fifo_depths = search_log["fifo_depths"]
+        # The depths to build: the found configuration, lifted onto the cost envelope of a
+        # primitive cost model (equal or deeper, so still feasible)
+        fifo_depths = search_log["realized_fifo_depths"]
+        cost_unit = search_log["cost_model_obj"].unit
         log_total_fifo_size = search_log["log_total_fifo_size"]
         log_interval = search_log["log_interval"]
         log_min_latency = search_log["log_min_latency"]
@@ -869,6 +958,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                 log_interval,
                 report_dir,
                 stop_condition,
+                unit=cost_unit,
             )
         else:
             self.generate_search_graph(search_log, report_dir)
@@ -919,6 +1009,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                     stop_condition=stop_condition,
                     relaxation=sweep_relaxation,
                     **steady_state_kwargs,
+                    cost_model=cost_model,
                 )
 
                 # Extract only essential metrics
@@ -963,6 +1054,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         fifo_report = {
             "error": self.error,
             "fifo_size_total_kB": final_total_fifo_size,
+            "cost_model": cost_model,
+            "cost_unit": cost_unit,
+            "total_cost": search_log["cost_model_obj"].cost(fifo_depths),
+            "primitive_cost": self.primitive_report(fifo_depths),
             "detached_max_period_cycles": max_period,
             "target_interval_cycles": target_interval,
             "final_interval_cycles": final_interval,
@@ -974,6 +1069,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             "fifo_sizes": {},
             "search": {
                 **search_summary,
+                "realized_fifo_depths": list(fifo_depths),
                 "all_iterations": search_log["all_iterations"],
             },
         }
@@ -984,7 +1080,11 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                 "stop_condition": stop_condition,
                 "relaxation": relaxation,
                 "iteration_runtime_s": iteration_runtime,
-                **{k: v for k, v in search_log.items() if k not in ("search", "result")},
+                **{
+                    k: v
+                    for k, v in search_log.items()
+                    if k not in ("search", "result", "cost_model_obj")
+                },
             }
 
         # Add relaxation sweep results if available
@@ -1003,12 +1103,14 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             "impl_style": {},
             "ram_style": {},
         }
+        tables = (self.fifo_cost_tables or {}).get("fifos", {})
         for fifo, depth in enumerate(fifo_depths):
             fifo_name = "StreamingFIFO_rtl_%d" % fifo
             final_depth = depth + self.fifo_depth_offset
             fifo_config["fifo_depths"][fifo_name] = final_depth
             fifo_config["impl_style"][fifo_name] = "rtl"
-            fifo_config["ram_style"][fifo_name] = "auto"
+            # the style the cost tables were computed for (the node's ram_style at build time)
+            fifo_config["ram_style"][fifo_name] = tables.get(str(fifo), {}).get("ram_style", "auto")
         with open(os.path.join(report_dir, "fifo_config.json"), "w") as f:
             json.dump(fifo_config, f, indent=2)
 

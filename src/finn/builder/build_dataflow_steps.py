@@ -1929,6 +1929,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
                 experiment_info=experiment_info,
                 multidnn_mode=multidnn_mode,
                 board=cfg.board,
+                fpgapart=cfg._resolve_fpga_part(),
             )
         )
 
