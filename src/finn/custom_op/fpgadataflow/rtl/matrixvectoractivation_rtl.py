@@ -33,6 +33,7 @@ Unit for FPGA acceleration, supporting features like double-pumped DSPs, tiled
 compute (TH > 1) and various weight memory modes.
 """
 
+import math
 import numpy as np
 from onnx import GraphProto, NodeProto
 from pathlib import Path
@@ -229,8 +230,66 @@ class MVAU_rtl(MVAU, RTLBackend):
             )
 
     def lut_estimation(self, fpgapart: str) -> int:  # noqa: ARG002
-        """Return the LUT estimate (0, RTL MVU is DSP-based)."""
-        return 0
+        """Estimate LUT resource usage.
+
+        Follows the same decomposition as the HLS MVAU's model, from FINN-R
+        (Blott et al., 2018), restricted to the parts an RTL MVU actually builds
+        out of LUTs:
+
+        * **weight memory** -- with `internal_decoupled` + `distributed`, or a
+          small `internal_embedded` array, the weights live in LUTRAM. This term
+          dominates everything else and is the reason returning 0 here was so
+          costly: a layer holding a 4608x512 weight matrix in distributed RAM
+          measures over 100k LUTs, and a floorplanner told it was free will pack
+          several of them into one SLR.
+        * **adder tree and accumulator** -- scale with SIMD and the accumulator
+          width.
+
+        There is no multiplier term: `get_dsp_version` rejects `res_type == "lut"`,
+        so an RTL MVU always multiplies in DSPs. There is no threshold term
+        either, for the same reason the HLS one is conditional -- an RTL MVU has
+        no integrated activation, so thresholds are separate Thresholding nodes.
+
+        Validated against post-synthesis measurements of resnet18-w3a3 on U55C,
+        where this returns 0.85-0.9 of the measured size for the three largest
+        MVAUs. It only needs to be good enough to make SLR assignment sound: the
+        floorplanner's geometry is sized from measured utilization, not from this.
+
+        Returns
+        -------
+        int
+            Estimated number of LUTs needed
+        """
+        p = self.pe
+        q = self.simd
+        w = self.get_input_datatype(1).bitwidth()
+        idt = self.get_input_datatype(0)
+        a = idt.bitwidth()
+
+        # Empirical constants, as in the HLS model.
+        c0 = 300
+        c1 = 1.1
+
+        # Weights held in LUTRAM rather than block RAM.
+        weight_luts = 0
+        if (self.mem_mode == "internal_decoupled" and self.ram_style == "distributed") or (
+            self.mem_mode == "internal_embedded" and self.calc_wmem() <= 128
+        ):
+            weight_luts = (p * q * w) * math.ceil(self.calc_wmem() / 64)
+
+        addertree_luts = (w + a) * (2 * q - 1)
+
+        # Same accumulator-width bound as the HLS model: fall back to the width
+        # implied by the data types when accDataType is left at its INT32 default,
+        # which would otherwise overestimate badly.
+        acc_datatype = self.get_accumulator_datatype()
+        alpha = math.log(self.mw, 2) + w + a - 1 - int(idt.signed())
+        acc_luts = min(
+            acc_datatype.bitwidth(),
+            np.ceil(alpha + math.log(1 + pow(2, -alpha), 2) + 1),
+        )
+
+        return int(c0 + c1 * (p * (addertree_luts + acc_luts)) + weight_luts)
 
     def dsp_estimation(self, fpgapart: str) -> int:
         """Estimate the number of DSPs used for the multiplications based on the DSP block type.

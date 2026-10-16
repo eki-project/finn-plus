@@ -116,6 +116,23 @@ class HWCustomOp(CustomOp):
             # ID of FPGA device to which this Op is allocated, in
             # a multi-FPGA setting
             "device_id": ("i", False, 0),
+            # --- automatic floorplanning (see finn.transformation.fpgadataflow.floorplanning)
+            # These are deliberately separate from the slr/partition_id/device_id/mem_port
+            # attrs above: those are load-bearing for the Vitis Floorplan transform and the
+            # multi-FPGA clustering pipeline, and must not be silently shared.
+            # Level-2 placement unit this node belongs to. Recomputed from scratch on every
+            # run from the configured granularity; not meant to be set by users. -1 = unassigned.
+            "floorplan_group_id": ("i", False, -1),
+            # SLR assigned by the automatic floorplanner (Level 1). -1 = unassigned.
+            # Bridged onto "slr" by a separate, explicit step rather than shared implicitly.
+            "floorplan_slr": ("i", False, -1),
+            # Name of the Vivado pblock created for this node's placement unit.
+            # Distinct from the DFX-only "pblock" attr on NodeContainer.
+            "floorplan_pblock": ("s", False, ""),
+            # Whether this unit's pblock is hard (1) or soft (0). Soft-only for now.
+            "floorplan_pblock_hard": ("i", False, 0),
+            # Which sizing pass produced the numbers behind the current pblock:
+            # "estimate" (analytical) or "post_synth" (measured utilization).
             # input and output FIFO depths for multi-I/O nodes
             "inFIFODepths": ("ints", False, [2]),
             "outFIFODepths": ("ints", False, [2]),

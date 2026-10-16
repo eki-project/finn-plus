@@ -35,7 +35,6 @@ import json
 import math
 import numpy as np
 import os
-import re
 import shutil
 from collections.abc import Callable
 from copy import deepcopy
@@ -132,6 +131,13 @@ from finn.transformation.fpgadataflow.convert_to_hw.where import InferWhereLayer
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.floorplan import Floorplan
+from finn.transformation.fpgadataflow.floorplanning.bridge import BridgeFloorplanToSLR
+from finn.transformation.fpgadataflow.floorplanning.grouping import ComputeFloorplanGroups
+from finn.transformation.fpgadataflow.floorplanning.report import (
+    render_floorplan_svg,
+    write_floorplan_report,
+)
+from finn.transformation.fpgadataflow.floorplanning.slr_assignment import AssignFloorplanSLRs
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
@@ -186,6 +192,7 @@ from finn.transformation.fpgadataflow.transpose_decomposition import (
     ShuffleDecomposition,
 )
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild
+from finn.transformation.fpgadataflow.vitis_linking_configuration import kernel_synth_options
 from finn.transformation.fpgadataflow.vivado_power_estimation import VivadoPowerEstimation
 from finn.transformation.general import ApplyConfig
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
@@ -214,6 +221,7 @@ from finn.util.exception import FINNInternalError, FINNMultiFPGAUserError, FINNU
 from finn.util.execution import execute_parent
 from finn.util.fpgadataflow import is_mlo, warn_hls_rtl_dsp_conflict
 from finn.util.logging import log
+from finn.util.platforms import platforms
 from finn.util.slurmutil import detect_slurm_hosts, get_local_cores, parse_hosts
 from finn.util.verification import nodewise_verification
 from finn.xsi import SimEngine
@@ -254,122 +262,20 @@ register_build_dataflow_step()(step_collapse_multi_dnn)
 
 
 def _generate_pblock_svg(report_json_path: str | Path, svg_path: str | Path) -> None:
-    """Generate an SVG floorplan diagram from a pr_region_resources JSON report.
+    """Generate an SVG floorplan diagram from a pblock report.
 
-    The SVG shows the SLICE-coordinate footprint of each auto-placed pblock
-    against the full device SLICE array. Y-axis is flipped so that FPGA Y=0
-    (bottom of die) appears at the bottom of the image.
+    Thin wrapper over the shared renderer, which handles both the DFX flow's
+    `pr_region_resources` report and the automatic floorplanner's own. Writes
+    nothing when the report holds no drawable region, which is the manual-pblock
+    case.
     """
     with Path(report_json_path).open() as f:
         report = json.load(f)
-
-    regions = report.get("pr_regions", {})
-    dev_max_x = report.get("device_slice_max_x", 0)
-    dev_max_y = report.get("device_slice_max_y", 0)
-
-    # Parse the first SLICE range from each pblock's grid_ranges string.
-    # grid_ranges looks like: "SLICE_X60Y120:SLICE_X109Y239 RAMB36_X3Y24:..."
-    slice_pat = re.compile(r"SLICE_X(\d+)Y(\d+):SLICE_X(\d+)Y(\d+)")
-    pblocks = []  # list of (x0, y0, x1, y1, name)
-    for pblock_name, data in regions.items():
-        m = slice_pat.search(data.get("grid_ranges", ""))
-        if m:
-            x0, y0, x1, y1 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-            # Fall back on pblock extents if device extents not in report
-            dev_max_x = max(dev_max_x, x1)
-            dev_max_y = max(dev_max_y, y1)
-            pblocks.append((x0, y0, x1, y1, pblock_name))
-
-    if not pblocks:
-        return  # Nothing to draw (manual mode or no SLICE ranges found)
-
-    scale = 3  # pixels per SLICE unit
-    pad = 30  # border padding in pixels
-    font = 11
-
-    canvas_w = (dev_max_x + 1) * scale + 2 * pad
-    canvas_h = (dev_max_y + 1) * scale + 2 * pad
-
-    # Palette: distinct colours for up to 8 regions
-    palette = [
-        "#4c9be8",
-        "#e8864c",
-        "#4ce87c",
-        "#e84c9b",
-        "#9b4ce8",
-        "#e8e04c",
-        "#4ce8d8",
-        "#e84c4c",
-    ]
-
-    lines = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{canvas_w}" height="{canvas_h}">',
-        # Background = full device SLICE array
-        (
-            f'<rect x="{pad}" y="{pad}"'
-            f' width="{(dev_max_x + 1) * scale}" height="{(dev_max_y + 1) * scale}"'
-            f' fill="#d8d8d8" stroke="#555" stroke-width="1"/>'
-        ),
-        # Y-axis label (rotated)
-        (
-            f'<text transform="rotate(-90)" x="-{canvas_h//2}" y="{pad - 6}"'
-            f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE Y</text>'
-        ),
-        # X-axis label
-        (
-            f'<text x="{canvas_w // 2}" y="{canvas_h - 4}"'
-            f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE X</text>'
-        ),
-    ]
-
-    for i, (x0, y0, x1, y1, name) in enumerate(pblocks):
-        color = palette[i % len(palette)]
-        # Flip Y: FPGA Y=0 is at bottom; SVG Y=0 is top
-        svg_y_top = pad + (dev_max_y - y1) * scale
-        svg_x_left = pad + x0 * scale
-        w = (x1 - x0 + 1) * scale
-        h = (y1 - y0 + 1) * scale
-        cx = svg_x_left + w // 2
-        cy = svg_y_top + h // 2
-        # Pblock rectangle
-        lines.append(
-            f'<rect x="{svg_x_left}" y="{svg_y_top}" width="{w}" height="{h}"'
-            f' fill="{color}" fill-opacity="0.55" stroke="#222" stroke-width="1.5"/>'
-        )
-        # Label — region name (strip the pblock_Hier_ prefix), two lines if tall enough
-        label = name.replace("pblock_Hier_", "")
-        if h >= font * 2 + 4:
-            lines.append(
-                f'<text x="{cx}" y="{cy - font//2}" text-anchor="middle"'
-                f' font-size="{font}" font-family="sans-serif" font-weight="bold">{label}</text>'
-            )
-            lines.append(
-                f'<text x="{cx}" y="{cy + font}" text-anchor="middle"'
-                f' font-size="{font - 1}" font-family="sans-serif">'
-                f"X{x0}:{x1} Y{y0}:{y1}</text>"
-            )
-        else:
-            lines.append(
-                f'<text x="{cx}" y="{cy + font//3}" text-anchor="middle"'
-                f' font-size="{font}" font-family="sans-serif" font-weight="bold">{label}</text>'
-            )
-        # Corner coordinate labels (small monospace text)
-        lines.append(
-            f'<text x="{svg_x_left + 2}" y="{svg_y_top + font}"'
-            f' font-size="{max(font - 3, 7)}" font-family="monospace" fill="#444">'
-            f"({x0},{y1})</text>"
-        )
-        lines.append(
-            f'<text x="{svg_x_left + w - 2}" y="{svg_y_top + h - 3}"'
-            f' text-anchor="end" font-size="{max(font - 3, 7)}"'
-            f' font-family="monospace" fill="#444">'
-            f"({x1},{y0})</text>"
-        )
-
-    lines.append("</svg>")
-
+    svg = render_floorplan_svg(report)
+    if svg is None:
+        return
     with Path(svg_path).open("w") as f:
-        f.write("\n".join(lines))
+        f.write(svg)
 
 
 def verify_step(
@@ -1696,6 +1602,80 @@ def step_minimize_bit_width(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
 
 
 @register_build_dataflow_step()
+def step_generate_floorplan_assignment(
+    model: ModelWrapper, cfg: DataflowBuildConfig, parent_node: str | None = None  # noqa: ARG001
+) -> ModelWrapper:
+    """Decide the automatic floorplan: placement units, and an SLR for each.
+
+    This is the pure-Python half of floorplanning (Phase A). It works out *what*
+    should be placed where, using resource estimates, folding and board metadata --
+    all final by this point -- and records the decision in the model's
+    `floorplan_group_id` / `floorplan_slr` nodeattrs.
+
+    It deliberately creates no pblocks and does not call Vivado. For the Zynq flow
+    there is no elaborated hierarchy to bind cells to yet; for Alveo the Vitis
+    kernels do not exist until `step_prepare_synthesis`. Physical binding is a
+    separate, later, flow-specific phase.
+
+    No-ops unless `enable_auto_floorplanning` is set, and skips itself when the
+    build already carries an explicit floorplan or partitioning configuration.
+    """
+    if not cfg.enable_auto_floorplanning:
+        return model
+
+    # Explicit user configuration wins; there is no partial merge in this version.
+    explicit = []
+    if cfg.vitis_floorplan_file is not None:
+        explicit.append("vitis_floorplan_file")
+    if cfg.partitioning_configuration is not None:
+        explicit.append("partitioning_configuration")
+    if explicit:
+        log.warning(
+            f"enable_auto_floorplanning is set, but {' and '.join(explicit)} "
+            "is configured explicitly and takes precedence. Skipping automatic "
+            "floorplanning entirely."
+        )
+        return model
+
+    if cfg.board is None or cfg.board not in platforms:
+        log.warning(
+            f"Automatic floorplanning needs a board with a platform model; "
+            f"{cfg.board!r} has none. Skipping."
+        )
+        return model
+    platform = platforms[cfg.board]()
+
+    model = model.transform(
+        ComputeFloorplanGroups(
+            granularity=cfg.floorplan_granularity,
+            group_dwcs=cfg.floorplan_group_dwcs,
+        )
+    )
+    model = model.transform(
+        AssignFloorplanSLRs(
+            platform=platform,
+            fpga_part=cfg._resolve_fpga_part(),
+            board=cfg.board,
+            fpga_memory=cfg.fpga_memory,
+            resource_margin=cfg.floorplan_resource_margin,
+            use_hls_reports=cfg.floorplan_use_hls_reports,
+            enforce_sll_budget=cfg.floorplan_enforce_sll_budget,
+            solver=cfg.floorplan_solver,
+            solver_timeout=cfg.floorplan_solver_timeout,
+        )
+    )
+
+    if cfg.floorplan_bridge_to_slr:
+        # Floorplan reads `slr`, so the bridge has to run first. It is what makes the
+        # existing SLR-crossing-safe DWC/FIFO insertion see this feature's assignment
+        # at all, and on Alveo it is what drives per-SLR kernel splitting.
+        model = model.transform(BridgeFloorplanToSLR())
+        model = model.transform(Floorplan())
+
+    return model
+
+
+@register_build_dataflow_step()
 def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Create stitched IP for a graph after all HLS IP blocks have been generated.
     Depends on the DataflowOutputType.STITCHED_IP output product."""
@@ -2037,6 +2017,13 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
             sdp_partition_dir = cfg.get_intermediate_models_directory() / "kernel_partitions"
             if cfg.partitioning_configuration is None:
                 # Single FPGA
+                # Alveo is the flow where the graph shape is not final until here:
+                # IODMAs, DWCs and layer specialization all happen just above, so the
+                # assignment made back at step_generate_floorplan_assignment covers a
+                # node set that no longer matches the one being built. Redo it. The
+                # step recomputes grouping and assignment from scratch, so re-running
+                # it is safe, and it no-ops unless the feature is enabled.
+                model = step_generate_floorplan_assignment(model, cfg)
                 model = model.transform(Floorplan(cfg.vitis_floorplan_file))
                 model = model.transform(CreateDataflowPartition(str(sdp_partition_dir)))
                 model = model.transform(GiveUniqueNodeNamesRecursive())
@@ -2070,7 +2057,15 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                 model = model.transform(PrepareCommunicationKernels(platform, part, pc))
 
             # Create / package XOs for all SDPs
-            model = model.transform(BuildAllXOs(part, clk_ns))
+            model = model.transform(
+                BuildAllXOs(
+                    part,
+                    clk_ns,
+                    reset_pipeline_stages=cfg.reset_pipeline_stages,
+                    stream_register_slices=cfg.stream_register_slices,
+                    synth_options=kernel_synth_options(cfg.vitis_opt_strategy),
+                )
+            )
 
         case ShellFlowType.VIVADO_ZYNQ:
             log.warning(
@@ -2234,6 +2229,16 @@ def copy_partial_reconfiguration_artifacts(
         log.info(f"Stored PR region resource report at: {dest_json}")
 
 
+def copy_floorplan_artifacts(model: ModelWrapper, report_dir: Path) -> None:
+    """Write the automatic floorplanner's report and diagram, if the build produced one."""
+    floorplan_json = model.get_metadata_prop("floorplan_report_json")
+    if floorplan_json is None:
+        return
+    dest_json = report_dir / "floorplan.json"
+    if write_floorplan_report(model, floorplan_json, dest_json, report_dir / "floorplan.svg"):
+        log.info(f"Stored floorplan report at: {dest_json}")
+
+
 @register_build_dataflow_step()
 def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Synthesize a bitfile for the using the specified shell flow, using either
@@ -2283,6 +2288,12 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
                 cfg.instrumentation_avg_n,
                 cfg.auto_fifo_depths and cfg.auto_fifo_strategy == AutoFIFOSizingMethod.LIVE_FIFO,
                 partition_model_dir=str(partition_model_dir),
+                auto_floorplanning=cfg.enable_auto_floorplanning,
+                floorplan_resource_margin=cfg.floorplan_resource_margin,
+                floorplan_slicem_utilization=cfg.floorplan_slicem_utilization,
+                floorplan_logic_utilization=cfg.floorplan_logic_utilization,
+                reset_pipeline_stages=cfg.reset_pipeline_stages,
+                stream_register_slices=cfg.stream_register_slices,
             )
         )
     elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
@@ -2311,6 +2322,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
         copy_timing_report(model, report_dir)
         # Copy DFX partial bitstreams and PR region reports, if the build produced any
         copy_partial_reconfiguration_artifacts(model, bitfile_dir, report_dir)
+    copy_floorplan_artifacts(model, report_dir)
     return model
 
 

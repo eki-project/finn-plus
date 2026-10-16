@@ -7,12 +7,10 @@ import mip.gurobi
 from types import SimpleNamespace
 from typing import Any
 
-import finn.transformation.fpgadataflow.multifpga.partitioner as partitioner
-from finn.transformation.fpgadataflow.multifpga.partitioner import (
-    MIP_SOLVER_MAX_ATTEMPTS_ENV,
-    Partitioner,
-)
+import finn.util.lp as lp
+from finn.transformation.fpgadataflow.multifpga.partitioner import Partitioner
 from finn.util.exception import FINNMultiFPGAUserError
+from finn.util.lp import MIP_SOLVER_MAX_ATTEMPTS_ENV
 
 ENV_ERROR = "Gurobi environment could not be loaded, check your license."
 MODEL_ERROR = "Could not create Gurobi model"
@@ -33,7 +31,7 @@ class FakeModelFactory:
 
 
 class FakeDiagnostics:
-    """Stand-in for ``Partitioner._gurobi_environment_error`` counting its invocations."""
+    """Stand-in for ``finn.util.lp.gurobi_environment_error`` counting its invocations."""
 
     def __init__(self, reason: str | None) -> None:
         self.reason = reason
@@ -47,9 +45,9 @@ class FakeDiagnostics:
 @pytest.fixture
 def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     delays: list[float] = []
-    monkeypatch.setattr(partitioner.time, "sleep", delays.append)
-    monkeypatch.setattr(partitioner.random, "uniform", lambda a, b: 1.0)  # noqa: ARG005
-    monkeypatch.setattr(partitioner, "MIP_SOLVER_RETRY_DELAY", 2.0)
+    monkeypatch.setattr(lp.time, "sleep", delays.append)
+    monkeypatch.setattr(lp.random, "uniform", lambda a, b: 1.0)  # noqa: ARG005
+    monkeypatch.setattr(lp, "MIP_SOLVER_RETRY_DELAY", 2.0)
     monkeypatch.delenv(MIP_SOLVER_MAX_ATTEMPTS_ENV, raising=False)
     return delays
 
@@ -57,7 +55,7 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 @pytest.fixture
 def diagnostics(monkeypatch: pytest.MonkeyPatch) -> FakeDiagnostics:
     fake = FakeDiagnostics("Gurobi error 10009: No tokens available")
-    monkeypatch.setattr(Partitioner, "_gurobi_environment_error", fake)
+    monkeypatch.setattr(lp, "gurobi_environment_error", fake)
     return fake
 
 
@@ -66,7 +64,7 @@ def test_transient_failure_is_retried_with_backoff(
     monkeypatch: pytest.MonkeyPatch, no_sleep: list[float], diagnostics: FakeDiagnostics
 ) -> None:
     factory = FakeModelFactory([ENV_ERROR, ENV_ERROR])
-    monkeypatch.setattr(partitioner, "Model", factory)
+    monkeypatch.setattr(lp, "Model", factory)
 
     assert Partitioner.create_model(mip.GUROBI) == "model"
     assert len(factory.calls) == 3
@@ -81,7 +79,7 @@ def test_persistent_failure_raises_after_all_attempts(
     monkeypatch: pytest.MonkeyPatch, no_sleep: list[float], diagnostics: FakeDiagnostics
 ) -> None:
     factory = FakeModelFactory([ENV_ERROR] * 10)
-    monkeypatch.setattr(partitioner, "Model", factory)
+    monkeypatch.setattr(lp, "Model", factory)
     monkeypatch.setenv(MIP_SOLVER_MAX_ATTEMPTS_ENV, "3")
 
     with pytest.raises(FINNMultiFPGAUserError) as excinfo:
@@ -102,7 +100,7 @@ def test_non_transient_failure_is_not_retried(
     monkeypatch: pytest.MonkeyPatch, no_sleep: list[float], diagnostics: FakeDiagnostics
 ) -> None:
     factory = FakeModelFactory([MODEL_ERROR])
-    monkeypatch.setattr(partitioner, "Model", factory)
+    monkeypatch.setattr(lp, "Model", factory)
 
     with pytest.raises(FINNMultiFPGAUserError, match=MODEL_ERROR):
         Partitioner.create_model(mip.GUROBI)
@@ -116,7 +114,7 @@ def test_single_attempt_disables_retries(
     monkeypatch: pytest.MonkeyPatch, no_sleep: list[float], diagnostics: FakeDiagnostics
 ) -> None:
     factory = FakeModelFactory([ENV_ERROR])
-    monkeypatch.setattr(partitioner, "Model", factory)
+    monkeypatch.setattr(lp, "Model", factory)
     monkeypatch.setenv(MIP_SOLVER_MAX_ATTEMPTS_ENV, "1")
 
     with pytest.raises(FINNMultiFPGAUserError, match="after 1 attempt"):
@@ -130,7 +128,7 @@ def test_diagnostics_only_collected_for_gurobi(
     monkeypatch: pytest.MonkeyPatch, no_sleep: list[float], diagnostics: FakeDiagnostics
 ) -> None:
     factory = FakeModelFactory([ENV_ERROR] * 10)
-    monkeypatch.setattr(partitioner, "Model", factory)
+    monkeypatch.setattr(lp, "Model", factory)
     monkeypatch.setenv(MIP_SOLVER_MAX_ATTEMPTS_ENV, "2")
 
     with pytest.raises(FINNMultiFPGAUserError):

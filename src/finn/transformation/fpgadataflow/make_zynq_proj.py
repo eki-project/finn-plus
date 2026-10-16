@@ -47,6 +47,13 @@ from typing import TYPE_CHECKING, Literal, cast
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.floorplan import Floorplan
+from finn.transformation.fpgadataflow.floorplanning.binding import collect_floorplan_units
+from finn.transformation.fpgadataflow.floorplanning.resources import (
+    DEFAULT_LOGIC_UTILIZATION,
+    DEFAULT_RESOURCE_MARGIN,
+    DEFAULT_SLICEM_UTILIZATION,
+)
+from finn.transformation.fpgadataflow.floorplanning.tcl import render_floorplan_tcl
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
@@ -72,7 +79,7 @@ if TYPE_CHECKING:
     from finn.custom_op.fpgadataflow.rtl.nodecontainer import NodeContainer
 
 
-def _build_sdp_kernel(args: tuple[str, str, str, float, bool]) -> None:
+def _build_sdp_kernel(args: tuple[str, str, str, float, bool, int]) -> None:
     """Worker function for parallel SDP kernel builds.
 
     Runs InsertFIFO (if needed), SpecializeLayers, GiveUniqueNodeNames,
@@ -81,9 +88,18 @@ def _build_sdp_kernel(args: tuple[str, str, str, float, bool]) -> None:
 
     Args:
         args: tuple of (sdp_node_name, dataflow_model_filename, fpga_part,
-              period_ns, enable_instrumentation)
+              period_ns, enable_instrumentation, reset_pipeline_stages,
+              stream_register_slices)
     """
-    sdp_node_name, dataflow_model_filename, fpga_part, period_ns, enable_instrumentation = args
+    (
+        sdp_node_name,
+        dataflow_model_filename,
+        fpga_part,
+        period_ns,
+        enable_instrumentation,
+        reset_pipeline_stages,
+        stream_register_slices,
+    ) = args
     prefix = sdp_node_name + "_"
     kernel_model = ModelWrapper(dataflow_model_filename)
 
@@ -131,6 +147,8 @@ def _build_sdp_kernel(args: tuple[str, str, str, float, bool]) -> None:
                     period_ns,
                     f"sdp_{pr_container_inst.onnx_node.name}_{body_idx}",
                     run_synth=False,
+                    reset_pipeline_stages=reset_pipeline_stages,
+                    stream_register_slices=stream_register_slices,
                 )
             )
             body_model.set_metadata_prop("platform", "zynq-iodma")
@@ -153,7 +171,14 @@ def _build_sdp_kernel(args: tuple[str, str, str, float, bool]) -> None:
     # Do not try to parallelize HLSSynthIP here (mp.pool within an mp.pool not allowed)
     kernel_model = kernel_model.transform(HLSSynthIP(num_workers=1))
     kernel_model = kernel_model.transform(
-        CreateStitchedIP(fpga_part, period_ns, sdp_node_name, run_synth=False)
+        CreateStitchedIP(
+            fpga_part,
+            period_ns,
+            sdp_node_name,
+            run_synth=False,
+            reset_pipeline_stages=reset_pipeline_stages,
+            stream_register_slices=stream_register_slices,
+        )
     )
     kernel_model.set_metadata_prop("platform", "zynq-iodma")
     kernel_model.save(dataflow_model_filename)
@@ -240,8 +265,31 @@ class MakeZYNQProject(Transformation):
         enable_debug: bool = False,
         enable_finn_switch: bool = False,
         live_fifo_sizing: bool = False,
+        auto_floorplanning: bool = False,
+        floorplan_resource_margin: float = DEFAULT_RESOURCE_MARGIN,
+        floorplan_slicem_utilization: float = DEFAULT_SLICEM_UTILIZATION,
+        floorplan_logic_utilization: float = DEFAULT_LOGIC_UTILIZATION,
+        stream_register_slices: bool = False,
     ) -> None:
-        """Initialize MakeZYNQProject with the target platform and clock period."""
+        """Initialize MakeZYNQProject with the target platform and clock period.
+
+        Args:
+            platform: Target board name.
+            period_ns: Target clock period.
+            enable_debug: Whether to insert debug cores.
+            enable_finn_switch: Whether to instantiate the FINN switch.
+            live_fifo_sizing: Whether this is a live FIFO-sizing build.
+            auto_floorplanning: Whether to emit soft pblocks for the placement units
+                the automatic floorplanner assigned. Requires
+                `step_generate_floorplan_assignment` to have run; has no effect if
+                the model carries no floorplan.
+            floorplan_resource_margin: Headroom applied to each unit's estimate when
+            floorplan_slicem_utilization: Fraction of SLICEM LUTs LUTRAM/SRLs may fill.
+            floorplan_logic_utilization: Fraction of a pblock's slices plain logic may fill.
+                sizing its pblock.
+            stream_register_slices: Whether the kernels carry register slices, so the
+                floorplan units list them (`DataflowBuildConfig.stream_register_slices`).
+        """
         super().__init__()
         self.platform = platform
         self.period_ns = period_ns
@@ -249,6 +297,61 @@ class MakeZYNQProject(Transformation):
         self.live_fifo_sizing = live_fifo_sizing
         self.enable_debug = 1 if enable_debug else 0
         self.enable_gpio_reset = 0
+        self.auto_floorplanning = auto_floorplanning
+        self.floorplan_resource_margin = floorplan_resource_margin
+        self.floorplan_slicem_utilization = floorplan_slicem_utilization
+        self.floorplan_logic_utilization = floorplan_logic_utilization
+        self.stream_register_slices = stream_register_slices
+
+    def _generate_floorplan_flow(self, model: ModelWrapper, proj_dir: str) -> str:
+        """Return the Tcl that floorplans a non-PR design between synthesis and impl.
+
+        Pblocks need real cell paths, which only exist once the design is
+        elaborated, so this drives the runs itself: synthesise, open the run, pack
+        the pblocks, save the constraints, then implement. Returns an empty string
+        when there is nothing to place, leaving the template's default
+        `launch_runs` path to run untouched.
+        """
+        units = collect_floorplan_units(
+            model,
+            pynq_part_map[self.platform],
+            margin=self.floorplan_resource_margin,
+            stream_register_slices=self.stream_register_slices,
+        )
+        if not units:
+            log.warning(
+                "Automatic floorplanning is enabled but the model carries no placement "
+                "units; implementing without pblocks."
+            )
+            return ""
+
+        report_path = str(Path(proj_dir) / "finn_floorplan.json")
+        model.set_metadata_prop("floorplan_report_json", report_path)
+        lines = [
+            "    launch_runs -jobs 4 synth_1",
+            "    wait_on_run [get_runs synth_1]",
+            "    open_run synth_1 -name synth_1",
+        ]
+        # The script already runs inside "open_run synth_1", so it sizes every unit
+        # from the utilization it measures there.
+        lines += [
+            f"    {line}"
+            for line in render_floorplan_tcl(
+                units,
+                report_file=report_path,
+                margin=self.floorplan_resource_margin,
+                slicem_utilization=self.floorplan_slicem_utilization,
+                logic_utilization=self.floorplan_logic_utilization,
+            )
+        ]
+        lines += [
+            "    save_constraints -force",
+            "    close_design",
+            "    launch_runs -jobs 4 -to_step write_bitstream impl_1",
+            "    wait_on_run [get_runs impl_1]",
+            "    set finn_floorplan_done 1",
+        ]
+        return "\n".join(lines)
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply the transformation to create a Zynq project."""
@@ -717,6 +820,17 @@ class MakeZYNQProject(Transformation):
         fclk_mhz = int(1 / (self.period_ns * 0.001))
 
         pr_config = self._generate_pr_flow(model) if (partial_reconfiguration or sw_nodes) else ""
+        # Floorplanning and partial reconfiguration both want to own the synth/impl
+        # sequence, and the DFX packer already floorplans PR designs, so they are
+        # mutually exclusive.
+        floorplan_config = ""
+        if self.auto_floorplanning and not (partial_reconfiguration or sw_nodes):
+            floorplan_config = self._generate_floorplan_flow(model, vivado_pynq_proj_dir)
+        elif self.auto_floorplanning:
+            log.warning(
+                "Automatic floorplanning is not applied to partial-reconfiguration or "
+                "selectable-weights designs; those are floorplanned by the DFX packer."
+            )
 
         # create a TCL recipe for the project
         ipcfg = vivado_pynq_proj_dir + "/ip_config.tcl"
@@ -740,6 +854,7 @@ class MakeZYNQProject(Transformation):
                 .replace("$BOARDFILES$", str(get_settings().finn_deps / "board_files"))
                 .replace("$PR_CONFIG$", pr_config)
                 .replace("$NUM_JOBS$", str(get_settings().num_default_workers))
+                .replace("$FLOORPLAN_CONFIG$", floorplan_config)
             )
 
         # create a TCL recipe for the project
@@ -1776,8 +1891,34 @@ class ZynqBuild(Transformation):
         instrumentation_avg_n: int = 64,
         live_fifo_sizing: bool = False,
         partition_model_dir: Path | str | None = None,
+        auto_floorplanning: bool = False,
+        floorplan_resource_margin: float = DEFAULT_RESOURCE_MARGIN,
+        floorplan_slicem_utilization: float = DEFAULT_SLICEM_UTILIZATION,
+        floorplan_logic_utilization: float = DEFAULT_LOGIC_UTILIZATION,
+        reset_pipeline_stages: int = 0,
+        stream_register_slices: bool = False,
     ) -> None:
-        """Initialize ZynqBuild with platform and build settings."""
+        """Initialize ZynqBuild with platform and build settings.
+
+        Args:
+            platform: Target board name.
+            period_ns: Target clock period.
+            enable_debug: Whether to insert debug cores.
+            enable_instrumentation: Whether to add the instrumentation wrapper.
+            instrumentation_no_dma: Whether instrumentation runs without DMA.
+            instrumentation_avg_n: Instrumentation averaging window.
+            live_fifo_sizing: Whether this is a live FIFO-sizing build.
+            partition_model_dir: Where to write SDP child models.
+            auto_floorplanning: Whether to bind soft pblocks to the placement units
+                the automatic floorplanner assigned.
+            floorplan_resource_margin: Headroom applied when sizing those pblocks.
+            floorplan_slicem_utilization: Fraction of SLICEM LUTs LUTRAM/SRLs may fill.
+            floorplan_logic_utilization: Fraction of a pblock's slices plain logic may fill.
+            reset_pipeline_stages: Reset stages in front of every node (see
+                `CreateStitchedIP`); with any, passed on to the kernels and the floorplan.
+            stream_register_slices: Register slice in front of every node input another
+                node drives (`DataflowBuildConfig.stream_register_slices`).
+        """
         super().__init__()
         self.fpga_part = pynq_part_map[platform]
         self.axi_port_width = pynq_native_port_width[platform]
@@ -1791,6 +1932,12 @@ class ZynqBuild(Transformation):
         self.partition_model_dir = (
             str(partition_model_dir) if partition_model_dir is not None else None
         )
+        self.auto_floorplanning = auto_floorplanning
+        self.floorplan_resource_margin = floorplan_resource_margin
+        self.floorplan_slicem_utilization = floorplan_slicem_utilization
+        self.floorplan_logic_utilization = floorplan_logic_utilization
+        self.reset_pipeline_stages = reset_pipeline_stages
+        self.stream_register_slices = stream_register_slices
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
         """Apply the ZynqBuild transformation to create a complete Zynq accelerator."""
@@ -1843,6 +1990,8 @@ class ZynqBuild(Transformation):
                 self.fpga_part,
                 self.period_ns,
                 self.enable_instrumentation,
+                self.reset_pipeline_stages,
+                self.stream_register_slices,
             )
             for sdp_node in sdp_nodes
         ]
@@ -1865,6 +2014,11 @@ class ZynqBuild(Transformation):
                 enable_debug=self.enable_debug,
                 enable_finn_switch=enable_finn_switch,
                 live_fifo_sizing=self.live_fifo_sizing,
+                auto_floorplanning=self.auto_floorplanning,
+                floorplan_resource_margin=self.floorplan_resource_margin,
+                floorplan_slicem_utilization=self.floorplan_slicem_utilization,
+                floorplan_logic_utilization=self.floorplan_logic_utilization,
+                stream_register_slices=self.stream_register_slices,
             )
         )
 

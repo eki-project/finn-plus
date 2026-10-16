@@ -302,10 +302,16 @@ update_compile_order -fileset sources_1
 #set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
 
 set pr_flow 0
+# Set to 1 by $FLOORPLAN_CONFIG$ once it has driven implementation itself.
+set finn_floorplan_done 0
 
 $PR_CONFIG$
 
 if {$pr_flow == 0} {
+$FLOORPLAN_CONFIG$
+}
+
+if {$pr_flow == 0 && $finn_floorplan_done == 0} {
     # out-of-context synth can't be used for bitstream generation
     # set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} -value {-mode out_of_context} -objects [get_runs synth_1]
     launch_runs -jobs $NUM_JOBS$ -to_step write_bitstream impl_1

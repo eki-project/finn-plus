@@ -39,6 +39,17 @@ from qonnx.transformation.base import Transformation
 from typing import TYPE_CHECKING, cast
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, MFCommunicationKernel
+from finn.transformation.fpgadataflow.floorplanning.placer_retry import (
+    MAX_PLACER_RETRIES,
+    OVERRIDES_FILE,
+    REPORT_FILE,
+    UNITS_FILE,
+    VPL_LOG,
+    latest_attempt,
+    parse_placer_rejections,
+    retry_script,
+    write_overrides,
+)
 from finn.transformation.fpgadataflow.multifpga.aurora.link_config_transform import (
     AddAuroraToLinkConfig,
 )
@@ -68,18 +79,60 @@ class ParallelVitisSynthesis(Transformation):
     def link(self, config: VitisLinkConfiguration) -> Path:
         """Link a single config. Returns the path where the XCLBIN is
         expected to be produced.
+
+        If implementation fails because the placer rejected a floorplan pblock as
+        too small, the exact shortfall it reports is fed back to the geometry
+        engine and implementation is resumed, up to `MAX_PLACER_RETRIES` times.
+        Any other failure is raised at once. See `placer_retry`.
         """
-        result = subprocess.run(
-            shlex.split(f"bash {config.run_script_path}"),
-            cwd=config.run_script_path.parent,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            raise FINNSynthesisError(
-                f"Synthesis likely failed. Try checking logs "
-                f"at {config.run_script_path.parent}.",
-                config.run_script_path.parent / "v++_a.log",
+        link_dir = config.run_script_path.parent
+        script = config.run_script_path
+        accumulated: dict[str, dict[str, int]] = {}
+        for attempt in range(MAX_PLACER_RETRIES + 1):
+            result = subprocess.run(
+                shlex.split(f"bash {script}"),
+                cwd=link_dir,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                break
+
+            vpl_log = link_dir / VPL_LOG
+            report_path = link_dir / REPORT_FILE
+            report = json.loads(report_path.read_text()) if report_path.is_file() else None
+            units_path = link_dir / UNITS_FILE
+            units = json.loads(units_path.read_text()) if units_path.is_file() else None
+            rejections = (
+                parse_placer_rejections(
+                    latest_attempt(vpl_log.read_text(errors="ignore")), report, units
+                )
+                if vpl_log.is_file()
+                else {}
+            )
+            if not rejections or attempt == MAX_PLACER_RETRIES:
+                raise FINNSynthesisError(
+                    f"Synthesis likely failed. Try checking logs at {link_dir}.",
+                    link_dir / "v++_a.log",
+                )
+            # Shortfalls add up across attempts: a second rejection means the
+            # first increase was not enough, not that it should be replaced.
+            for pblock, per in rejections.items():
+                acc = accumulated.setdefault(pblock, {})
+                for key, short in per.items():
+                    acc[key] = acc.get(key, 0) + short
+            # The hook re-packs only the units named here, each with its total
+            # shortfall so far, and keeps every other placement of the previous
+            # attempt: a unit that was grown earlier and then placed stays where
+            # it is unless the placer rejects it again.
+            write_overrides(
+                link_dir / OVERRIDES_FILE, {pblock: accumulated[pblock] for pblock in rejections}
+            )
+            script = retry_script(config.run_script_path)
+            log.warning(
+                f"Placer rejected {len(rejections)} floorplan pblock(s) as too small; "
+                f"resuming implementation with their reported shortfalls "
+                f"(attempt {attempt + 2} of {MAX_PLACER_RETRIES + 1}): {rejections}"
             )
 
         # Try to generate resource reports, but don't raise an exception if this fails
@@ -171,6 +224,12 @@ class VitisBuild(Transformation):
                 vitis_opt_strategy=self.cfg.vitis_opt_strategy,
                 optimization_level=self.cfg.vitis_opt_strategy.value,
                 f_mhz=round(1000.0 / self.cfg.synth_clk_period_ns),
+                fpga_part=self.cfg._resolve_fpga_part(),  # noqa: SLF001
+                auto_floorplanning=self.cfg.enable_auto_floorplanning,
+                floorplan_resource_margin=self.cfg.floorplan_resource_margin,
+                floorplan_slicem_utilization=self.cfg.floorplan_slicem_utilization,
+                floorplan_logic_utilization=self.cfg.floorplan_logic_utilization,
+                stream_register_slices=self.cfg.stream_register_slices,
             )
         )
 

@@ -152,7 +152,16 @@ class DataflowOutputType(str, Enum):
 
 
 class VitisOptStrategy(Enum):
-    """Values applicable to VitisBuild optimization strategy."""
+    """Values applicable to VitisBuild optimization strategy.
+
+    The value is the ``v++ -O`` level. The two performance strategies also set the
+    Vivado implementation directives of the link and the kernels' synthesis options
+    (`vitis_linking_configuration.implementation_directives` and
+    `kernel_synth_options`): PERFORMANCE runs the ``Explore`` directives with
+    physical optimisation on and synthesises the kernels with retiming;
+    PERFORMANCE_BEST runs ``ExtraTimingOpt`` placement, ``AggressiveExplore``
+    physical optimisation and routing, and post-route physical optimisation.
+    """
 
     DEFAULT = "0"
     POWER = "1"
@@ -167,6 +176,21 @@ class FpgaMemoryType(str, Enum):
 
     DEFAULT = "default"
     HOST_MEM = "host_memory"
+
+
+class FloorplanGranularity(str, Enum):
+    """Granularity at which the automatic floorplanner forms Level-2 placement units.
+
+    A placement unit is the atomic object that gets one SLR assignment (Level 1) and
+    one pblock (Level 2). Both modes are supported so they can be A/B-tested against
+    each other on pblock count, Vivado runtime and achieved Fmax.
+    """
+
+    #: one placement unit per HW node (MVAU, FIFO, DWC, Thresholding, ...)
+    PER_NODE = "per_node"
+    #: one placement unit per compute node plus the FIFOs (and, by default, DWCs)
+    #: directly attached to it
+    NODE_WITH_ADJACENT_GLUE = "node_with_adjacent_glue"
 
 
 class VerificationStepType(str, Enum):
@@ -351,6 +375,7 @@ default_build_dataflow_steps = [
     "step_generate_estimate_reports",
     "step_assign_ddr_weight_offsets",
     "step_generate_hardware",
+    "step_generate_floorplan_assignment",
     "step_create_stitched_ip",
     "step_measure_rtlsim_performance",
     "step_out_of_context_synthesis",
@@ -861,6 +886,111 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Configuration that provides parameters for Multi-FPGA partitioning.
     #: If set to something other than None, we assume the Multi-FPGA case
     partitioning_configuration: Optional[PartitioningConfiguration] = None
+
+    #: Whether the automatic pblock floorplanner runs. When enabled, a step between
+    #: hardware generation and stitching groups nodes into placement units, assigns
+    #: each unit to an SLR, and (in the Vivado-side phase) gives each unit a soft
+    #: pblock inside that SLR.
+    #: Ignored, with a warning, when an explicit `vitis_floorplan_file` or
+    #: `partitioning_configuration` is set: explicit user config wins.
+    enable_auto_floorplanning: bool = False
+
+    #: (Only relevant if enable_auto_floorplanning is True) Granularity at which
+    #: placement units are formed. See FloorplanGranularity.
+    #:
+    #: Measured on cnv-w1a1/U55C: PER_NODE (69 units) builds a bitfile, while
+    #: NODE_WITH_ADJACENT_GLUE (24 units) fails routing with ~6.6k node overlaps.
+    #: Merging glue into its compute neighbour concentrates logic into fewer, denser
+    #: regions, which routes worse even though it creates fewer pblocks -- the
+    #: opposite of what capping pblock count was expected to buy. Prefer PER_NODE on
+    #: Alveo until that is re-measured on a larger design.
+    floorplan_granularity: FloorplanGranularity = FloorplanGranularity.NODE_WITH_ADJACENT_GLUE
+
+    #: (Only relevant for NODE_WITH_ADJACENT_GLUE) Whether DataWidthConverters count as
+    #: glue and are merged into a neighbour's placement unit. On by default: DWCs sit at
+    #: essentially every width-changing boundary, so excluding them would undercut the
+    #: mode's purpose of capping pblock count. Turn off to A/B-test the difference.
+    floorplan_group_dwcs: bool = True
+
+    #: (Only relevant if enable_auto_floorplanning is True) Multiplicative headroom
+    #: applied to each placement unit's resource estimate before it is placed.
+    floorplan_resource_margin: float = 1.1
+
+    #: (Only relevant if enable_auto_floorplanning is True) Fraction of a pblock's SLICEM
+    #: LUTs that LUT-as-memory (distributed RAM and shift registers) may fill. Vivado's
+    #: legaliser cannot pack LUTRAM/SRL to the site count inside a hard region: resnet18
+    #: (2 Oct 2026) died in detail placement with `[Place 30-1112] Failed to move LUTRAM
+    #: instance ... to a legal location` on a pblock whose SLICEM count covered the demand.
+    #: 0.8 follows Vivado's pblock guidance; the placer-retry path raises a rejected unit's
+    #: memory-LUT demand further if a run still hits 30-1112.
+    floorplan_slicem_utilization: float = 0.8
+
+    #: (Only relevant if enable_auto_floorplanning is True) Fraction of a pblock's slices
+    #: that plain logic -- LUTs, flip-flops, carries -- may fill. Sized at exactly eight
+    #: LUTs per slice, small units failed detail placement at random (`[Place 30-488]`,
+    #: `30-1153`): on mobilenetv1 (4 Oct 2026) each placement lost a different handful of
+    #: units, nearly all at 95 % fill or more in pblocks of 5-45 slices. The placer-retry
+    #: path still grows a unit that fails anyway.
+    floorplan_logic_utilization: float = 0.75
+
+    #: Register the kernel reset this many times in front of every dataflow node (a
+    #: `reset_pipe` cell per node in the stitched design, replicated at synthesis), behind
+    #: one kernel-level stage that synthesis replicates per 16 loads. The per-node cells
+    #: are not part of any pblock: the placer strings their registers out between the
+    #: tree replica and the node, which bounds the length of every hop -- a single hop
+    #: from one register to a node 400 tiles away routed in 9 ns. With the nodes in
+    #: per-layer pblocks, the one register that drove every node's synchronous reset was
+    #: the worst path of a floorplanned mobilenetv1 (13 Oct 2026: 1.9 ns of slack at
+    #: 100 MHz, every other path above 3.7 ns), and of the unfloorplanned build as well
+    #: (2.6 ns). Applies to the Vitis and Zynq hardware kernels; the stitched IP used for
+    #: rtlsim keeps the direct reset so a delayed release cannot drop the first samples a
+    #: testbench drives. 0 disables it; the kernel otherwise leaves reset this many plus
+    #: one cycles after its port.
+    reset_pipeline_stages: int = 2
+
+    #: Put a fully registered AXI-stream register slice in front of every dataflow node
+    #: input another node drives (FIFOs excepted: their input ready is a register
+    #: already). A node's ready is usually combinational in its valid, so each stream
+    #: carries a round trip producer -> consumer logic -> producer that crosses the
+    #: distance between the two twice; it is the one inter-unit path class distance
+    #: breaks, in floorplanned and free designs alike (a FIFO 597 tiles from its window
+    #: buffer: 0.97 ns of slack at 100 MHz; 300 tiles apart: 0.52 ns short at 200 MHz,
+    #: mobilenetv1, 14-15 Oct 2026). The slice's ready is a register, so the round trip
+    #: ends inside the consumer's placement unit. Throughput is unchanged, latency grows
+    #: by one cycle per slice, flip-flops by two per stream bit (9 % on mobilenetv1).
+    #: Hardware kernels only, like `reset_pipeline_stages`.
+    stream_register_slices: bool = False
+
+    #: (Only relevant if enable_auto_floorplanning is True) Whether to merge Vitis HLS
+    #: synthesis reports into the resource estimates the SLR assignment works from, taking
+    #: the larger of the two per resource type. On by default: SLR assignment runs after
+    #: step_generate_hardware, so in every real flow the reports already exist, and the
+    #: analytical estimates alone are badly short -- 16 of mobilenetv1's 86 layers and 36 of
+    #: resnet18's 107 estimate zero LUTs, which let the LP stack a network into fewer SLRs
+    #: than it fits in. RTL layers have no HLS report and keep their analytical numbers; an
+    #: HLS layer whose report is missing is warned about and likewise falls back.
+    floorplan_use_hls_reports: bool = True
+
+    #: (Only relevant if enable_auto_floorplanning is True) Whether the per-boundary SLL
+    #: budget from the platform model is a hard constraint on SLR assignment. Turning it
+    #: off keeps SLR-crossing cost in the objective but allows the budget to be exceeded,
+    #: which is occasionally the only way to place a design with very wide streams.
+    floorplan_enforce_sll_budget: bool = True
+
+    #: (Only relevant if enable_auto_floorplanning is True) Whether to copy the
+    #: floorplanner's SLR assignment onto the legacy `slr` nodeattr and run the Floorplan
+    #: transform afterwards. On by default: it is what makes the existing DWC/FIFO
+    #: SLR-crossing-safe insertion happen, and on Alveo it is what splits the design into
+    #: per-SLR Vitis kernels. Turn off only to A/B-test placement quality in isolation.
+    floorplan_bridge_to_slr: bool = True
+
+    #: (Only relevant if enable_auto_floorplanning is True) Solver to use for SLR
+    #: assignment. None picks the `mip` default, falling back to CBC.
+    floorplan_solver: Optional[Literal[MIPSolver.CBC, MIPSolver.GUROBI, MIPSolver.HIGHS]] = None
+
+    #: (Only relevant if enable_auto_floorplanning is True) Seconds the SLR-assignment
+    #: solver may spend per device before giving up.
+    floorplan_solver_timeout: int = 300
 
     #: If set to True, the FINN compiler tries to create an MLO design based on
     #: loop_body_hierarchy and loop_body_range

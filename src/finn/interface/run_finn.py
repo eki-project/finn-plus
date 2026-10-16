@@ -1125,6 +1125,131 @@ def test(
     run_test(variant, num_test_workers, tests_dir, args)
 
 
+@click.group(help="Floorplanning utilities.")
+def floorplan() -> None:
+    """Click group for floorplanning utilities."""
+
+
+@click.command(
+    "map-shell",
+    help="Measure which sites of a shell-based platform (e.g. an Alveo card) the placer "
+    "closes next to the static shell, and cache them for the floorplanner. Needs Vivado "
+    "on PATH and the platform installed; run once per platform and Vivado release.",
+)
+@click.option("--platform", required=True, help="Vitis platform name.")
+@click.option(
+    "--checkpoint",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Locked shell checkpoint (default: extracted from the installed platform).",
+)
+@click.option("--kinds", default=None, help="Comma-separated site kinds (default: all).")
+@click.option(
+    "--out-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Where to write the map (default: the maps shipped with FINN).",
+)
+@click.option(
+    "--work-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Scratch directory for the Vivado runs.",
+)
+@click.option("--jobs", default=1, show_default=True, help="Parallel Vivado runs (~8 GB each).")
+def floorplan_map_shell(
+    platform: str,
+    checkpoint: Path | None,
+    kinds: str | None,
+    out_dir: Path | None,
+    work_dir: Path | None,
+    jobs: int,
+) -> None:
+    """Map a platform shell's closed sites (see floorplanning/shell_closure.py)."""
+    from finn.transformation.fpgadataflow.floorplanning import shell_closure
+
+    args = ["map", "--platform", platform, "--jobs", str(jobs)]
+    if checkpoint is not None:
+        args += ["--checkpoint", str(checkpoint)]
+    if kinds:
+        args += ["--kinds", kinds]
+    if out_dir is not None:
+        args += ["--out-dir", str(out_dir)]
+    if work_dir is not None:
+        args += ["--work-dir", str(work_dir)]
+    sys.exit(shell_closure.main(args))
+
+
+@click.command("show-shell", help="Print the cached closed sites of a platform.")
+@click.option("--platform", required=True, help="Vitis platform name.")
+@click.option("--vivado", default=None, help="Vivado release (default: the one on PATH).")
+def floorplan_show_shell(platform: str, vivado: str | None) -> None:
+    """Show a platform's cached shell closure map."""
+    from finn.transformation.fpgadataflow.floorplanning import shell_closure
+
+    args = ["show", "--platform", platform] + (["--vivado", vivado] if vivado else [])
+    sys.exit(shell_closure.main(args))
+
+
+@click.command(
+    "timing-split",
+    help="Split the worst setup paths of a routed floorplanned design into intra-unit and "
+    "inter-unit paths and relate their slack to the units' shapes and distances; with "
+    "--baseline the unfloorplanned routed checkpoint of the same netlist is analysed "
+    "alongside. Needs Vivado on PATH; ~20 minutes per checkpoint.",
+)
+@click.option(
+    "--checkpoint",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Routed checkpoint of the floorplanned design (level0_wrapper_routed.dcp).",
+)
+@click.option(
+    "--floorplan-dir",
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Directory holding finn_floorplan.json and finn_floorplan_units.json of that run.",
+)
+@click.option(
+    "--out",
+    required=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Output directory (exports, per-path JSON, timing_split.md).",
+)
+@click.option(
+    "--baseline",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Routed checkpoint of the unfloorplanned baseline.",
+)
+@click.option(
+    "--baseline-model",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Parent model of the baseline build; with --baseline.",
+)
+@click.option("--paths", default=2000, show_default=True, help="Worst paths per design.")
+@click.option("--clock", default=None, help="Clock pattern (default: the Vitis kernel clock).")
+def floorplan_timing_split(
+    checkpoint: Path,
+    floorplan_dir: Path,
+    out: Path,
+    baseline: Path | None,
+    baseline_model: Path | None,
+    paths: int,
+    clock: str | None,
+) -> None:
+    """Intra/inter-unit timing split (see floorplanning/timing_split.py)."""
+    from finn.transformation.fpgadataflow.floorplanning import timing_split
+
+    args = [
+        "--checkpoint", str(checkpoint), "--floorplan-dir", str(floorplan_dir),
+        "--out", str(out), "--paths", str(paths),
+    ]  # fmt: skip
+    if baseline is not None:
+        args += ["--baseline", str(baseline)]
+    if baseline_model is not None:
+        args += ["--baseline-model", str(baseline_model)]
+    if clock:
+        args += ["--clock", clock]
+    sys.exit(timing_split.main(args))
+
+
 @click.group(help="Dependency management")
 def deps() -> None:
     """Click group collecting depenency related commands."""
@@ -1288,6 +1413,9 @@ def main() -> None:
     settings.add_command(config_edit)
     settings.add_command(config_create)
     deps.add_command(update)
+    floorplan.add_command(floorplan_map_shell)
+    floorplan.add_command(floorplan_show_shell)
+    floorplan.add_command(floorplan_timing_split)
     deps.add_command(deps_edit)
     deps.add_command(deps_show)
     wizard.add_command(flow_wizard)
@@ -1296,6 +1424,7 @@ def main() -> None:
     main_group.add_command(wizard)
     main_group.add_command(settings)
     main_group.add_command(deps)
+    main_group.add_command(floorplan)
     main_group.add_command(build)
     main_group.add_command(bench)
     main_group.add_command(test)

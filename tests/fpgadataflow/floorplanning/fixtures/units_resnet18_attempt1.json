@@ -1,0 +1,4678 @@
+[
+ {
+  "name": "pblock_finn_unit_0",
+  "slr": 0,
+  "order": 0,
+  "demands": {
+   "luts": 2474,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 9,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_1",
+  "slr": 0,
+  "order": 1,
+  "demands": {
+   "luts": 41,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_2",
+  "slr": 0,
+  "order": 2,
+  "demands": {
+   "luts": 311,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_3",
+  "slr": 0,
+  "order": 3,
+  "demands": {
+   "luts": 48,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_4",
+  "slr": 0,
+  "order": 4,
+  "demands": {
+   "luts": 48,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_5",
+  "slr": 0,
+  "order": 5,
+  "demands": {
+   "luts": 48,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_6",
+  "slr": 0,
+  "order": 6,
+  "demands": {
+   "luts": 243,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_7",
+  "slr": 0,
+  "order": 7,
+  "demands": {
+   "luts": 48,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_8",
+  "slr": 0,
+  "order": 8,
+  "demands": {
+   "luts": 15,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_9",
+  "slr": 0,
+  "order": 9,
+  "demands": {
+   "luts": 513,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_10",
+  "slr": 0,
+  "order": 10,
+  "demands": {
+   "luts": 1237,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 30,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_11",
+  "slr": 0,
+  "order": 11,
+  "demands": {
+   "luts": 68,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_12",
+  "slr": 0,
+  "order": 12,
+  "demands": {
+   "luts": 65,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_13",
+  "slr": 0,
+  "order": 13,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_14",
+  "slr": 0,
+  "order": 14,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_15",
+  "slr": 0,
+  "order": 15,
+  "demands": {
+   "luts": 96,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    2
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_16",
+  "slr": 0,
+  "order": 16,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_17",
+  "slr": 0,
+  "order": 17,
+  "demands": {
+   "luts": 50,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_18",
+  "slr": 0,
+  "order": 18,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_19",
+  "slr": 0,
+  "order": 19,
+  "demands": {
+   "luts": 8,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_20",
+  "slr": 0,
+  "order": 20,
+  "demands": {
+   "luts": 79,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_21",
+  "slr": 0,
+  "order": 21,
+  "demands": {
+   "luts": 579,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_22",
+  "slr": 0,
+  "order": 22,
+  "demands": {
+   "luts": 79,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_23",
+  "slr": 0,
+  "order": 23,
+  "demands": {
+   "luts": 22,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_24",
+  "slr": 0,
+  "order": 24,
+  "demands": {
+   "luts": 1953,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_25",
+  "slr": 0,
+  "order": 25,
+  "demands": {
+   "luts": 5692,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 14,
+   "dsps": 317,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_26",
+  "slr": 0,
+  "order": 26,
+  "demands": {
+   "luts": 59,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_27",
+  "slr": 0,
+  "order": 27,
+  "demands": {
+   "luts": 68,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_28",
+  "slr": 0,
+  "order": 28,
+  "demands": {
+   "luts": 84,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_29",
+  "slr": 0,
+  "order": 29,
+  "demands": {
+   "luts": 50,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_30",
+  "slr": 0,
+  "order": 30,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_31",
+  "slr": 0,
+  "order": 31,
+  "demands": {
+   "luts": 8,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_32",
+  "slr": 0,
+  "order": 32,
+  "demands": {
+   "luts": 79,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_33",
+  "slr": 0,
+  "order": 33,
+  "demands": {
+   "luts": 579,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_34",
+  "slr": 0,
+  "order": 34,
+  "demands": {
+   "luts": 79,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_35",
+  "slr": 0,
+  "order": 35,
+  "demands": {
+   "luts": 22,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_36",
+  "slr": 0,
+  "order": 36,
+  "demands": {
+   "luts": 1953,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_37",
+  "slr": 0,
+  "order": 37,
+  "demands": {
+   "luts": 5692,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 14,
+   "dsps": 317,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_38",
+  "slr": 0,
+  "order": 38,
+  "demands": {
+   "luts": 59,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_39",
+  "slr": 0,
+  "order": 39,
+  "demands": {
+   "luts": 68,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_40",
+  "slr": 0,
+  "order": 40,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_41",
+  "slr": 0,
+  "order": 41,
+  "demands": {
+   "luts": 42,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_42",
+  "slr": 0,
+  "order": 42,
+  "demands": {
+   "luts": 39,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_43",
+  "slr": 0,
+  "order": 43,
+  "demands": {
+   "luts": 25,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_44",
+  "slr": 0,
+  "order": 44,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_45",
+  "slr": 0,
+  "order": 45,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_46",
+  "slr": 0,
+  "order": 46,
+  "demands": {
+   "luts": 96,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    2
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_47",
+  "slr": 0,
+  "order": 47,
+  "demands": {
+   "luts": 84,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_48",
+  "slr": 0,
+  "order": 48,
+  "demands": {
+   "luts": 50,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_49",
+  "slr": 0,
+  "order": 49,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_50",
+  "slr": 0,
+  "order": 50,
+  "demands": {
+   "luts": 8,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_51",
+  "slr": 0,
+  "order": 51,
+  "demands": {
+   "luts": 79,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_52",
+  "slr": 0,
+  "order": 52,
+  "demands": {
+   "luts": 579,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_53",
+  "slr": 0,
+  "order": 53,
+  "demands": {
+   "luts": 79,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_54",
+  "slr": 0,
+  "order": 54,
+  "demands": {
+   "luts": 22,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_55",
+  "slr": 0,
+  "order": 55,
+  "demands": {
+   "luts": 1953,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_56",
+  "slr": 0,
+  "order": 56,
+  "demands": {
+   "luts": 5692,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 14,
+   "dsps": 317,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_57",
+  "slr": 0,
+  "order": 57,
+  "demands": {
+   "luts": 59,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_58",
+  "slr": 0,
+  "order": 58,
+  "demands": {
+   "luts": 65,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_59",
+  "slr": 0,
+  "order": 59,
+  "demands": {
+   "luts": 84,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_60",
+  "slr": 0,
+  "order": 60,
+  "demands": {
+   "luts": 50,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_61",
+  "slr": 0,
+  "order": 61,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_62",
+  "slr": 0,
+  "order": 62,
+  "demands": {
+   "luts": 8,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_63",
+  "slr": 0,
+  "order": 63,
+  "demands": {
+   "luts": 79,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_64",
+  "slr": 0,
+  "order": 64,
+  "demands": {
+   "luts": 579,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_65",
+  "slr": 0,
+  "order": 65,
+  "demands": {
+   "luts": 79,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_66",
+  "slr": 0,
+  "order": 66,
+  "demands": {
+   "luts": 22,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_67",
+  "slr": 0,
+  "order": 67,
+  "demands": {
+   "luts": 1953,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_68",
+  "slr": 0,
+  "order": 68,
+  "demands": {
+   "luts": 5692,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 14,
+   "dsps": 317,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_69",
+  "slr": 0,
+  "order": 69,
+  "demands": {
+   "luts": 59,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_70",
+  "slr": 0,
+  "order": 70,
+  "demands": {
+   "luts": 64,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_71",
+  "slr": 0,
+  "order": 71,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_72",
+  "slr": 0,
+  "order": 72,
+  "demands": {
+   "luts": 42,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_73",
+  "slr": 0,
+  "order": 73,
+  "demands": {
+   "luts": 39,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_74",
+  "slr": 0,
+  "order": 74,
+  "demands": {
+   "luts": 25,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_75",
+  "slr": 0,
+  "order": 75,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_76",
+  "slr": 1,
+  "order": 76,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_77",
+  "slr": 1,
+  "order": 77,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_78",
+  "slr": 1,
+  "order": 78,
+  "demands": {
+   "luts": 84,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_79",
+  "slr": 1,
+  "order": 79,
+  "demands": {
+   "luts": 50,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_80",
+  "slr": 1,
+  "order": 80,
+  "demands": {
+   "luts": 95,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_81",
+  "slr": 1,
+  "order": 81,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_82",
+  "slr": 1,
+  "order": 82,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_83",
+  "slr": 1,
+  "order": 83,
+  "demands": {
+   "luts": 6,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_84",
+  "slr": 1,
+  "order": 84,
+  "demands": {
+   "luts": 13,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_85",
+  "slr": 1,
+  "order": 85,
+  "demands": {
+   "luts": 43,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_86",
+  "slr": 1,
+  "order": 86,
+  "demands": {
+   "luts": 237,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_87",
+  "slr": 1,
+  "order": 87,
+  "demands": {
+   "luts": 798,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_88",
+  "slr": 1,
+  "order": 88,
+  "demands": {
+   "luts": 619,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 36,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_89",
+  "slr": 1,
+  "order": 89,
+  "demands": {
+   "luts": 43,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_90",
+  "slr": 1,
+  "order": 90,
+  "demands": {
+   "luts": 54,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_91",
+  "slr": 1,
+  "order": 91,
+  "demands": {
+   "luts": 16,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_92",
+  "slr": 1,
+  "order": 92,
+  "demands": {
+   "luts": 57,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_93",
+  "slr": 1,
+  "order": 93,
+  "demands": {
+   "luts": 1312,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_94",
+  "slr": 1,
+  "order": 94,
+  "demands": {
+   "luts": 84,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_95",
+  "slr": 1,
+  "order": 95,
+  "demands": {
+   "luts": 3823,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 9,
+   "dsps": 212,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_96",
+  "slr": 1,
+  "order": 96,
+  "demands": {
+   "luts": 59,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_97",
+  "slr": 1,
+  "order": 97,
+  "demands": {
+   "luts": 57,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_98",
+  "slr": 1,
+  "order": 98,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_99",
+  "slr": 1,
+  "order": 99,
+  "demands": {
+   "luts": 43,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_100",
+  "slr": 1,
+  "order": 100,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_101",
+  "slr": 1,
+  "order": 101,
+  "demands": {
+   "luts": 7,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_102",
+  "slr": 1,
+  "order": 102,
+  "demands": {
+   "luts": 68,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_103",
+  "slr": 1,
+  "order": 103,
+  "demands": {
+   "luts": 685,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_104",
+  "slr": 1,
+  "order": 104,
+  "demands": {
+   "luts": 57,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_105",
+  "slr": 1,
+  "order": 105,
+  "demands": {
+   "luts": 18,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_106",
+  "slr": 1,
+  "order": 106,
+  "demands": {
+   "luts": 1953,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_107",
+  "slr": 1,
+  "order": 107,
+  "demands": {
+   "luts": 6022,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 14,
+   "dsps": 317,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_108",
+  "slr": 1,
+  "order": 108,
+  "demands": {
+   "luts": 61,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_109",
+  "slr": 1,
+  "order": 109,
+  "demands": {
+   "luts": 65,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_110",
+  "slr": 1,
+  "order": 110,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_111",
+  "slr": 1,
+  "order": 111,
+  "demands": {
+   "luts": 42,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_112",
+  "slr": 1,
+  "order": 112,
+  "demands": {
+   "luts": 39,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_113",
+  "slr": 1,
+  "order": 113,
+  "demands": {
+   "luts": 26,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_114",
+  "slr": 1,
+  "order": 114,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_115",
+  "slr": 1,
+  "order": 115,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_116",
+  "slr": 1,
+  "order": 116,
+  "demands": {
+   "luts": 96,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    2
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_117",
+  "slr": 1,
+  "order": 117,
+  "demands": {
+   "luts": 84,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_118",
+  "slr": 1,
+  "order": 118,
+  "demands": {
+   "luts": 43,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_119",
+  "slr": 1,
+  "order": 119,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_120",
+  "slr": 1,
+  "order": 120,
+  "demands": {
+   "luts": 7,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_121",
+  "slr": 1,
+  "order": 121,
+  "demands": {
+   "luts": 68,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_122",
+  "slr": 1,
+  "order": 122,
+  "demands": {
+   "luts": 685,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_123",
+  "slr": 1,
+  "order": 123,
+  "demands": {
+   "luts": 57,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_124",
+  "slr": 1,
+  "order": 124,
+  "demands": {
+   "luts": 18,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_125",
+  "slr": 1,
+  "order": 125,
+  "demands": {
+   "luts": 1953,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_126",
+  "slr": 1,
+  "order": 126,
+  "demands": {
+   "luts": 6022,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 14,
+   "dsps": 317,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_127",
+  "slr": 1,
+  "order": 127,
+  "demands": {
+   "luts": 61,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_128",
+  "slr": 1,
+  "order": 128,
+  "demands": {
+   "luts": 60,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_129",
+  "slr": 1,
+  "order": 129,
+  "demands": {
+   "luts": 84,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_130",
+  "slr": 1,
+  "order": 130,
+  "demands": {
+   "luts": 43,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_131",
+  "slr": 1,
+  "order": 131,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_132",
+  "slr": 1,
+  "order": 132,
+  "demands": {
+   "luts": 7,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_133",
+  "slr": 1,
+  "order": 133,
+  "demands": {
+   "luts": 68,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_134",
+  "slr": 1,
+  "order": 134,
+  "demands": {
+   "luts": 685,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_135",
+  "slr": 1,
+  "order": 135,
+  "demands": {
+   "luts": 57,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_136",
+  "slr": 1,
+  "order": 136,
+  "demands": {
+   "luts": 18,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_137",
+  "slr": 1,
+  "order": 137,
+  "demands": {
+   "luts": 1953,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_138",
+  "slr": 1,
+  "order": 138,
+  "demands": {
+   "luts": 6022,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 14,
+   "dsps": 317,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_139",
+  "slr": 1,
+  "order": 139,
+  "demands": {
+   "luts": 61,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_140",
+  "slr": 1,
+  "order": 140,
+  "demands": {
+   "luts": 64,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_141",
+  "slr": 1,
+  "order": 141,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_142",
+  "slr": 1,
+  "order": 142,
+  "demands": {
+   "luts": 42,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_143",
+  "slr": 1,
+  "order": 143,
+  "demands": {
+   "luts": 39,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_144",
+  "slr": 1,
+  "order": 144,
+  "demands": {
+   "luts": 26,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_145",
+  "slr": 1,
+  "order": 145,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_146",
+  "slr": 1,
+  "order": 146,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_147",
+  "slr": 1,
+  "order": 147,
+  "demands": {
+   "luts": 84,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_148",
+  "slr": 1,
+  "order": 148,
+  "demands": {
+   "luts": 43,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_149",
+  "slr": 1,
+  "order": 149,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_150",
+  "slr": 1,
+  "order": 150,
+  "demands": {
+   "luts": 875,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_151",
+  "slr": 1,
+  "order": 151,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_152",
+  "slr": 1,
+  "order": 152,
+  "demands": {
+   "luts": 15,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_153",
+  "slr": 1,
+  "order": 153,
+  "demands": {
+   "luts": 680,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_154",
+  "slr": 1,
+  "order": 154,
+  "demands": {
+   "luts": 2063,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 27,
+   "dsps": 106,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_155",
+  "slr": 1,
+  "order": 155,
+  "demands": {
+   "luts": 61,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    3
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_156",
+  "slr": 1,
+  "order": 156,
+  "demands": {
+   "luts": 62,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_157",
+  "slr": 2,
+  "order": 157,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_158",
+  "slr": 2,
+  "order": 158,
+  "demands": {
+   "luts": 108,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_159",
+  "slr": 2,
+  "order": 159,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_160",
+  "slr": 2,
+  "order": 160,
+  "demands": {
+   "luts": 10,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_161",
+  "slr": 2,
+  "order": 161,
+  "demands": {
+   "luts": 131,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_162",
+  "slr": 2,
+  "order": 162,
+  "demands": {
+   "luts": 354,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 4,
+   "dsps": 18,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_163",
+  "slr": 2,
+  "order": 163,
+  "demands": {
+   "luts": 54,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_164",
+  "slr": 2,
+  "order": 164,
+  "demands": {
+   "luts": 56,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_165",
+  "slr": 2,
+  "order": 165,
+  "demands": {
+   "luts": 84,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_166",
+  "slr": 2,
+  "order": 166,
+  "demands": {
+   "luts": 84,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_167",
+  "slr": 2,
+  "order": 167,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_168",
+  "slr": 2,
+  "order": 168,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_169",
+  "slr": 2,
+  "order": 169,
+  "demands": {
+   "luts": 6,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    2
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_170",
+  "slr": 2,
+  "order": 170,
+  "demands": {
+   "luts": 79,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_171",
+  "slr": 2,
+  "order": 171,
+  "demands": {
+   "luts": 777,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_172",
+  "slr": 2,
+  "order": 172,
+  "demands": {
+   "luts": 43,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_173",
+  "slr": 2,
+  "order": 173,
+  "demands": {
+   "luts": 20,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_174",
+  "slr": 2,
+  "order": 174,
+  "demands": {
+   "luts": 1953,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_175",
+  "slr": 2,
+  "order": 175,
+  "demands": {
+   "luts": 6374,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 53,
+   "dsps": 317,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    2
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_176",
+  "slr": 2,
+  "order": 176,
+  "demands": {
+   "luts": 63,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_177",
+  "slr": 2,
+  "order": 177,
+  "demands": {
+   "luts": 69,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_178",
+  "slr": 2,
+  "order": 178,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_179",
+  "slr": 2,
+  "order": 179,
+  "demands": {
+   "luts": 41,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_180",
+  "slr": 2,
+  "order": 180,
+  "demands": {
+   "luts": 39,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_181",
+  "slr": 2,
+  "order": 181,
+  "demands": {
+   "luts": 25,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_182",
+  "slr": 2,
+  "order": 182,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_183",
+  "slr": 2,
+  "order": 183,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_184",
+  "slr": 2,
+  "order": 184,
+  "demands": {
+   "luts": 96,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    2
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_185",
+  "slr": 2,
+  "order": 185,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_186",
+  "slr": 2,
+  "order": 186,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_187",
+  "slr": 2,
+  "order": 187,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_188",
+  "slr": 2,
+  "order": 188,
+  "demands": {
+   "luts": 6,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_189",
+  "slr": 2,
+  "order": 189,
+  "demands": {
+   "luts": 79,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_190",
+  "slr": 2,
+  "order": 190,
+  "demands": {
+   "luts": 777,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_191",
+  "slr": 2,
+  "order": 191,
+  "demands": {
+   "luts": 43,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_192",
+  "slr": 2,
+  "order": 192,
+  "demands": {
+   "luts": 20,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_193",
+  "slr": 2,
+  "order": 193,
+  "demands": {
+   "luts": 1953,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_194",
+  "slr": 2,
+  "order": 194,
+  "demands": {
+   "luts": 6374,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 53,
+   "dsps": 317,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    2
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_195",
+  "slr": 2,
+  "order": 195,
+  "demands": {
+   "luts": 63,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_196",
+  "slr": 2,
+  "order": 196,
+  "demands": {
+   "luts": 232,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_197",
+  "slr": 2,
+  "order": 197,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_198",
+  "slr": 2,
+  "order": 198,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_199",
+  "slr": 2,
+  "order": 199,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_200",
+  "slr": 2,
+  "order": 200,
+  "demands": {
+   "luts": 6,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_201",
+  "slr": 2,
+  "order": 201,
+  "demands": {
+   "luts": 79,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_202",
+  "slr": 2,
+  "order": 202,
+  "demands": {
+   "luts": 777,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_203",
+  "slr": 2,
+  "order": 203,
+  "demands": {
+   "luts": 43,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_204",
+  "slr": 2,
+  "order": 204,
+  "demands": {
+   "luts": 20,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_205",
+  "slr": 2,
+  "order": 205,
+  "demands": {
+   "luts": 1953,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_206",
+  "slr": 2,
+  "order": 206,
+  "demands": {
+   "luts": 6374,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 53,
+   "dsps": 317,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    2
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_207",
+  "slr": 2,
+  "order": 207,
+  "demands": {
+   "luts": 63,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_208",
+  "slr": 2,
+  "order": 208,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_209",
+  "slr": 2,
+  "order": 209,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_210",
+  "slr": 2,
+  "order": 210,
+  "demands": {
+   "luts": 41,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_211",
+  "slr": 2,
+  "order": 211,
+  "demands": {
+   "luts": 39,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_212",
+  "slr": 2,
+  "order": 212,
+  "demands": {
+   "luts": 25,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_213",
+  "slr": 2,
+  "order": 213,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_214",
+  "slr": 2,
+  "order": 214,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_215",
+  "slr": 2,
+  "order": 215,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_216",
+  "slr": 2,
+  "order": 216,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_217",
+  "slr": 2,
+  "order": 217,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_218",
+  "slr": 2,
+  "order": 218,
+  "demands": {
+   "luts": 113,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_219",
+  "slr": 2,
+  "order": 219,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_220",
+  "slr": 2,
+  "order": 220,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_221",
+  "slr": 2,
+  "order": 221,
+  "demands": {
+   "luts": 6,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_222",
+  "slr": 2,
+  "order": 222,
+  "demands": {
+   "luts": 10,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_223",
+  "slr": 2,
+  "order": 223,
+  "demands": {
+   "luts": 43,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_224",
+  "slr": 2,
+  "order": 224,
+  "demands": {
+   "luts": 131,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_225",
+  "slr": 2,
+  "order": 225,
+  "demands": {
+   "luts": 790,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_226",
+  "slr": 2,
+  "order": 226,
+  "demands": {
+   "luts": 398,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 13,
+   "dsps": 18,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    8
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_227",
+  "slr": 2,
+  "order": 227,
+  "demands": {
+   "luts": 43,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_228",
+  "slr": 2,
+  "order": 228,
+  "demands": {
+   "luts": 57,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_229",
+  "slr": 2,
+  "order": 229,
+  "demands": {
+   "luts": 16,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_230",
+  "slr": 2,
+  "order": 230,
+  "demands": {
+   "luts": 60,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_231",
+  "slr": 2,
+  "order": 231,
+  "demands": {
+   "luts": 1312,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_232",
+  "slr": 2,
+  "order": 232,
+  "demands": {
+   "luts": 84,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 2,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_233",
+  "slr": 2,
+  "order": 233,
+  "demands": {
+   "luts": 4303,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 106,
+   "dsps": 212,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    6
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_234",
+  "slr": 2,
+  "order": 234,
+  "demands": {
+   "luts": 63,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_235",
+  "slr": 2,
+  "order": 235,
+  "demands": {
+   "luts": 174,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_236",
+  "slr": 2,
+  "order": 236,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_237",
+  "slr": 2,
+  "order": 237,
+  "demands": {
+   "luts": 36,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_238",
+  "slr": 2,
+  "order": 238,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_239",
+  "slr": 2,
+  "order": 239,
+  "demands": {
+   "luts": 1044,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_240",
+  "slr": 2,
+  "order": 240,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_241",
+  "slr": 2,
+  "order": 241,
+  "demands": {
+   "luts": 15,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_242",
+  "slr": 2,
+  "order": 242,
+  "demands": {
+   "luts": 1953,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_243",
+  "slr": 2,
+  "order": 243,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_244",
+  "slr": 2,
+  "order": 244,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_245",
+  "slr": 2,
+  "order": 245,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_246",
+  "slr": 2,
+  "order": 246,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_247",
+  "slr": 2,
+  "order": 247,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_248",
+  "slr": 2,
+  "order": 248,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_249",
+  "slr": 2,
+  "order": 249,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_250",
+  "slr": 2,
+  "order": 250,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_251",
+  "slr": 1,
+  "order": 251,
+  "demands": {
+   "luts": 38,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_252",
+  "slr": 1,
+  "order": 252,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_253",
+  "slr": 1,
+  "order": 253,
+  "demands": {
+   "luts": 36,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_254",
+  "slr": 1,
+  "order": 254,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_255",
+  "slr": 1,
+  "order": 255,
+  "demands": {
+   "luts": 1044,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_256",
+  "slr": 1,
+  "order": 256,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_257",
+  "slr": 1,
+  "order": 257,
+  "demands": {
+   "luts": 18,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_258",
+  "slr": 1,
+  "order": 258,
+  "demands": {
+   "luts": 2596,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_259",
+  "slr": 1,
+  "order": 259,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_260",
+  "slr": 1,
+  "order": 260,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_261",
+  "slr": 1,
+  "order": 261,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_262",
+  "slr": 0,
+  "order": 262,
+  "demands": {
+   "luts": 96,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 3,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    2
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_263",
+  "slr": 0,
+  "order": 263,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_264",
+  "slr": 0,
+  "order": 264,
+  "demands": {
+   "luts": 36,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_265",
+  "slr": 0,
+  "order": 265,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_266",
+  "slr": 0,
+  "order": 266,
+  "demands": {
+   "luts": 1044,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_267",
+  "slr": 0,
+  "order": 267,
+  "demands": {
+   "luts": 37,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_268",
+  "slr": 0,
+  "order": 268,
+  "demands": {
+   "luts": 18,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_269",
+  "slr": 0,
+  "order": 269,
+  "demands": {
+   "luts": 2596,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_270",
+  "slr": 0,
+  "order": 270,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_271",
+  "slr": 0,
+  "order": 271,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_272",
+  "slr": 0,
+  "order": 272,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_273",
+  "slr": 0,
+  "order": 273,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_274",
+  "slr": 0,
+  "order": 274,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_275",
+  "slr": 0,
+  "order": 275,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_276",
+  "slr": 0,
+  "order": 276,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_277",
+  "slr": 0,
+  "order": 277,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_278",
+  "slr": 0,
+  "order": 278,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_279",
+  "slr": 0,
+  "order": 279,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_280",
+  "slr": 0,
+  "order": 280,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_281",
+  "slr": 0,
+  "order": 281,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_282",
+  "slr": 0,
+  "order": 282,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {
+   "RAMB36": [
+    8
+   ]
+  }
+ },
+ {
+  "name": "pblock_finn_unit_283",
+  "slr": 0,
+  "order": 283,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_284",
+  "slr": 0,
+  "order": 284,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_285",
+  "slr": 0,
+  "order": 285,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_286",
+  "slr": 0,
+  "order": 286,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_287",
+  "slr": 0,
+  "order": 287,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ },
+ {
+  "name": "pblock_finn_unit_288",
+  "slr": 0,
+  "order": 288,
+  "demands": {
+   "luts": 0,
+   "ffs": 0,
+   "carries": 0,
+   "brams": 0,
+   "dsps": 0,
+   "urams": 0,
+   "lutrams": 0,
+   "srls": 0
+  },
+  "chains": {}
+ }
+]

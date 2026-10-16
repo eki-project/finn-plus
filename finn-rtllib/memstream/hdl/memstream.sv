@@ -76,7 +76,9 @@ module memstream #(
 		// Increment for wrapping DEPTH-1 back to zero
 		localparam int unsigned  WRAP_INC = 2**ADDR_WIDTH - DEPTH + 1;
 
-		addr_t  Ptr = 0;
+		// The read pointer addresses every block RAM of the memory; see the fan-out
+		// note in axi/hdl/axilite.sv for why synthesis replicates it.
+		(* MAX_FANOUT = 32 *)  addr_t  Ptr = 0;
 		logic   Lst = DEPTH < 2;
 		always_ff @(posedge clk) begin
 			if(rst) begin
@@ -118,7 +120,7 @@ module memstream #(
 			assign	lst = Cnt[$left(Cnt)];
 		end
 
-		addr_t  Ptr = 'x;
+		(* MAX_FANOUT = 32 *)  addr_t  Ptr = 'x;
 		logic   Vld =  0;
 		assign	srdy = !Vld || (lst && got0);
 		always_ff @(posedge clk) begin
@@ -229,7 +231,11 @@ module memstream #(
 		// Stream Output SRL backing Credit Grant for Stream Reads in Flight
 		(* SHREG_EXTRACT = "yes" *)
 		data_t  OSrl[FULL_CREDIT-1];
-		logic [$clog2(FULL_CREDIT):0]  OPtr = -1;
+		// OPtr selects the SRL tap of every output data bit: 1,027 loads for a
+		// 1,024-bit weight stream, spread over the unit (route 6.6 ns across 155
+		// rows on mobilenetv1, 14 Oct 2026). Replicated per 64 loads so each copy
+		// serves one sixteenth of the output register.
+		(* MAX_FANOUT = 64 *)  logic [$clog2(FULL_CREDIT):0]  OPtr = -1;
 		always_ff @(posedge clk) begin
 			if(Rs3)  OSrl <= { Dat3, OSrl[0:FULL_CREDIT-3] };
 		end
