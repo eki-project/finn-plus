@@ -621,7 +621,13 @@ class BuildBasicVitisLinkConfig(Transformation):
             is_output = successors is None and predecessors is not None
 
             # Add the SDPs XO file
-            configs[current_device].add_xo(get_vitis_xo(node))
+            try:
+                configs[current_device].add_xo(get_vitis_xo(node))
+            except FINNUserError as e:
+                raise FINNUserError(
+                    f"Could not retrieve XO file for node {node.name}. Make sure to "
+                    f"run 'step_prepare_synthesis' before running 'step_synthesize_bitfile'"
+                ) from e
 
             # Instantiate the kernel
             if len(submodel.graph.node) == 1 and "IODMA" in submodel.graph.node[0].op_type:
