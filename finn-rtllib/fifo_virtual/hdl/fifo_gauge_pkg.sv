@@ -25,11 +25,14 @@
  *	   maps of input without any flow dependency. Each FIFO will record the
  *	   period spent on producing individual feature map outputs.
  *	 - Issue `BARRIER_CLEAN` commands. Gauging FIFOs will replace it by a
- *	   `BARRIER_DIRTY` if the detached production and consumption of
- *	   feature maps is still in process. They forward the `BARRIER_*`
- *	   command unchanged otherwise. Once, the central control receives back a
- *	   `BARRIER_CLEAN`, the detached individual throughput measurement is
- *	   completed globally.
+ *	   `BARRIER_DIRTY` if the detached production of feature maps is still in
+ *	   process or a feature map is partially transferred on either side. They
+ *	   forward the `BARRIER_*` command unchanged otherwise. Once, the central
+ *	   control receives back a `BARRIER_CLEAN`, the detached individual
+ *	   throughput measurement is completed globally. The detached consumption
+ *	   of input feature maps is not awaited: the first FIFO on the ring
+ *	   consumes from an external producer that need not be active, and the
+ *	   periods are final once every FIFO has produced its output.
  *	 - Issue a `COMP_PERIOD` command with a 32-bit argument in network byte
  *	   order. The command is issued with an argument of 0. Each gauging FIFO
  *	   on the ring updates this value by the maximum between the value it
@@ -49,6 +52,18 @@
  *	   for each gauging FIFO on the ring. This will inform the central control
  *	   about the maximum depth each FIFO assumed during the operation paced
  *	   to match the bottleneck throughput of the pipeline.
+ *	 - Issue `WRITE_FILL` commands to assign a capacity to each gauging FIFO
+ *	   followed by a `RUN_BOUNDED` command. The FIFOs then behave like real
+ *	   FIFOs of the assigned capacity (a FIFO with capacity register `c`
+ *	   accepts input while its fill count is at most `c`, i.e. holds up to
+ *	   `c+1` elements). The central control can test candidate capacity
+ *	   configurations this way, observing the resulting pipeline performance.
+ *	 - After a bounded run, `READ_FILL` returns the peak occupancy the FIFO
+ *	   reached under its bounded capacity (not the capacity itself) and
+ *	   `READ_STALL` returns the stall flags. Both are cleared by every `RUN_*`
+ *	   command and remain valid until the next one. Re-running a bounded
+ *	   configuration with the capacity register of a FIFO set to its peak
+ *	   occupancy reproduces the execution exactly.
  *****************************************************************************/
 package fifo_gauge_pkg;
 	//-----------------------------------------------------------------------
@@ -63,12 +78,19 @@ package fifo_gauge_pkg;
 	//     READ_FILL
 	//       [1:2]	ID[15:0] (big endian)
 	//       [3:6]	ID matches? fill in local value : forward incoming
+	//              Value: peak fill count since the last RUN_* command
+	//              (in paced/detached mode identical to the tracked maximum)
 	//     READ_STALL
 	//       [1:2]	ID[15:0] (big endian)
-	//       [3]	ID matches? fill in local value : forward incoming
-	//                 stall[1:0] - irdy_stall, ivld_stall
-	//                 stall[3:2] - ordy_stall, ovld_stall
-	//                 stall[7:4] - reserved (0)
+	//       [3:6]	ID matches? fill in local value : forward incoming
+	//              Same 4-byte value slot as READ_FILL, status in byte [6]:
+	//                 stall[0] - ivld_stall: irdy && !ivld (producer idle)
+	//                 stall[1] - irdy_stall: ivld && !irdy (producer blocked, FIFO full)
+	//                 stall[2] - ovld_stall: ordy && !ovld (consumer starved, FIFO empty)
+	//                 stall[3] - ordy_stall: ovld && !ordy (consumer blocked)
+	//                 stall[7:4] - the same four flags, accumulated since the
+	//                              last RUN_* command (run-sticky) instead of
+	//                              latched per frame
 	typedef enum logic [7:0] {
 		NOP           = 8'h00,
 

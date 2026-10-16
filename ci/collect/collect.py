@@ -1206,7 +1206,7 @@ if __name__ == "__main__":
 
         # Prepare benchmarking config for follow-up runs after live FIFO-sizing
         if run_kind == "live_fifo":
-            # Choose the search order with the lowest fifo_size_total_kB
+            # Choose the search strategy with the lowest fifo_size_total_kB
             lfs_base_dir = os.path.join(
                 "measurement_artifacts",
                 "runs_output",
@@ -1215,12 +1215,12 @@ if __name__ == "__main__":
                 "experiment_fifosizing",
                 "exp_itr_1",
             )
-            best_search_order = None
+            best_search_strategy = None
             best_fifo_size = float("inf")
             if os.path.isdir(lfs_base_dir):
-                for search_order in os.listdir(lfs_base_dir):
+                for search_strategy in os.listdir(lfs_base_dir):
                     sizing_report_path = os.path.join(
-                        lfs_base_dir, search_order, "both", "fifo_sizing_report.json"
+                        lfs_base_dir, search_strategy, "both", "fifo_sizing_report.json"
                     )
                     if os.path.isfile(sizing_report_path):
                         with open(sizing_report_path, "r") as f:
@@ -1228,23 +1228,23 @@ if __name__ == "__main__":
                         fifo_size = sizing_report.get("fifo_size_total_kB", float("inf"))
                         if fifo_size < best_fifo_size:
                             best_fifo_size = fifo_size
-                            best_search_order = search_order
+                            best_search_strategy = search_strategy
 
-            if best_search_order is None:
+            if best_search_strategy is None:
                 print(
-                    "ERROR: No valid search order with fifo_sizing_report.json found in %s."
+                    "ERROR: No valid search strategy with fifo_sizing_report.json found in %s."
                     % lfs_base_dir
                 )
             else:
                 print(
-                    "Selecting search order '%s' with fifo_size_total_kB=%.2f"
-                    % (best_search_order, best_fifo_size)
+                    "Selecting search strategy '%s' with fifo_size_total_kB=%.2f"
+                    % (best_search_strategy, best_fifo_size)
                 )
                 folding_config_path = os.path.join(
-                    lfs_base_dir, best_search_order, "both", "folding_config.json"
+                    lfs_base_dir, best_search_strategy, "both", "folding_config.json"
                 )
                 fifo_config_path = os.path.join(
-                    lfs_base_dir, best_search_order, "both", "fifo_config.json"
+                    lfs_base_dir, best_search_strategy, "both", "fifo_config.json"
                 )
                 print(
                     "Creating follow-up experiment config using folding config %s "

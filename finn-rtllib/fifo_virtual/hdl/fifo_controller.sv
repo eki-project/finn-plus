@@ -126,7 +126,7 @@ module fifo_controller #(
         M_RUN:         packet_size = 3'd1; // 1 byte packet [OP]
         BARRIER_CLEAN: packet_size = 3'd1; // 1 byte packet [OP]
         COMP_PERIOD:   packet_size = 3'd5; // 5 byte packet [OP, 32 bit value]
-        READ_STALL:    packet_size = 3'd4; // 4 byte packet [OP, 16 bit ID, status byte]
+        READ_STALL:    packet_size = 3'd7; // 7 byte packet [OP, 16 bit ID, 32 bit value (status in LSB)]
         READ_FILL:     packet_size = 3'd7; // 7 byte packet [OP, 16 bit ID, 32 bit value]
         WRITE_FILL:    packet_size = 3'd7; // 7 byte packet [OP, 16 bit ID, 32 bit value]
         default:       packet_size = 3'd1; // NOP or unknown -> treat as NOP
@@ -212,10 +212,9 @@ module fifo_controller #(
         COMP_PERIOD: begin // 5 byte packet [OP, 32 bit value]
             config_rdata = {icfg_buffer[6], icfg_buffer[5], icfg_buffer[4], icfg_buffer[3]};
         end
-        READ_STALL: begin // 4 byte packet [OP, 16 bit ID, status byte]
-            config_rdata = {24'b0, icfg_buffer[4]};
-        end
-        READ_FILL: begin // 7 byte packet [OP, 16 bit ID, 32 bit value]
+        READ_STALL, READ_FILL: begin // 7 byte packet [OP, 16 bit ID, 32 bit value]
+            // The gauge patches a 4-byte value slot for both reads; the stall status
+            // is the low byte of that word, in the same alignment as the fill value.
             config_rdata = {icfg_buffer[4], icfg_buffer[3], icfg_buffer[2], icfg_buffer[1]};
         end
         default: begin
@@ -234,15 +233,7 @@ module fifo_controller #(
             COMP_PERIOD: begin // 5 byte packet [OP, 32 bit value]
                 ocfg = counter == 3'd0 ? op : 8'h00;
             end
-            READ_STALL: begin // 4 byte packet [OP, 16 bit ID, status byte]
-                unique case (counter)
-                3'd0: ocfg = op;
-                3'd1: ocfg = fifo_id[15:8];
-                3'd2: ocfg = fifo_id[7:0];
-                3'd3: ocfg = 8'h00;
-                endcase
-            end
-            READ_FILL: begin // 7 byte packet [OP, 16 bit ID, 32 bit value]
+            READ_STALL, READ_FILL: begin // 7 byte packet [OP, 16 bit ID, 32 bit value]
                 unique case (counter)
                 3'd0: ocfg = op;
                 3'd1: ocfg = fifo_id[15:8];

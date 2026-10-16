@@ -52,6 +52,42 @@ class FINNInstrumentationOverlay(Overlay):
             value=value,
         )
 
+    #: Registers of the steady-state extension of the instrumentation wrapper (sliding-window
+    #: extremes, idle cycles, age of the oldest pending frame); absent from older bitfiles.
+    STEADY_STATE_REGISTERS = (
+        "lat_win_min",
+        "lat_win_max",
+        "int_win_min",
+        "int_win_max",
+        "idle_cycles",
+        "oldest_pending_age",
+    )
+
+    def has_steady_state_registers(self):
+        """Return whether the bitfile's instrumentation wrapper has the steady-state registers."""
+        registers = self.ip_dict["instrumentation_wrap_0"]["registers"]
+        return all(name in registers for name in self.STEADY_STATE_REGISTERS)
+
+    def observe_steady_state(self):
+        """Read the registers polled for steady-state detection (see ``live_fifo``).
+
+        Returns a dict with ``overflow``, ``underflow``, ``run_frames``, ``avg_fill``,
+        ``int_win_max``, ``lat_win_max``, ``idle_cycles`` and ``oldest_pending_age``. The window
+        maxima lag a completed frame by up to two window lengths (sequential scan in hardware)
+        and the interval of the first frame of a run is excluded from them.
+        """
+        status_reg = self.instrumentation_read("status")
+        return {
+            "overflow": (status_reg & 0x00000001) != 0,
+            "underflow": (status_reg & 0x00000002) != 0,
+            "run_frames": self.instrumentation_read("run_frames"),
+            "avg_fill": self.instrumentation_read("avg_fill"),
+            "int_win_max": self.instrumentation_read("int_win_max"),
+            "lat_win_max": self.instrumentation_read("lat_win_max"),
+            "idle_cycles": self.instrumentation_read("idle_cycles"),
+            "oldest_pending_age": self.instrumentation_read("oldest_pending_age"),
+        }
+
     def reset_accelerator(self):
         """Reset the accelerator."""
         self.axi_gpio_0.write(

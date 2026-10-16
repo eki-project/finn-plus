@@ -44,9 +44,10 @@ from qonnx.util.basic import get_by_name, roundup_to_integer_multiple
 from string import Template
 
 from finn.builder.build_dataflow_config import FpgaMemoryType
-from finn.util.basic import get_driver_shapes, make_build_dir
+from finn.util.basic import get_driver_shapes, is_versal, make_build_dir, part_map
 from finn.util.data_packing import to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
+from finn.util.fifo_cost import RESOURCES, cost_table, device_weights
 from finn.util.logging import log
 from finn.util.rtlsim import dat_file_to_numpy_array
 from finn.util.settings import get_settings
@@ -571,6 +572,11 @@ class MakeCPPDriver(Transformation):
         return (model, False)
 
 
+#: Largest depth the FIFO cost tables exported for the live FIFO sizing driver cover (the
+#: fitted range of the cost model ends at 262145). The driver extrapolates beyond it.
+FIFO_COST_TABLE_MAX_DEPTH = 2**18
+
+
 class MakePYNQDriver(Transformation):
     """Create PYNQ Python code to correctly interface the generated
     accelerator, including data packing/unpacking. Should be called
@@ -594,6 +600,8 @@ class MakePYNQDriver(Transformation):
         experiment_info=None,
         board=None,
         multidnn_mode=None,
+        fpgapart=None,
+        fifo_cost_max_depth=FIFO_COST_TABLE_MAX_DEPTH,
     ):
         """Initialize PYNQ driver generation.
 
@@ -604,6 +612,12 @@ class MakePYNQDriver(Transformation):
             clk_period_ns: Clock period in nanoseconds used for performance calculations.
             validation_datset: Validation dataset path or identifier.
             experiment_info: Path to a JSON file containing experiment metadata.
+            board: Target board name (used for experiment metadata and, together with
+                ``fpgapart``, for the FIFO cost tables of the live FIFO sizing driver).
+            multidnn_mode: Multi-DNN generation mode, if any.
+            fpgapart: FPGA part the design is built for; selects the Versal variant of the
+                FIFO cost model. Looked up from ``board`` when omitted.
+            fifo_cost_max_depth: Largest depth the exported FIFO cost tables cover.
         """
         super().__init__()
         self.platform = platform
@@ -613,6 +627,10 @@ class MakePYNQDriver(Transformation):
         self.experiment_info = experiment_info
         self.board = board
         self.multidnn_mode = multidnn_mode
+        if fpgapart is None and board is not None:
+            fpgapart = part_map.get(board)
+        self.fpgapart = fpgapart
+        self.fifo_cost_max_depth = fifo_cost_max_depth
 
     def _generate_driver_files(self, model):
         """Create the deployment directory for the generated accelerator.
@@ -777,10 +795,18 @@ class MakePYNQDriver(Transformation):
         }
 
     def _write_fifo_widths(self, model):
-        """Export FIFO widths to the settings file as well.
-        At this stage, the FIFOs are already wrapped in StreamingDataflowPartitions."""
+        """Export FIFO widths and primitive cost tables to the settings file as well.
+        At this stage, the FIFOs are already wrapped in StreamingDataflowPartitions.
+
+        ``fifo_cost_tables`` carries, per FIFO id, the ladder of ``finn.util.fifo_cost``
+        (the primitives ``fifo.sv`` takes at every depth up to ``fifo_cost_max_depth``) for
+        the padded stream width and the node's ``ram_style``, together with the
+        scalarization weights of the target device. The live sizing driver runs on the board
+        without finn and reads its primitive cost model from these tables."""
         settings = {}
         fifo_widths = {}
+        fifo_tables = {}
+        versal = self.fpgapart is not None and is_versal(self.fpgapart)
         for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
             sdp_node_inst = getCustomOp(sdp_node)
             dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
@@ -791,7 +817,23 @@ class MakePYNQDriver(Transformation):
                     # JSON doesn't support int keys
                     fifo_id = str(node_inst.get_nodeattr("fifo_id"))
                     fifo_widths[fifo_id] = node_inst.get_instream_width()
+                    fifo_tables[fifo_id] = cost_table(
+                        node_inst.get_instream_width_padded(),
+                        self.fifo_cost_max_depth,
+                        node_inst.get_nodeattr("ram_style"),
+                        versal,
+                    )
         settings["fifo_widths"] = fifo_widths
+        weights = device_weights(self.fpgapart, self.board)
+        settings["fifo_cost_tables"] = {
+            "resources": list(RESOURCES),
+            "weights": {r: weights[r] for r in RESOURCES},
+            "weights_source": weights["source"],
+            "fpgapart": self.fpgapart,
+            "versal": versal,
+            "max_depth": self.fifo_cost_max_depth,
+            "fifos": fifo_tables,
+        }
         # Export the exact folding configuration selected for the live-sizing build.
         # The follow-up build must reuse it so its FIFO node names match.
         folding_path = model.get_metadata_prop("folding_config")
