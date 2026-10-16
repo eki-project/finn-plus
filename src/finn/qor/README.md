@@ -103,8 +103,23 @@ Versal-only backends or two-stream elementwise operations.
 - Stream widths are limited to 1024 bits by the instrumentation shell, and the padded output
   word must be a multiple of the number of elements it carries (its checksum slices words
   into equal subwords), see `output_words_ok`.
-- Frames are limited to `MAX_FRAME_CYCLES` (2^22) expected cycles: the power estimation and
-  rtlsim simulate whole frames, and resources/power do not depend on the loop bound.
+- Frames are limited to `MAX_FRAME_CYCLES` (2^22) expected cycles; resources and power do not
+  depend on the loop bound.
+- Microbenchmarks run no RTL simulation and no Vivado power estimation (both simulated whole
+  frames for hours per build): the build steps are codegen, IP generation, stitched IP,
+  out-of-context synthesis, bitfile, driver and deployment package.
+- All microbenchmarks are synthesized for and run at 200 MHz (`synth_clk_period_ns: 5`, a
+  fixed parameter of every sampled run and of the smoke config). The shell's clocking wizard
+  follows this value, so the board runs at the synthesized frequency. The clock period is a
+  feature of every operator (`clk_period_ns`, from `params.synth_clk_period_ns`; older runs:
+  10 ns), and the
+  post-route WNS is recorded (`synth/timing/WNS`, `met`); runs that missed timing are dropped
+  by the database loader (`drop_timing_failures`).
+- Power: the measurement records the `0V85` (PL/PS core) and `3V3` rails per experiment
+  (`measurement/power/<experiment>/avg_<rail>`); the flat `avg_<rail>` names carry the load
+  experiment and `dyn_<rail>` the load minus the idle experiment of the same run, which is the
+  preferred power target (runs without an idle measurement fall back to a dataset-wide
+  baseline).
 - URAM memories (`ram_style: ultra`) of MVAU, VVAU, Thresholding_hls and the elementwise
   operators need Versal parts or runtime-writeable weights, which the microbenchmarks do not
   exercise; `validate()` rejects them on the CI boards. The FIFO (`ultra`) and the RTL

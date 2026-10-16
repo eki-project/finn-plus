@@ -75,40 +75,6 @@ def classify_run(params):
     return "live_fifo_followup"
 
 
-def generate_power_report(rails_names, experiment_reports_path):
-    if not os.path.isdir(experiment_reports_path):
-        return None
-    for filename in os.listdir(experiment_reports_path):
-        power_measurements = [
-            m
-            for m in os.listdir(os.path.join(experiment_reports_path, filename))
-            if m.startswith(filename) and m.endswith(".json")
-        ]
-        if power_measurements:
-            per_file_averages = []
-            for file in power_measurements:
-                with open(os.path.join(experiment_reports_path, filename, file), "r") as f:
-                    report = json.load(f)
-                rails = report.get("rails", [])
-                per_file_averages.append(
-                    {
-                        key: sum(r[key] for r in rails if key in r) / len(rails)
-                        for key in rails_names
-                    }
-                )
-                averaged = {
-                    "avg_" + key: sum(a[key] for a in per_file_averages) / len(per_file_averages)
-                    for key in rails_names
-                }
-                min_values = {
-                    "min_" + key: min(a[key] for a in per_file_averages) for key in rails_names
-                }
-                max_values = {
-                    "max_" + key: max(a[key] for a in per_file_averages) for key in rails_names
-                }
-                return {**averaged, **min_values, **max_values}
-
-
 def generate_metric_plots(metric_reports, file):
     _bar_palette = ["steelblue", "orange", "green", "purple", "brown", "pink"]
 
@@ -518,6 +484,9 @@ class ExperimentComparator:
         "store_results_in_dvc_data",
         # legacy key of old microbenchmark configs that never had an effect
         "dut_duplication",
+        # which reports/artifacts a build writes does not change the implementation (same
+        # as finn.qor.params_key.IRRELEVANT_PARAMS)
+        "generate_outputs",
     }
 
     # Additional params ignored when matching a live FIFO-sizing run (or its follow-up) against
@@ -1113,12 +1082,17 @@ if __name__ == "__main__":
                     found = collect_fn.find_dut_hierarchy(
                         resource_report, dut_node_name, dut_op_type
                     )
+                    dvc_logger.log_metric(
+                        prefix="synth/", name="dut_hierarchy_found", value=int(found is not None)
+                    )
                     if found is None:
                         print(
-                            "ERROR: DUT node %s (%s) not found in post_synth_resources.json"
+                            "ERROR: DUT node %s (%s) not found (or ambiguous) in "
+                            "post_synth_resources.json, resources not logged"
                             % (dut_node_name, dut_op_type)
                         )
                         fail = True
+                        report_hierarchy_level = None
                     else:
                         report_hierarchy_level = found
                         # everything else (expected: only the TLastMarker) is logged
@@ -1131,29 +1105,39 @@ if __name__ == "__main__":
                                 prefix="synth/resources_extra/", name=name, value=value
                             )
 
-            dvc_logger.log_nested_metrics_from_report(
-                "post_synth_resources.json",
-                report_hierarchy_level,
-                synth_resources,
-                prefix="synth/resources/",
+            if report_hierarchy_level is not None:
+                dvc_logger.log_nested_metrics_from_report(
+                    "post_synth_resources.json",
+                    report_hierarchy_level,
+                    synth_resources,
+                    prefix="synth/resources/",
+                )
+
+            # post route timing of the whole design: Vivado writes the bitfile even with
+            # negative slack, so record it (the QoR database drops runs that missed timing)
+            wns = collect_fn.parse_wns(
+                os.path.join(
+                    str(artifact_reports_dir("build", id, args.followup)), "post_route_timing.rpt"
+                )
             )
+            if wns is not None:
+                dvc_logger.log_metric(prefix="synth/timing/", name="WNS", value=wns)
+                dvc_logger.log_metric(prefix="synth/timing/", name="met", value=int(wns >= 0))
 
-            # post synth timing report
-            # TODO: only exported as post_route_timing.rpt, not .json
-
-            # power estimation
+            # power estimation (microbenchmarks no longer run this step)
             dvc_logger.log_all_metrics_from_report(
                 "power_estimate_summary.json", prefix="vivado_estimate/power/"
             )
 
             # power measurement
             experiment_reports_path = str(artifact_reports_dir("measurement", id, args.followup))
-            power = generate_power_report(
-                ["0V85_power", "3V3_power", "total_power"], experiment_reports_path
-            )
+            rails = ["0V85_power", "3V3_power", "total_power"]
+            power = collect_fn.generate_power_report(rails, experiment_reports_path)
             if power:
-                for name, value in power.items():
-                    dvc_logger.log_metric(prefix="measurement/power/", name=name, value=value)
+                for name, value in collect_fn.power_metrics(power, rails).items():
+                    prefix, _, metric = name.rpartition("/")
+                    prefix = "measurement/power/" + (prefix + "/" if prefix else "")
+                    dvc_logger.log_metric(prefix=prefix, name=metric, value=value)
 
             # measurement metric logging
             collect_cfg_path = os.path.join(

@@ -1,7 +1,8 @@
 [
     # Smoke test: one small configuration per microbenchmark DUT (see
-    # src/finn/benchmarking/dut/). All runs are instrumented without DMA and their results
-    # are added to the microbenchmark database ($LOCAL_BENCHMARK_DIR_STORE).
+    # src/finn/benchmarking/dut/). All runs are synthesized for and run at 200 MHz,
+    # instrumented without DMA, and their results are added to the microbenchmark database
+    # ($LOCAL_BENCHMARK_DIR_STORE).
     {
         "dut": ["mvau"],
         "idt": ["INT4","INT2"],
@@ -24,10 +25,11 @@
 
         "backend": ["hls"],
 
+        "synth_clk_period_ns": [5],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
 
-        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
     # Parameters that only exist for one backend are null (strings) or 0 (numbers) for the
     # other one, so HLS and RTL variants get separate entries instead of a mixed grid.
@@ -43,9 +45,10 @@
         "ram_style": ["distributed"],
         "depth_trigger_bram": [0],
         "depth_trigger_uram": [0],
+        "synth_clk_period_ns": [5],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["thresholding"],
@@ -59,9 +62,10 @@
         "ram_style": [null],
         "depth_trigger_bram": [0],
         "depth_trigger_uram": [0],
+        "synth_clk_period_ns": [5],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["swg"],
@@ -76,9 +80,10 @@
         "parallel_window": [0],
         "m": [1],
         "ram_style": ["distributed"],
+        "synth_clk_period_ns": [5],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
     # the parallel window variant of a non-depthwise SWG needs simd == ifm_ch
     {
@@ -94,9 +99,10 @@
         "parallel_window": [1],
         "m": [1],
         "ram_style": ["distributed"],
+        "synth_clk_period_ns": [5],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["vvau"],
@@ -112,9 +118,10 @@
         "mem_mode": ["internal_embedded"],
         "ram_style": ["auto"],
         "resType": ["lut"],
+        "synth_clk_period_ns": [5],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["fifo"],
@@ -123,9 +130,10 @@
         "n": [16],
         "depth": [32, 1024],
         "ram_style": ["auto", "block"],
+        "synth_clk_period_ns": [5],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["dwc"],
@@ -135,9 +143,10 @@
         "out_elems": [8],
         "ch": [32],
         "n": [4],
+        "synth_clk_period_ns": [5],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["pool"],
@@ -148,9 +157,10 @@
         "pe": [4],
         "k": [[2,2]],
         "odim": [[8,8]],
+        "synth_clk_period_ns": [5],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["fmpadding"],
@@ -159,9 +169,10 @@
         "simd": [4],
         "idim": [[8,8]],
         "padding": [[1,1,1,1]],
+        "synth_clk_period_ns": [5],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["eltwise"],
@@ -174,8 +185,9 @@
         "pe": [4],
         "mem_mode": ["internal_embedded"],
         "ram_style": ["auto"],
+        "synth_clk_period_ns": [5],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
 ]

@@ -34,7 +34,10 @@ from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 #: Widest stream the instrumentation shell (and HLS ap_uint) can handle
 MAX_STREAM_WIDTH = min(1024, MAX_ALLOWED_AP_INT_W)
 
-#: Build steps of a microbenchmark: everything up to bitfile + deployment package
+#: Build steps of a microbenchmark: everything up to bitfile + deployment package. No RTL
+#: simulation (neither verification nor rtlsim performance) and no Vivado power estimation:
+#: both simulate whole frames and cost hours per build, while the QoR targets come from the
+#: synthesis reports and the on-board measurement.
 MICROBENCH_BUILD_STEPS = [
     "step_create_dataflow_partition",
     "step_minimize_bit_width",
@@ -42,9 +45,7 @@ MICROBENCH_BUILD_STEPS = [
     "step_hw_codegen",
     "step_hw_ipgen",
     "step_create_stitched_ip",
-    "step_measure_rtlsim_performance",
     "step_out_of_context_synthesis",
-    "step_vivado_power_estimation",
     "step_synthesize_bitfile",
     "step_make_driver",
     "step_deployment_package",
@@ -72,9 +73,10 @@ def stream_width_ok(bits: int) -> bool:
     return 0 < bits <= MAX_STREAM_WIDTH
 
 
-#: Upper bound on the expected cycles per frame of a DUT. The post-implementation power
-#: simulation and the rtlsim run whole frames, so a 224x224x512 input (12.8 M cycles) kept
-#: a single build busy for 18 hours; resources and power do not depend on the loop bound.
+#: Upper bound on the expected cycles per frame of a DUT. Resources and power do not depend
+#: on the loop bound, so there is no reason for huge frames: a 224x224x512 input (12.8 M
+#: cycles) once kept a build busy for 18 hours in the (since removed) frame-long rtlsim and
+#: power simulation, and the instrumentation measures complete frames only.
 #: 2^22 still admits the fully folded 64x64 MVAU of the smoke config (1024 vectors).
 MAX_FRAME_CYCLES = 1 << 22
 
@@ -149,10 +151,12 @@ class MicrobenchDUT(bench):
             "dut": cls.NAME,
             "instrumentation_no_dma": True,
             "store_results_in_dvc_data": True,
+            # 200 MHz: HLS target, out-of-context synthesis, shell clocking wizard and the
+            # frequency the design runs at on the board all follow this value
+            "synth_clk_period_ns": 5,
             "generate_outputs": [
                 "estimate_reports",
                 "stitched_ip",
-                "rtlsim_performance",
                 "out_of_context_synth",
                 "bitfile",
                 "pynq_driver",
@@ -161,6 +165,7 @@ class MicrobenchDUT(bench):
         }
 
     def _step_export_onnx(self, onnx_export_path):
+        """Validate the parameters, build the single-node model and write dut_info.json."""
         reason = self.validate(self._params)
         if reason is not None:
             print(f"Invalid configuration, skipping: {reason}")
@@ -214,10 +219,12 @@ class MicrobenchDUT(bench):
         return None
 
     def _step_build_setup(self):
+        """Build configuration of a microbenchmark: fixed step list, no target fps."""
         return build_cfg.DataflowBuildConfig(target_fps=None, steps=self.build_steps(self._params))
 
 
 def _jsonable(obj):
+    """JSON default: numpy scalars/arrays as python values, anything else as str."""
     if isinstance(obj, np.generic):
         return obj.item()
     if isinstance(obj, np.ndarray):

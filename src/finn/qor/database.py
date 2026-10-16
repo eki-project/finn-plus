@@ -28,13 +28,21 @@ DATABASE_ENV_VAR = "FINN_MICROBENCHMARK_DATABASE"
 
 #: Measured power columns the power target is derived from, as (column, scale to mW). The
 #: schema of the measurement reports changed over time, so for every run the first column
-#: with a value is used. The target is the PL/PS core rail (0V85): collect.py currently logs
-#: its average over all iterations in mW (avg_0V85_power), older runs stored it in W
+#: with a value is used. The target is the PL/PS core rail (0V85): collect.py logs the
+#: average of the load experiment in mW (avg_0V85_power), older runs stored it in W
 #: (power_pl_ps_load). The total board power would be avg_total_power resp. power_total_load.
 POWER_COLS: list[tuple[str, float]] = [
     ("metrics.measurement.power.avg_0V85_power", 1.0),
     ("metrics.measurement.power.power_pl_ps_load", 1000.0),
 ]
+
+#: Dynamic power of the design in mW: load minus the idle experiment of the same run (the
+#: bitstream loaded, accelerator not running), logged by collect.py since 2026-10. Preferred
+#: over the load columns, whose static part is removed by a dataset-wide baseline instead.
+POWER_DYN_COL = "metrics.measurement.power.dyn_0V85_power"
+
+#: Post-route timing of the whole design (collect.py, since 2026-10): 1 if WNS >= 0.
+TIMING_MET_COL = "metrics.synth.timing.met"
 
 #: Name of the derived power target column.
 POWER_TARGET_COL = "power"
@@ -60,6 +68,7 @@ class LoadStats:
     skipped: int = 0
     failed: int = 0
     broken: int = 0
+    timing_failed: int = 0
     duplicates: int = 0
     final: int = 0
 
@@ -68,7 +77,8 @@ class LoadStats:
         return (
             f"{self.files} files, {self.total} runs, {self.after_filters} after manual filters, "
             f"-{self.skipped} skipped, -{self.failed} failed, -{self.broken} broken, "
-            f"-{self.duplicates} duplicates -> {self.final} samples"
+            f"-{self.timing_failed} timing failed, -{self.duplicates} duplicates "
+            f"-> {self.final} samples"
         )
 
 
@@ -106,29 +116,42 @@ def derive_power_target(
     df: pd.DataFrame,
     power_cols: Optional[list[tuple[str, float]]] = None,
     out_col: str = POWER_TARGET_COL,
+    dyn_col: Optional[str] = POWER_DYN_COL,
 ) -> pd.DataFrame:
-    """Add a power target column in mW: measured power minus the (minimum observed) baseline.
+    """Add a power target column in mW: the dynamic power of the design.
 
-    For every run the first of ``power_cols`` (default :data:`POWER_COLS`) that has a value is
-    used, scaled to mW, so that runs recorded with different report schemas are combined. The
-    smallest measured value is treated as the static/baseline power of the platform; a small
-    offset keeps the target strictly positive so relative error metrics stay defined. Runs
-    without any measurement keep NaN in the target column and are ignored when fitting. If
-    none of the columns exists, the DataFrame is returned unchanged with a warning.
+    Runs with a per-run idle measurement (``dyn_col``, load minus idle of the same run) use
+    it directly. For the others the first of ``power_cols`` (default :data:`POWER_COLS`) that
+    has a value is used, scaled to mW, and the smallest such value is treated as the
+    static/baseline power of the platform. A small offset keeps the target strictly positive
+    so relative error metrics stay defined. Runs without any measurement keep NaN in the
+    target column and are ignored when fitting. If none of the columns exists, the DataFrame
+    is returned unchanged with a warning.
     """
     power_cols = POWER_COLS if power_cols is None else power_cols
     available = [(col, scale) for col, scale in power_cols if col in df.columns]
-    if not available:
+    has_dyn = dyn_col is not None and dyn_col in df.columns
+    if not available and not has_dyn:
         logger.warning("None of the power columns %s in database", [c for c, _ in power_cols])
         return df
     df = df.copy()
+    target = pd.Series(np.nan, index=df.index, dtype=float)
+    if has_dyn:
+        dyn = pd.to_numeric(df[dyn_col], errors="coerce")
+        use = dyn.notna()
+        target[use] = dyn[use].clip(lower=0.0) + 0.01
+        logger.info("Power target: %d runs from '%s' (load - idle)", int(use.sum()), dyn_col)
     measured = pd.Series(np.nan, index=df.index, dtype=float)
     for col, scale in available:
-        use = measured.isna() & df[col].notna()
+        use = target.isna() & measured.isna() & df[col].notna()
         measured[use] = df.loc[use, col].astype(float) * scale
         logger.info("Power target: %d runs from '%s' (x%g)", int(use.sum()), col, scale)
-    baseline = measured.min() - 0.01
-    df[out_col] = measured - baseline
+    if measured.notna().any():
+        baseline = measured.min() - 0.01
+        target[measured.notna()] = measured[measured.notna()] - baseline
+    else:
+        baseline = float("nan")
+    df[out_col] = target
     logger.info(
         "Power baseline (min observed - 0.01 mW): %.3f mW, shifted into '%s' "
         "(%d of %d runs measured)",
@@ -172,6 +195,7 @@ def load_microbenchmark_database(
     exclude_pipeline_id: Optional[list[int]] = None,
     derive_power: bool = True,
     spec: Optional[OperatorFeatureSpec] = None,
+    drop_timing_failures: bool = True,
     **column_filters: Any,
 ) -> tuple[pd.DataFrame, LoadStats]:
     """Load, filter and deduplicate the microbenchmark runs of one operator.
@@ -181,7 +205,8 @@ def load_microbenchmark_database(
         2. drop irrelevant parameter columns,
         3. apply commit/pipeline include/exclude lists (commits match by prefix, so short
            hashes work) and arbitrary ``column == value`` filters from ``column_filters``,
-        4. drop skipped/failed runs and runs the operator spec marks as broken,
+        4. drop skipped/failed runs, runs the operator spec marks as broken and (if
+           ``drop_timing_failures``) runs whose implemented design missed timing,
         5. keep only the newest run for each unique combination of all ``params.*`` columns,
         6. derive the feature columns of the spec, the resource targets
            (:func:`derive_resource_targets`) and (if ``derive_power``) the power target,
@@ -221,6 +246,11 @@ def load_microbenchmark_database(
     n_before = len(df)
     df = spec.drop_broken_runs(df)
     stats.broken = n_before - len(df)
+    if drop_timing_failures and TIMING_MET_COL in df.columns:
+        n_before = len(df)
+        met = pd.to_numeric(df[TIMING_MET_COL], errors="coerce")
+        df = df[met.isna() | (met != 0)]
+        stats.timing_failed = n_before - len(df)
 
     # Deduplicate: keep only the newest run for each unique parameter set
     n_before = len(df)

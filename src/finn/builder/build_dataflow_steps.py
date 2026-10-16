@@ -1510,13 +1510,18 @@ def generate_empirical_estimate_reports(
         log.info("No empirical QoR models available (FINN_QOR_MODEL_DIR), skipping")
         return
     resources: dict[str, dict[str, int | float]] = model.analysis(
-        partial(empirical_res_estimation, fpgapart=cfg._resolve_fpga_part(), models=models)
+        partial(
+            empirical_res_estimation,
+            fpgapart=cfg._resolve_fpga_part(),
+            models=models,
+            clk_period_ns=cfg.synth_clk_period_ns,
+        )
     )
     resources["total"] = aggregate_dict_keys(resources)
     with (report_dir / f"estimate_layer_resources_empirical{suffix}.json").open("w") as f:
         json.dump(resources, f, indent=2)
     power: dict[str, dict[str, float]] = model.analysis(
-        partial(empirical_power_estimation, models=models)
+        partial(empirical_power_estimation, models=models, clk_period_ns=cfg.synth_clk_period_ns)
     )
     power["total"] = aggregate_dict_keys(power)
     with (report_dir / f"estimate_power_empirical{suffix}.json").open("w") as f:

@@ -51,6 +51,7 @@ def _synthetic_mvau(n=240, seed=0):
             "dut_info.simd": simd,
             "dut_info.pe": pe,
             "dut_info.zero_weights": rng.uniform(0, 0.3, n).round(2),
+            "clk_period_ns": rng.choice([10.0, 5.0], n),
             "commit": ["abc"] * n,
             "pipeline_id": [1] * n,
         }

@@ -39,8 +39,10 @@ _PARAMS = {
 }
 
 
-def _run(mw, synth, hls=None, power=None, status="ok"):
+def _run(mw, synth, hls=None, power=None, status="ok", timing_met=None):
     metrics = {"status": status, "synth": {"resources": synth}}
+    if timing_met is not None:
+        metrics["synth"]["timing"] = {"WNS": -0.2 if timing_met == 0 else 0.3, "met": timing_met}
     if hls is not None:
         metrics["hls_estimate"] = {"resources": hls}
     if power is not None:
@@ -70,6 +72,8 @@ def database(tmp_path):
             power={"power_pl_ps_load": 1.7},
         ),
         _run(64, {"LUT": 300, "DSP": 0, "URAM": 2}, hls={"LUT": 330}),
+        # missed timing: dropped by default
+        _run(128, {"LUT": 900, "DSP": 0, "URAM": 0}, timing_met=0),
     ]
     (db / "mvau" / "a.json").write_text(
         json.dumps(
@@ -119,9 +123,26 @@ def test_derive_power_target_combines_schemas(caplog):
     assert derive_power_target(pd.DataFrame({"x": [1]})).columns.tolist() == ["x"]
 
 
+def test_derive_power_target_prefers_dynamic_power():
+    df = pd.DataFrame(
+        {
+            "metrics.measurement.power.dyn_0V85_power": [250.0, np.nan, -0.3, np.nan],
+            "metrics.measurement.power.avg_0V85_power": [2050.0, 1500.0, 1800.0, 1600.0],
+        }
+    )
+    out = derive_power_target(df)
+    # runs with an idle measurement: load - idle (+ offset, clipped at 0); the others use
+    # the dataset baseline, computed over those runs only
+    assert out[POWER_TARGET_COL].round(2).tolist() == [250.01, 0.01, 0.01, 100.01]
+
+
 def test_load_database_derives_targets(database):
     df, stats = load_microbenchmark_database("mvau", str(database))
-    assert stats.final == 3
+    assert stats.final == 3 and stats.timing_failed == 1
+    kept, _ = load_microbenchmark_database("mvau", str(database), drop_timing_failures=False)
+    assert len(kept) == 4
+    # the clock period is a feature of every operator; historic rows default to 10 ns
+    assert df["clk_period_ns"].tolist() == [10.0, 10.0, 10.0]
     df = df.sort_values("params.mw").reset_index(drop=True)
     # the third run never logged BRAM keys: unknown, not zero
     assert df[BRAM_TARGET_COL].tolist()[:2] == [4, 0] and np.isnan(df[BRAM_TARGET_COL].iloc[2])

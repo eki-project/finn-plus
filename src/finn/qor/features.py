@@ -15,7 +15,7 @@ that fits the models runs outside of the FINN environment.
 
 import pandas as pd
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, NamedTuple, Optional
 
 _INT_RE = re.compile(r"^(U?)INT(\d+)$")
@@ -124,6 +124,7 @@ def _deriver(
     """Build a ``derive_db_columns`` function from declarative column mappings."""
 
     def derive(df: pd.DataFrame) -> pd.DataFrame:
+        """Derived database columns of this operator (see the spec's feature list)."""
         df = df.copy()
         for prefix, col in (datatype_cols or {}).items():
             df = add_datatype_columns(df, col, prefix, with_kind=prefix in with_kind)
@@ -164,6 +165,40 @@ class OperatorFeatureSpec:
 
 #: dut_info keys every microbenchmark DUT writes (see finn.benchmarking.dut.microbench_base)
 COMMON_DUT_INFO_KEYS = ["dut_node_name", "dut_op_type", "dut_backend"]
+
+#: Clock period (ns) the design was synthesized for. HLS scheduling, retiming and placement
+#: depend on it, so it is a feature of every operator, derived from the run parameter
+#: ``params.synth_clk_period_ns`` (recorded since the beginning: 10 ns until 2026-10, 5 ns
+#: since); builds pass their configured period at inference time.
+CLOCK_PERIOD_COL = "clk_period_ns"
+CLOCK_PERIOD_PARAM_COL = "params.synth_clk_period_ns"
+DEFAULT_CLOCK_PERIOD_NS = 10.0
+
+
+def add_clock_period_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Derive :data:`CLOCK_PERIOD_COL` (float) from the run parameter, historical default."""
+    if CLOCK_PERIOD_PARAM_COL in df.columns:
+        values = pd.to_numeric(df[CLOCK_PERIOD_PARAM_COL], errors="coerce").fillna(
+            DEFAULT_CLOCK_PERIOD_NS
+        )
+    else:
+        values = DEFAULT_CLOCK_PERIOD_NS
+    return df.assign(**{CLOCK_PERIOD_COL: values})
+
+
+def with_clock_period(spec: "OperatorFeatureSpec") -> "OperatorFeatureSpec":
+    """The spec with the clock period appended to its features (and derived if missing)."""
+    derive = spec.derive_db_columns
+
+    def derive_with_clock(df: pd.DataFrame, _derive=derive) -> pd.DataFrame:
+        """The operator's derived columns plus the clock period feature."""
+        return add_clock_period_column(_derive(df))
+
+    return replace(
+        spec,
+        feature_cols=[*spec.feature_cols, CLOCK_PERIOD_COL],
+        derive_db_columns=derive_with_clock,
+    )
 
 
 def _mvau_drop_broken_runs(df: pd.DataFrame) -> pd.DataFrame:
@@ -379,6 +414,7 @@ FMPADDING_SPEC = OperatorFeatureSpec(
 
 
 def _eltwise_extra(df: pd.DataFrame) -> pd.DataFrame:
+    """Derived columns of the elementwise operators (datatypes, output width)."""
     df["c"] = df["params.shape"].map(lambda s: s[-1] if s is not None else None)
     return df
 
@@ -421,6 +457,17 @@ ELTWISE_SPEC = OperatorFeatureSpec(
     ),
     dut_info_keys=["rhs_dtype", "out_dtype", "rhs_num_elems", "wmem"],
 )
+
+# every operator gets the clock period as its last feature
+MVAU_SPEC = with_clock_period(MVAU_SPEC)
+THRESHOLDING_SPEC = with_clock_period(THRESHOLDING_SPEC)
+SWG_SPEC = with_clock_period(SWG_SPEC)
+VVAU_SPEC = with_clock_period(VVAU_SPEC)
+FIFO_SPEC = with_clock_period(FIFO_SPEC)
+DWC_SPEC = with_clock_period(DWC_SPEC)
+POOL_SPEC = with_clock_period(POOL_SPEC)
+FMPADDING_SPEC = with_clock_period(FMPADDING_SPEC)
+ELTWISE_SPEC = with_clock_period(ELTWISE_SPEC)
 
 #: All known operator feature specs, keyed by operator name.
 SPECS: dict[str, OperatorFeatureSpec] = {

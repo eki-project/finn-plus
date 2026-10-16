@@ -23,7 +23,14 @@ from typing import Callable, Optional
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.qor.database import POWER_TARGET_COL
 from finn.qor.estimator import MODEL_DIR_ENV_VAR, QoREstimator, resource_target
-from finn.qor.features import SPECS, broadcast_kind, datatype_features, spec_for_op_type
+from finn.qor.features import (
+    CLOCK_PERIOD_COL,
+    DEFAULT_CLOCK_PERIOD_NS,
+    SPECS,
+    broadcast_kind,
+    datatype_features,
+    spec_for_op_type,
+)
 from finn.util.basic import getHWCustomOp
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
@@ -43,6 +50,7 @@ def register_node_features(spec_name: str):
     assert spec_name in SPECS, f"No feature spec named {spec_name}"
 
     def decorator(fn: NodeFeatureExtractor) -> NodeFeatureExtractor:
+        """Register ``fn`` as the node feature extractor of the operator."""
         NODE_FEATURE_EXTRACTORS[spec_name] = fn
         return fn
 
@@ -55,19 +63,28 @@ def backend_of(node: NodeProto) -> str:
 
 
 def _dt(inst: HWCustomOp, attr: str) -> DataType:
+    """Shorthand for ``datatype_features`` of a FINN DataType."""
     return DataType[inst.get_nodeattr(attr)]
 
 
 def _zero_fraction(weights: np.ndarray) -> float:
+    """Fraction of zero entries of a weight tensor (sparsity feature)."""
     return round(float((weights == 0).sum()) / weights.size, 2)
 
 
-def node_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> pd.DataFrame:
+def node_features(
+    model: ModelWrapper,
+    node: NodeProto,
+    inst: HWCustomOp,
+    clk_period_ns: float = DEFAULT_CLOCK_PERIOD_NS,
+) -> pd.DataFrame:
     """Map a hardware node to the feature row expected by the QoR estimators of its operator.
 
     The columns must match ``OperatorFeatureSpec.feature_cols`` of the operator exactly, which
     is asserted, so that a model fitted on the microbenchmark database applies to the node.
-    Raises ValueError for unsupported node types.
+    ``clk_period_ns`` is the clock period the design is built for (a feature of every
+    operator, see :data:`finn.qor.features.CLOCK_PERIOD_COL`). Raises ValueError for
+    unsupported node types.
     """
     spec = spec_for_op_type(node.op_type)
     if spec is None:
@@ -76,6 +93,7 @@ def node_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> pd.
     if extractor is None:
         raise ValueError(f"No node feature extractor registered for operator {spec.name}")
     features = extractor(model, node, inst)
+    features[CLOCK_PERIOD_COL] = float(clk_period_ns)
     assert sorted(features) == sorted(
         spec.feature_cols
     ), f"feature mapping of {spec.name} out of sync with spec"
@@ -84,6 +102,7 @@ def node_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> pd.
 
 @register_node_features("mvau")
 def _mvau_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+    """Feature row of an MVAU node (see ``MVAU_SPEC``)."""
     weights = model.get_initializer(node.input[1])
     return {
         "params.backend": backend_of(node),
@@ -105,6 +124,7 @@ def _mvau_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> di
 
 @register_node_features("thresholding")
 def _thresholding_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+    """Feature row of a Thresholding node (see ``THRESHOLDING_SPEC``)."""
     hls = backend_of(node) == "hls"
     return {
         "params.backend": backend_of(node),
@@ -122,6 +142,7 @@ def _thresholding_features(model: ModelWrapper, node: NodeProto, inst: HWCustomO
 
 @register_node_features("swg")
 def _swg_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+    """Feature row of a ConvolutionInputGenerator node (see ``SWG_SPEC``)."""
     k_h, k_w = inst.get_nodeattr("ConvKernelDim")
     ifm_h, ifm_w = inst.get_nodeattr("IFMDim")
     stride_h, stride_w = inst.get_nodeattr("Stride")
@@ -150,6 +171,7 @@ def _swg_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dic
 
 @register_node_features("vvau")
 def _vvau_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+    """Feature row of a VVAU node (see ``VVAU_SPEC``)."""
     k_h, k_w = inst.get_nodeattr("Kernel")
     weights = model.get_initializer(node.input[1])
     hls = backend_of(node) == "hls"
@@ -174,6 +196,7 @@ def _vvau_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> di
 
 @register_node_features("fifo")
 def _fifo_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+    """Feature row of a StreamingFIFO node (see ``FIFO_SPEC``)."""
     width = inst.get_instream_width()
     depth = inst.get_nodeattr("depth")
     return {
@@ -187,6 +210,7 @@ def _fifo_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> di
 
 @register_node_features("dwc")
 def _dwc_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+    """Feature row of a StreamingDataWidthConverter node (see ``DWC_SPEC``)."""
     in_width = inst.get_nodeattr("inWidth")
     out_width = inst.get_nodeattr("outWidth")
     big, small = max(in_width, out_width), min(in_width, out_width)
@@ -203,6 +227,7 @@ def _dwc_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dic
 
 @register_node_features("pool")
 def _pool_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+    """Feature row of a Pool node (see ``POOL_SPEC``)."""
     k_h, k_w = inst.get_nodeattr("KernelSize")
     return {
         "params.function": inst.get_nodeattr("Function"),
@@ -218,6 +243,7 @@ def _pool_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> di
 
 @register_node_features("fmpadding")
 def _fmpadding_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+    """Feature row of an FMPadding node (see ``FMPADDING_SPEC``)."""
     idim_h, idim_w = inst.get_nodeattr("ImgDim")
     pad_t, pad_l, pad_b, pad_r = inst.get_nodeattr("Padding")
     return {
@@ -235,6 +261,7 @@ def _fmpadding_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) 
 
 @register_node_features("eltwise")
 def _eltwise_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+    """Feature row of an elementwise binary node (see ``ELTWISE_SPEC``)."""
     op = node.op_type.replace("Elementwise", "").rsplit("_", 1)[0]
     lhs_style = inst.get_nodeattr("lhs_style")
     rhs_style = inst.get_nodeattr("rhs_style")
@@ -311,7 +338,10 @@ class QoRModelSet:
 
 
 def empirical_res_estimation(
-    model: ModelWrapper, fpgapart: str, models: QoRModelSet
+    model: ModelWrapper,
+    fpgapart: str,
+    models: QoRModelSet,
+    clk_period_ns: float = DEFAULT_CLOCK_PERIOD_NS,
 ) -> dict[str, dict[str, int | float]]:
     """Estimate the resources of every hardware node using the fitted QoR models.
 
@@ -331,7 +361,7 @@ def empirical_res_estimation(
         if not any(estimates.values()):
             res_dict[node.name] = analytical
             continue
-        features = node_features(model, node, inst)
+        features = node_features(model, node, inst, clk_period_ns)
         result = dict(analytical)
         for res, est in estimates.items():
             if est is None:
@@ -349,7 +379,7 @@ def empirical_res_estimation(
 
 
 def empirical_power_estimation(
-    model: ModelWrapper, models: QoRModelSet
+    model: ModelWrapper, models: QoRModelSet, clk_period_ns: float = DEFAULT_CLOCK_PERIOD_NS
 ) -> dict[str, dict[str, float]]:
     """Estimate the (dynamic) power of every hardware node using the fitted QoR models.
 
@@ -368,7 +398,7 @@ def empirical_power_estimation(
             res_dict[node.name] = {POWER_TARGET_COL: 0.0}
             continue
         inst = getHWCustomOp(node)
-        features = node_features(model, node, inst)
+        features = node_features(model, node, inst, clk_period_ns)
         if not est.covers(features):
             unsupported.append(node.name)
             res_dict[node.name] = {POWER_TARGET_COL: 0.0}
