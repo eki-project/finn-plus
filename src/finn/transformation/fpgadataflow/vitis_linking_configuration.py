@@ -105,15 +105,17 @@ def render_kernel_clock_tcl(f_mhz: int) -> str:
     """Tcl for the opt_design pre-hook: time the kernel clock at ``f_mhz`` in implementation.
 
     v++ turns ``--kernel_frequency`` into a generated clock on the kernel MMCM's
-    output whose multiply/divide come from its clock-wizard solver. In Vivado
-    2024.2 that solver fails inside the implementation run's in-memory project
-    (``[Ip 78-110] Invalid part string Project``, reproduced in a bare
-    ``create_project -in_memory``) and leaves both at 1, so placement and routing
-    were timed at the MMCM's input frequency -- 100 MHz on the U55C -- whatever
-    frequency was requested (15 Oct 2026: every 5 ns build reported the same
-    placer and router WNS as the 10 ns builds). This script re-creates the clock
-    with the ratio of the requested to the input frequency, and leaves it alone
-    when the two already agree (a 100 MHz build).
+    output whose multiply/divide come from Vivado's clock-wizard solver
+    (``ocl_util.tcl``, ``GetClosestSolution``). In Vivado 2023.1, 2023.2 and 2024.2
+    that solver returns no solution -- 2024.2 says ``[Ip 78-110] Invalid part string
+    <project>``, 2023.x fails silently -- and both values stay 1, so placement and
+    routing are timed at the MMCM's input frequency (100 MHz on the U55C) whatever
+    frequency was requested. 2022.2 and 2024.1 solve it (x12 / 6 for 200 MHz from 100
+    MHz). Measured 16 Oct 2026 with Vitis' exact call in bare Vivado sessions; on
+    2024.2 the real links show it too (every 5 ns build reported the same placer and
+    router WNS as the 10 ns builds). This script re-creates the clock with the ratio
+    of the requested to the input frequency, and leaves it alone when the two
+    already agree (a 100 MHz build, or a Vivado whose solver works).
     """
     return "\n".join(
         [

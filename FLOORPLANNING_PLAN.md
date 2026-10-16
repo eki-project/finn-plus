@@ -2470,11 +2470,15 @@ link hook), then rerun the 5 ns pairs.
 
 **Plan step 1 (16 Oct 2026): two implementation bugs, both affecting every FINN Alveo build.**
 
-1. *Kernel clock.* Vivado 2024.2's clock-wizard solver, which v++ uses to turn
-   `--kernel_frequency` into the implementation clock, fails in the in-memory project of
-   the impl run (`[Ip 78-110] Invalid part string Project`, reproduced in a bare
-   `create_project -in_memory`), returns M = D = 1, and implementation times the kernel
-   clock at the MMCM input -- 100 MHz on the U55C. Fix: `render_kernel_clock_tcl` /
+1. *Kernel clock.* Vivado's clock-wizard solver, which v++ uses to turn
+   `--kernel_frequency` into the implementation clock, returns no solution in Vivado
+   2023.1, 2023.2 and 2024.2 (2024.2: `[Ip 78-110] Invalid part string <project>`, in any
+   project, in-memory or on disk; 2023.x silently) and leaves M = D = 1, so implementation
+   times the kernel clock at the MMCM input -- 100 MHz on the U55C. 2022.2 and 2024.1 solve
+   it (M 12, Div0 6 for 200 MHz). Measured with Vitis' exact call in bare Vivado sessions,
+   per version; on 2024.2 also in real links back to March 2026, before floorplanning
+   existed. A toolchain regression, not a FINN or floorplanning bug; past 200 MHz builds
+   on 2022.2 were implemented at the right clock. Fix: `render_kernel_clock_tcl` /
    `BuildBasicVitisLinkConfig._configure_kernel_clock`, an `OPT_DESIGN.TCL.PRE` hook (Vitis
    appends it to its own) that re-creates the clock at the requested ratio; at 100 MHz it
    leaves the clock alone. Tested on a routed 5 ns checkpoint: 10.000 -> 5.000 ns, x2/1.
