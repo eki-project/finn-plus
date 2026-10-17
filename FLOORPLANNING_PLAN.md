@@ -2655,3 +2655,26 @@ Builds (250 MHz, stream register slices, all from the v2 5 ns checkpoints in
 `v2_mobilenetv1_per_node_4ns_slices_oldpack` (greedy packer, control, worktree
 finn-plus-v2) and `v2_mobilenetv1_per_node_4ns_slices` (refined packer, worktree
 finn-plus-v2b).
+
+**The floorplanned MobileNet did not place on the new code base (17 Oct 2026); fixed in the
+SLR assignment (`c6a535b2e`).** `v2_mobilenetv1_per_node_5ns` (21 link sessions, `Place
+30-488`/`30-99`) and the 250 MHz greedy-packer control (`Place 30-859`: 275+ block RAMs
+without a site) both failed; the refined packer's run was cancelled for the same reason.
+The packer left the three 71-DSP MVAUs of SLR1 unplaced ("starved"): the assignment had
+put 269 of 285 units into SLR1 and 16 into SLR0. On the old code base it split 167/118.
+Cause: the consolidated FIFO component's estimates (3 BRAM18, 11 URAM, 15k LUTs for all
+FIFOs, against 303 BRAM18 and 213 URAM before) let the whole design fit one SLR on
+estimates, and the assignment minimised crossings only. The DMAs are anchored next to
+the HBM, so the chain leaves SLR0 and returns wherever it is cut, at the same cost; the
+solver took an arbitrary one of those cuts, and the measured LUTs of SLR1 (170k against
+129k estimated) did not fit the packer at density 0.75.
+
+Fix: the objective adds, weighted below one SLL, the mean over budgeted resource types of
+each type's peak per-SLR utilisation, so it only decides between equally cheap cuts (a
+design that fits one SLR still stays there). A single peak over all types balanced only
+block RAM (LUT 36k/96k). Replayed offline on the failed checkpoint: crossing cost 20 either
+way, 16/269 -> 170/115 units, LUT 67k/64k, DSP 332/352, BRAM18 466/607.
+
+Builds now: `v2_mobilenetv1_per_node_4ns_slices` (refined packer, worktree finn-plus-v2b
+at `c6a535b2e`) and `..._oldpack` (greedy packer, worktree finn-plus-v2c: `c6a535b2e` with
+`packer.py` of `a4c3c46b0`), against the free `v2_mobilenetv1_baseline_4ns_slices`.
