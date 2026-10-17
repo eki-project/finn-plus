@@ -293,6 +293,25 @@ def test_register_slices_sit_in_front_of_non_fifo_inputs() -> None:
 
 
 @pytest.mark.fpgadataflow
+def test_slice_reset_registers_are_kept_apart() -> None:
+    """The slices' reset pipeline registers get DONT_TOUCH, so the placer cannot merge them."""
+    from finn.transformation.fpgadataflow.stream_slices import slice_reset_dont_touch_tcl
+
+    query, guarded = slice_reset_dont_touch_tcl()
+    assert query.startswith("set finn_slice_rst [get_cells -quiet -hier -filter {IS_SEQUENTIAL &&")
+    # The fwd and resp registers of both reset chains; resp2 is kept by the IP already.
+    assert "*_slice/inst/axisc_register_slice_0/gen_auto_slr.auto/*_areset_*_reg" in query
+    assert "NAME !~ *resp2_reg" in query
+    # Cells only: the taps go into the nets. Kernels without slices match nothing.
+    assert guarded == (
+        "if {[llength $finn_slice_rst]} { set_property DONT_TOUCH true $finn_slice_rst }"
+    )
+    for line in (query, guarded):
+        assert line.count("[") == line.count("]")
+        assert line.count("{") == line.count("}")
+
+
+@pytest.mark.fpgadataflow
 def test_performance_strategies_carry_directives_and_retiming() -> None:
     """The strategy decides the link's implementation directives and the kernels' synthesis."""
     from finn.transformation.fpgadataflow.vitis_linking_configuration import (

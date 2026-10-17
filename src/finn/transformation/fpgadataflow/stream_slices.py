@@ -40,6 +40,40 @@ def slice_cell_name(node_name: str, input_index: int) -> str:
     return f"{node_name}_in{input_index}_slice"
 
 
+def slice_reset_dont_touch_tcl() -> list[str]:
+    """Tcl, for the synthesized kernel, that keeps the slices' own reset pipeline registers.
+
+    The slice pipelines its reset in the auto-pipelined part: ``s_/m_areset_fwd_reg``
+    in the ``fwd`` group, next to the payload, and ``s_/m_areset_resp_reg`` in the
+    ``resp`` group. The placer inserts the same number of taps into every net of a
+    group, and ``write_bitstream`` checks that (DRC NTCN-15). All slices share one
+    reset, so all their reset registers at equal delay are equivalent, and the
+    placer's equivalent driver rewiring (Physical Synthesis In Placer, after the taps
+    go in) merges them across slices. On the vision transformer at 300 MHz (17 Oct
+    2026) it grafted 49 tap chains onto another slice's ``resp`` register, so their
+    groups counted a tap short: NTCN-15 on two slices, no bitstream.
+
+    ``DONT_TOUCH`` on these four registers per slice takes them out of the rewiring.
+    Replayed from that link's post-``opt_design`` netlist (18 Oct 2026): no chain
+    ends on a foreign register any more (49 -> 0), NTCN-15 282 -> 0, the same 111
+    groups get taps, routed WNS +0.007 against +0.016 ns. Taps of equal stage are
+    still shared across slices, which the DRC accepts. ``DONT_TOUCH`` on the root
+    ``areset_r_reg`` did not help (the rewiring follows the logic through it), nor
+    did ``EQUIVALENT_DRIVER_OPT``; ``place_design -no_psip`` drops the taps
+    altogether. The nets stay free: the taps are inserted into them. Kernels
+    without slices (the IODMA partitions) match no cell: ``set_property`` on an
+    empty list is an error.
+    """
+    return [
+        (
+            "set finn_slice_rst [get_cells -quiet -hier -filter {IS_SEQUENTIAL &&"
+            " NAME =~ *_slice/inst/axisc_register_slice_0/gen_auto_slr.auto/*_areset_*_reg &&"
+            " NAME !~ *resp2_reg}]"
+        ),
+        "if {[llength $finn_slice_rst]} { set_property DONT_TOUCH true $finn_slice_rst }",
+    ]
+
+
 def register_slice_inputs(node: NodeProto, model: ModelWrapper) -> list[int]:
     """Return the input indices of ``node`` that get a register slice.
 

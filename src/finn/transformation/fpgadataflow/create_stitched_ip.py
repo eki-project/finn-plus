@@ -58,6 +58,7 @@ from finn.transformation.fpgadataflow.stream_slices import (
     SLICE_VLNV,
     register_slice_inputs,
     slice_cell_name,
+    slice_reset_dont_touch_tcl,
 )
 from finn.util.basic import (
     launch_process_helper,
@@ -932,6 +933,7 @@ class CreateStitchedIP(Transformation):
                     f"launch_runs synth_1 -jobs {num_workers}",
                     "wait_on_run [get_runs synth_1]",
                     "open_run synth_1 -name synth_1",
+                    *(slice_reset_dont_touch_tcl() if self.stream_register_slices else []),
                     f"write_verilog -force -mode synth_stub {block_name}.v",
                     f"write_checkpoint {block_name}.dcp",
                     *kernel_xdc_export_tcl(block_name),
