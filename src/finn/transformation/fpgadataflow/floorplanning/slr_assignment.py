@@ -58,6 +58,13 @@ STREAM_HANDSHAKE_SLLS: int = 2
 #: Default time budget handed to the solver, in seconds.
 DEFAULT_SOLVER_TIMEOUT: int = 300
 
+#: Weight of the balance term in the objective (see `SLRAssignmentProblem`). The term is
+#: the mean over budgeted resource types of each one's peak per-SLR utilisation, at most 1
+#: in a feasible assignment, and every crossing costs at least one SLL; a weight below 1
+#: therefore only decides between assignments with the same crossing cost and never buys
+#: balance with a crossing.
+BALANCE_WEIGHT: float = 0.5
+
 #: Op-type prefix of the nodes whose `mem_port` is actually consumed downstream.
 IODMA_OP_PREFIX: str = "IODMA"
 
@@ -271,11 +278,38 @@ class SLRAssignmentProblem:
                     <= budget
                 )
 
-        # --- objective: total SLL-weighted boundary crossings ---
-        self.model.objective = xsum(
-            self.crossings[(unit_a, unit_b)][boundary] * weight
-            for unit_a, unit_b, weight in edges
-            for boundary in range(self.n_boundaries)
+        # --- balance: the peak relative usage of any budgeted resource in any SLR ---
+        # Crossings alone are indifferent to where a chain is cut when several cuts
+        # cost the same. Anchored designs have many such cuts: mobilenetv1's DMAs sit
+        # in the HBM's SLR, so its chain leaves that SLR and comes back whatever it
+        # does in between. With crossings as the only objective the solver took one
+        # of them at random -- 167/118 units on the old code base, 16/270 once the
+        # consolidated FIFOs made the estimates fit one SLR (16 Oct 2026) -- and the
+        # packer then found no room in the full SLR for three 71-DSP MVAUs whose
+        # measured LUTs exceed their estimates by a third. Among equally cheap
+        # cuts, the most even one leaves every SLR the most room.
+        # One peak per resource type, averaged: a single peak over all of them evened
+        # out only the scarcest (block RAM 540/533) and left LUTs at 36k/96k.
+        self.peaks: dict[str, mip.Var] = {}
+        for slr in range(nslr):
+            for restype, used in self.usage[slr].items():
+                if capacity[slr][restype] <= 0:
+                    continue
+                if restype not in self.peaks:
+                    self.peaks[restype] = self.model.add_var(
+                        name=f"peak_{restype}", var_type=mip.CONTINUOUS, lb=0.0
+                    )
+                self.model += self.peaks[restype] >= used * (1.0 / capacity[slr][restype])
+        balance = xsum(self.peaks.values()) * (1.0 / max(len(self.peaks), 1))
+
+        # --- objective: total SLL-weighted boundary crossings, then balance ---
+        self.model.objective = (
+            xsum(
+                self.crossings[(unit_a, unit_b)][boundary] * weight
+                for unit_a, unit_b, weight in edges
+                for boundary in range(self.n_boundaries)
+            )
+            + BALANCE_WEIGHT * balance
         )
         self.model.sense = mip.MINIMIZE
 
@@ -310,6 +344,14 @@ class SLRAssignmentProblem:
             )
             for unit in self.unit_ids
         }
+
+    def crossing_cost(self) -> float:
+        """Return the solved assignment's SLL-weighted crossing cost (no balance term)."""
+        return sum(
+            (self.crossings[(unit_a, unit_b)][boundary].x or 0.0) * weight
+            for unit_a, unit_b, weight in self.edges
+            for boundary in range(self.n_boundaries)
+        )
 
     def describe_demand(self) -> str:
         """Return a human-readable comparison of total demand against total capacity.
@@ -546,7 +588,7 @@ class AssignFloorplanSLRs(Transformation):
             log.info(
                 f"Floorplanner: assigned {len(solution)} placement unit(s) on device "
                 f"{device} across {self.platform.nslr} SLR(s); SLL-weighted crossing cost "
-                f"{problem.model.objective_value:.0f}."
+                f"{problem.crossing_cost():.0f}."
             )
 
         return (model, False)

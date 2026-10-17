@@ -97,7 +97,7 @@ def test_lp_packs_a_chain_contiguously() -> None:
     solution = problem.solve(30)
     assert solution is not None
     # Two SLRs per unit-pair, so exactly two of the five edges may cross.
-    assert problem.model.objective_value == pytest.approx(2 * 64)
+    assert problem.crossing_cost() == pytest.approx(2 * 64)
     assert sorted(solution.values()) == [0, 0, 1, 1, 2, 2]
 
 
@@ -126,7 +126,7 @@ def test_lp_keeps_wide_streams_local() -> None:
     solution = problem.solve(30)
     assert solution is not None
     assert solution[1] == solution[2]
-    assert problem.model.objective_value == pytest.approx(20)
+    assert problem.crossing_cost() == pytest.approx(20)
 
 
 @pytest.mark.fpgadataflow
@@ -430,3 +430,25 @@ def test_a_small_chain_stays_in_one_slr() -> None:
     model = model.transform(AssignFloorplanSLRs(platforms["U55C"](), U55C_PART, "U55C"))
     slrs = {attr(model, node.name, "floorplan_slr") for node in model.graph.node}
     assert len(slrs) == 1, f"a chain that fits one SLR was spread over {sorted(slrs)}"
+
+
+@pytest.mark.fpgadataflow
+def test_equally_cheap_cuts_are_resolved_towards_balance() -> None:
+    """Among cuts of the same crossing cost, the most even split is taken.
+
+    Both ends of the chain are anchored to SLR 0 (like DMAs next to the HBM), so the
+    chain leaves SLR 0 and comes back wherever it is cut, at the same cost. SLR 0 can
+    hold all but one unit; crossings alone took any of the equally cheap cuts -- on
+    mobilenetv1 that put 270 of 286 units in one SLR (16 Oct 2026).
+    """
+    n = 10
+    capacity = {slr: {"LUT": 100 * (n - 1)} for slr in range(2)}
+    units = {unit: {"LUT": 100} for unit in range(n)}
+    edges = [(unit, unit + 1, 10) for unit in range(n - 1)]
+    anchors = {0: [0], n - 1: [0]}
+    problem = SLRAssignmentProblem(2, units, capacity, edges, [10_000], unit_anchors=anchors)
+    solution = problem.solve(60)
+    assert solution is not None
+    assert problem.crossing_cost() == pytest.approx(2 * 10)
+    in_slr1 = sum(1 for slr in solution.values() if slr == 1)
+    assert in_slr1 == n // 2 - 1 or in_slr1 == n // 2, solution
