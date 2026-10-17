@@ -15,11 +15,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from typing import TYPE_CHECKING, Any, cast
 
-from finn.builder.build_dataflow_config import (
-    FpgaMemoryType,
-    StreamRegisterSlices,
-    VitisOptStrategy,
-)
+from finn.builder.build_dataflow_config import FpgaMemoryType, VitisOptStrategy
 from finn.templates import get_jinja_environment
 from finn.transformation.fpgadataflow.floorplanning.binding import collect_floorplan_units
 from finn.transformation.fpgadataflow.floorplanning.placer_retry import OVERRIDES_FILE
@@ -721,7 +717,6 @@ class BuildBasicVitisLinkConfig(Transformation):
         floorplan_resource_margin: float = DEFAULT_RESOURCE_MARGIN,
         floorplan_slicem_utilization: float = DEFAULT_SLICEM_UTILIZATION,
         floorplan_logic_utilization: float = DEFAULT_LOGIC_UTILIZATION,
-        stream_register_slices: StreamRegisterSlices = StreamRegisterSlices.NONE,
     ) -> None:
         """Build a basic linking configuration and store it. Afterwards, the
         model can be linked, or the config can be modified further.
@@ -741,9 +736,6 @@ class BuildBasicVitisLinkConfig(Transformation):
             floorplan_resource_margin: Headroom applied when sizing those pblocks.
             floorplan_slicem_utilization: Fraction of SLICEM LUTs LUTRAM/SRLs may fill.
             floorplan_logic_utilization: Fraction of a pblock's slices plain logic may fill.
-            stream_register_slices: Whether the kernels carry a register slice in front of
-                every node input another node drives; the floorplan units then include them
-                (`DataflowBuildConfig.stream_register_slices`).
         """
         super().__init__()
         self.platform = platform
@@ -757,7 +749,6 @@ class BuildBasicVitisLinkConfig(Transformation):
         self.floorplan_resource_margin = floorplan_resource_margin
         self.floorplan_slicem_utilization = floorplan_slicem_utilization
         self.floorplan_logic_utilization = floorplan_logic_utilization
-        self.stream_register_slices = stream_register_slices
 
     def _configure_kernel_clock(self, config: VitisLinkConfiguration) -> None:
         """Make implementation time the kernel clock at the requested frequency.
@@ -842,7 +833,6 @@ class BuildBasicVitisLinkConfig(Transformation):
             model,
             self.fpga_part,
             margin=self.floorplan_resource_margin,
-            stream_register_slices=self.stream_register_slices,
         )
         if not units:
             log.warning(

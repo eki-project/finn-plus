@@ -37,7 +37,6 @@ from qonnx.transformation.general import GiveReadableTensorNames, RemoveUnusedTe
 from subprocess import CalledProcessError
 from typing import TYPE_CHECKING
 
-from finn.builder.build_dataflow_config import StreamRegisterSlices
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
@@ -187,7 +186,7 @@ class BuildAllXOs(Transformation):
         fpga_part: str,
         synth_clk_period_ns: float,
         reset_pipeline_stages: int = 0,
-        stream_register_slices: StreamRegisterSlices = StreamRegisterSlices.NONE,
+        stream_register_slices: bool = False,
         synth_options: str = "",
     ) -> None:
         """Build all XOs; see `CreateStitchedIP` for the three kernel options."""

@@ -48,7 +48,6 @@ if TYPE_CHECKING:
     from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
     from onnx import NodeProto
 
-from finn.builder.build_dataflow_config import StreamRegisterSlices
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
@@ -199,7 +198,7 @@ class CreateStitchedIP(Transformation):
         functional_simulation: bool = False,
         synth_jobs: int | None = None,
         reset_pipeline_stages: int = 0,
-        stream_register_slices: StreamRegisterSlices = StreamRegisterSlices.NONE,
+        stream_register_slices: bool = False,
         synth_options: str = "",
     ) -> None:
         """Initialize CreateStitchedIP transformation.
@@ -229,7 +228,7 @@ class CreateStitchedIP(Transformation):
                 stage (`RESET_TREE_CELL`) that synthesis replicates per
                 `RESET_TREE_FANOUT` loads; 0 keeps the direct connection. See
                 `DataflowBuildConfig.reset_pipeline_stages`.
-            stream_register_slices: Put a fully registered AXI-stream register slice
+            stream_register_slices: Put an auto-pipelined AXI-stream register slice
                 (``<node>_in<i>_slice``) in front of every node input another node
                 drives, FIFOs excepted; see `finn.transformation.fpgadataflow.stream_slices`
                 and `DataflowBuildConfig.stream_register_slices`.
@@ -387,12 +386,12 @@ class CreateStitchedIP(Transformation):
                     )
 
     def insert_register_slice(self, node: "NodeProto", i: int, src: str, dst: str) -> None:
-        """Put an AXI-stream register slice (`stream_register_slices` mode) between two pins.
+        """Put an auto-pipelined AXI-stream register slice between two stream pins.
 
         The slice is clocked with the kernel clock and reset like the node it feeds
         (from the node's reset_pipe cell when there is a reset pipeline, so the two
-        stay on one reset and in one placement unit), and takes its data width from
-        the stream it is connected to.
+        leave reset together), and takes its data width from the stream it is
+        connected to.
         """
         cell = slice_cell_name(node.name, i)
         piped = self.reset_pipeline_stages > 0
@@ -404,10 +403,7 @@ class CreateStitchedIP(Transformation):
         self.create_cmds.extend(
             [
                 f"create_bd_cell -type ip -vlnv {SLICE_VLNV} {cell}",
-                (
-                    "set_property CONFIG.REG_CONFIG "
-                    f"{{{SLICE_REG_CONFIG[self.stream_register_slices]}}} [get_bd_cells {cell}]"
-                ),
+                f"set_property CONFIG.REG_CONFIG {{{SLICE_REG_CONFIG}}} [get_bd_cells {cell}]",
             ]
         )
         self.connect_cmds.extend(
@@ -800,10 +796,7 @@ class CreateStitchedIP(Transformation):
                         )
                     src_intf_name = prod.get_verilog_top_module_intf_names()["m_axis"][j][0]
                     dst_intf_name = node_inst.get_verilog_top_module_intf_names()["s_axis"][i][0]
-                    if (
-                        self.stream_register_slices != StreamRegisterSlices.NONE
-                        and i in register_slice_inputs(node, model)
-                    ):
+                    if self.stream_register_slices and i in register_slice_inputs(node, model):
                         self.insert_register_slice(
                             node,
                             i,

@@ -44,7 +44,6 @@ from shutil import copy
 from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, Literal, cast
 
-from finn.builder.build_dataflow_config import StreamRegisterSlices
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.floorplan import Floorplan
@@ -270,7 +269,6 @@ class MakeZYNQProject(Transformation):
         floorplan_resource_margin: float = DEFAULT_RESOURCE_MARGIN,
         floorplan_slicem_utilization: float = DEFAULT_SLICEM_UTILIZATION,
         floorplan_logic_utilization: float = DEFAULT_LOGIC_UTILIZATION,
-        stream_register_slices: StreamRegisterSlices = StreamRegisterSlices.NONE,
     ) -> None:
         """Initialize MakeZYNQProject with the target platform and clock period.
 
@@ -288,8 +286,6 @@ class MakeZYNQProject(Transformation):
             floorplan_slicem_utilization: Fraction of SLICEM LUTs LUTRAM/SRLs may fill.
             floorplan_logic_utilization: Fraction of a pblock's slices plain logic may fill.
                 sizing its pblock.
-            stream_register_slices: Whether the kernels carry register slices, so the
-                floorplan units list them (`DataflowBuildConfig.stream_register_slices`).
         """
         super().__init__()
         self.platform = platform
@@ -302,7 +298,6 @@ class MakeZYNQProject(Transformation):
         self.floorplan_resource_margin = floorplan_resource_margin
         self.floorplan_slicem_utilization = floorplan_slicem_utilization
         self.floorplan_logic_utilization = floorplan_logic_utilization
-        self.stream_register_slices = stream_register_slices
 
     def _generate_floorplan_flow(self, model: ModelWrapper, proj_dir: str) -> str:
         """Return the Tcl that floorplans a non-PR design between synthesis and impl.
@@ -317,7 +312,6 @@ class MakeZYNQProject(Transformation):
             model,
             pynq_part_map[self.platform],
             margin=self.floorplan_resource_margin,
-            stream_register_slices=self.stream_register_slices,
         )
         if not units:
             log.warning(
@@ -1897,7 +1891,7 @@ class ZynqBuild(Transformation):
         floorplan_slicem_utilization: float = DEFAULT_SLICEM_UTILIZATION,
         floorplan_logic_utilization: float = DEFAULT_LOGIC_UTILIZATION,
         reset_pipeline_stages: int = 0,
-        stream_register_slices: StreamRegisterSlices = StreamRegisterSlices.NONE,
+        stream_register_slices: bool = False,
     ) -> None:
         """Initialize ZynqBuild with platform and build settings.
 
@@ -2019,7 +2013,6 @@ class ZynqBuild(Transformation):
                 floorplan_resource_margin=self.floorplan_resource_margin,
                 floorplan_slicem_utilization=self.floorplan_slicem_utilization,
                 floorplan_logic_utilization=self.floorplan_logic_utilization,
-                stream_register_slices=self.stream_register_slices,
             )
         )
 

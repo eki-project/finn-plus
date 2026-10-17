@@ -12,36 +12,33 @@ FIFO 597 tiles from the window buffer it fed had 0.97 ns of slack at 100 MHz
 short (per_node_5ns, 15 Oct 2026). The free placer has the same class, with the
 units simply closer.
 
-A fully registered AXI-stream register slice at the consumer's input breaks the
-round trip: its ready output is a register, so the producer sees a registered
-ready, and the consumer's combinational ready reaches only the slice, which sits
-in the consumer's placement unit. Throughput is unchanged (the slice holds two
-beats), the pipeline gets one cycle of latency per slice, and the cost is two
-registers per stream bit -- 9 % more flip-flops on mobilenetv1 at every
-non-FIFO input.
+An AXI-stream register slice at the consumer's input breaks the round trip: the
+producer sees a registered ready, and the consumer's combinational ready reaches
+only the slice. The slice is Vivado's auto-pipelined one: the placer inserts as
+many register stages between producer and consumer as their distance needs (up to
+24), with a credit buffer at the consumer, so throughput is unchanged and latency
+grows by the stages inserted. Measured against a fully registered slice on
+mobilenetv1, free placement, cores at the target clock (17 Oct 2026): 280.8 /
+269.9 / 278.2 MHz against 259.9 / 260.5 / 270.9 at 300 / 350 / 400 MHz requested,
+for 8 % more kernel LUTs and registers (the credit buffers are LUT RAM) and about 40
+minutes more link time. The fully registered mode was removed on that measurement.
 
-This module holds the rule of where a slice goes, shared by `CreateStitchedIP`
-(which instantiates them) and the floorplanner's binding (which puts each slice
-into the unit of the node it feeds).
+This module holds the rule of where a slice goes, used by `CreateStitchedIP`. The
+floorplanner leaves the slices out of every pblock, like the per-node reset cells:
+the inserted stages have to spread along the route between two units, which a
+pblock around either end would forbid.
 """
 
 from onnx import NodeProto
 from qonnx.core.modelwrapper import ModelWrapper
 
-from finn.builder.build_dataflow_config import StreamRegisterSlices
-
 #: Vivado's AXI4-Stream register slice.
 SLICE_VLNV = "xilinx.com:ip:axis_register_slice:1.1"
 
-#: The slice's ``REG_CONFIG`` per mode (choices of the IP in Vivado 2024.2): 8,
-#: "Fully-registered", registers both the forward (valid/data) and the reverse (ready)
-#: direction with two beats of storage and no throughput loss; 16, "Auto-pipelined",
-#: carries Vivado's ``autopipeline_*`` attributes (limit 24 stages) so the placer adds
-#: the register stages a stream's length needs.
-SLICE_REG_CONFIG: dict[StreamRegisterSlices, int] = {
-    StreamRegisterSlices.REGISTERED: 8,
-    StreamRegisterSlices.AUTO_PIPELINED: 16,
-}
+#: ``REG_CONFIG`` 16 is "Auto-pipelined" (choices of the IP in Vivado 2024.2): its
+#: registers carry ``autopipeline_*`` attributes, limit 24 stages, and the placer
+#: decides how many a stream gets.
+SLICE_REG_CONFIG = 16
 
 
 def slice_cell_name(node_name: str, input_index: int) -> str:

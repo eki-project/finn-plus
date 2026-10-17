@@ -15,7 +15,6 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from typing import cast
 
-from finn.builder.build_dataflow_config import StreamRegisterSlices
 from finn.transformation.fpgadataflow.floorplanning.grouping import (
     UNASSIGNED_GROUP,
     is_placeable_node,
@@ -30,7 +29,6 @@ from finn.transformation.fpgadataflow.floorplanning.tcl import (
     FloorplanUnitSpec,
     demands_from_estimate,
 )
-from finn.transformation.fpgadataflow.stream_slices import register_slice_inputs, slice_cell_name
 from finn.util.fpgadataflow import get_submodel
 from finn.util.logging import log
 
@@ -126,7 +124,6 @@ def collect_floorplan_units(
     margin: float = DEFAULT_RESOURCE_MARGIN,
     use_hls_reports: bool = False,
     record_pblock_names: bool = True,
-    stream_register_slices: StreamRegisterSlices = StreamRegisterSlices.NONE,
 ) -> list[FloorplanUnitSpec]:
     """Turn a floorplanned model into the unit list the Vivado engine takes.
 
@@ -139,11 +136,6 @@ def collect_floorplan_units(
         use_hls_reports: Whether to merge Vitis HLS synthesis numbers in.
         record_pblock_names: Whether to write the chosen pblock name back onto each
             node's `floorplan_pblock` attr. Turn off for a dry run.
-        stream_register_slices: Whether the stitched kernels carry a register slice in
-            front of every node input another node drives
-            (`DataflowBuildConfig.stream_register_slices`). Each slice then joins the
-            unit of the node it feeds, so the consumer's combinational ready path ends
-            inside that unit; the slice's registered ready is what crosses to the producer.
 
     Returns:
         One spec per placement unit, ordered by unit id -- which is dataflow order,
@@ -191,16 +183,7 @@ def collect_floorplan_units(
                     name=name,
                     slr=min(slrs),
                     demands=demands_from_estimate(summed[unit_id]),
-                    cells=[n.name for n in nodes]
-                    + (
-                        [
-                            slice_cell_name(n.name, i)
-                            for n in nodes
-                            for i in register_slice_inputs(n, submodel)
-                        ]
-                        if stream_register_slices != StreamRegisterSlices.NONE
-                        else []
-                    ),
+                    cells=[n.name for n in nodes],
                 )
             )
             if record_pblock_names:

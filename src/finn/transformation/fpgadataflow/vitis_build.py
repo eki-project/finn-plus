@@ -229,7 +229,6 @@ class VitisBuild(Transformation):
                 floorplan_resource_margin=self.cfg.floorplan_resource_margin,
                 floorplan_slicem_utilization=self.cfg.floorplan_slicem_utilization,
                 floorplan_logic_utilization=self.cfg.floorplan_logic_utilization,
-                stream_register_slices=self.cfg.stream_register_slices,
             )
         )
 
