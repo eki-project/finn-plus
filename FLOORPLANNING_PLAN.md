@@ -2678,3 +2678,30 @@ way, 16/269 -> 170/115 units, LUT 67k/64k, DSP 332/352, BRAM18 466/607.
 Builds now: `v2_mobilenetv1_per_node_4ns_slices` (refined packer, worktree finn-plus-v2b
 at `c6a535b2e`) and `..._oldpack` (greedy packer, worktree finn-plus-v2c: `c6a535b2e` with
 `packer.py` of `a4c3c46b0`), against the free `v2_mobilenetv1_baseline_4ns_slices`.
+
+**250 MHz on the new code base, first result (17 Oct 2026): free 250 MHz, floorplanned 152.2
+(refined packer) and 149 (greedy).** Worst paths of the refined build: an SLR crossing,
+FIFO 272 (SLR1, rows 325-329) -> ConvolutionInputGenerator 273 (SLR0, rows 45-104), 324
+tiles, -2.57 ns; and MVAU 279 stretched by the refinement to 492 x 150 (half-perimeter 642,
+276 when packed greedily), -1.77 ns inside it. Both are packer faults, fixed in
+`27442e0ee`: a second refinement sweep once all SLRs are placed, with crossing edges in the
+objective (start rows level with a neighbour are clamped into the free interval, so a unit
+can start at the boundary), and the longest touched wire -- gaps and moved units'
+half-perimeters -- as the first key instead of the longest gap. New mobilenetv1 set:
+longest gap / crossing / unit extent 123/324/642 -> 97/94/276; on all seven unit sets the
+longest wire is now a unit's own extent (258-330), every unit placed, 2.5-9 min per pack.
+
+*HLS cores must be generated for the target clock (raised by Linus).* Every restart from
+`step_prepare_synthesis` or later keeps the cores of the checkpoint: the 4 ns and 8/6 ns
+pushes of 16-17 Oct ran HLS cores synthesised for 5 and 10 ns. Relative comparisons on the
+same checkpoint stand; absolute frequencies are pessimistic, worst for the transformer,
+whose limiting paths are inside HLS attention units. From now on clock pushes restart at
+`step_generate_hardware` from `step_generate_estimate_reports.onnx` (own FINN_BUILD_DIR
+each), reusing only the FIFO depths (cycles, not time).
+
+*Auto-pipelined stream slices* (`ea785a958`): `stream_register_slices` is a mode now
+(`none`, `registered`, `auto_pipelined`); the last is the register slice IP's
+REG_CONFIG 16, whose `autopipeline_*` attributes let the placer insert up to 24 stages per
+stream. Running, free placement, cores at the target clock:
+`v2_mobilenetv1_baseline_{300,350,400}mhz_{registered,auto_pipelined}`, plus the
+representative 250 MHz pair `v2_mobilenetv1_{baseline,per_node}_250mhz_registered`.
