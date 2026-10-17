@@ -597,8 +597,12 @@ class SlrPacker:
             a, b = anchors[0], anchors[1]
             rows.append((a.y0 + a.y1 + b.y0 + b.y1) // 4 - h // 2)
         for lo, hi in self.free.get(t, []):
+            if hi - lo + 1 < h:
+                continue
             for y in rows:
-                y = self._bottom(max(lo, y), aligned)
+                # Clamped into the interval: a neighbour above or below it (across an
+                # SLR boundary, say) pulls the start to the interval's nearest end.
+                y = self._bottom(min(max(lo, y), hi - h + 1), aligned)
                 if y + h - 1 <= hi:
                     out.add(y)
         return sorted(out)
@@ -911,6 +915,7 @@ class SlrPacker:
         units: list[Unit],
         result: dict[str, Placement],
         round_no: int,
+        crossings: bool = False,
     ) -> int:
         """Shorten the longest gaps between consecutive units of one SLR's packing.
 
@@ -935,11 +940,13 @@ class SlrPacker:
         gaps: with a sum alone a 390-tile jump and ten 39-tile ones score the same,
         while only the first fails timing once every stream is registered.
 
-        Measured on the four fixtures plus the mobilenetv1 4 ns and vision-transformer
-        unit sets (16 Oct 2026), against the greedy packing alone: longest gap
-        405/236/475/404/452/473 -> 72/53/118/114/181/89 tiles, jumps of 100+ tiles
-        17/12/17/17/11/9 -> 0/0/3/1/3/0, the same units placed, mean half-perimeter
-        within -12..+2 %; 90-210 s per pack on the login node.
+        Measured on the four fixtures plus the mobilenetv1 4 ns (old and new code base)
+        and vision-transformer unit sets (16-17 Oct 2026), with the crossing sweep of
+        `pack` and the longest-wire objective: no unit unplaced; longest wire anywhere
+        (gap, SLR crossing or unit extent) 258-330 tiles, set by a unit's own shape,
+        against 351/355/330 (gap/crossing/unit) for the greedy packing of the new mobilenetv1
+        set and 123/324/642 for the gap-only first version of this search; longest gap
+        inside an SLR 77-164; 2.5-9 min per pack on the login node.
 
         Returns the number of passes run.
         """
@@ -957,7 +964,7 @@ class SlrPacker:
                 continue
             if a.name not in movable and b.name not in movable:
                 continue
-            if pa.slr == pb.slr:
+            if pa.slr == pb.slr or crossings:
                 edges.append((a.name, b.name))
             else:
                 across.setdefault(a.name, []).append(b.name)
@@ -975,11 +982,14 @@ class SlrPacker:
             return self._gap(py.c0, py.c1, py.y0, py.y1, px)
 
         def objective(names: list[str]) -> tuple[int, float]:
-            """Longest touched gap, then shapes plus weighted gaps, over the given units."""
+            """Longest touched wire (gap or unit extent), then shapes plus weighted gaps."""
             touched = {tuple(sorted((n, m))) for n in names for m in nbrs.get(n, [])}
             gaps = [gap(x, y) for x, y in touched]
-            shape = sum(_half_perimeter(result[n]) for n in names)
-            return (max(gaps, default=0), shape + LOCALITY_WEIGHT * sum(gaps))
+            shapes = [_half_perimeter(result[n]) for n in names]
+            # A unit's half-perimeter is the longest wire a path inside it may need, in
+            # the same tiles as a gap; ranking gaps alone let a move stretch a 125-BRAM
+            # MVAU from 276 to 642 to shorten a 100-tile gap (17 Oct 2026).
+            return (max(gaps + shapes, default=0), sum(shapes) + LOCALITY_WEIGHT * sum(gaps))
 
         def attempt(rip: list[str], order: list[str]) -> bool:
             """Re-place ``rip`` in ``order``; keep it if the objective improves, else restore."""
@@ -1385,6 +1395,7 @@ def pack(
     by_slr: dict[int, list[Unit]] = {}
     for unit in order_units(redo, order):
         by_slr.setdefault(unit.slr, []).append(unit)
+    packers: dict[int, tuple[SlrPacker, list[Unit]]] = {}
     for slr, slr_units in sorted(by_slr.items()):
         if slr not in census.columns:
             for unit in slr_units:
@@ -1408,6 +1419,16 @@ def pack(
             result[unit.name] = placement
         if refine_gaps and order == "dataflow":
             packer.refine(slr_units, units, result, round_no)
+        packers[slr] = (packer, slr_units)
+    if refine_gaps and order == "dataflow" and len(packers) > 1:
+        # The SLRs are packed one after the other, so a unit of an earlier SLR saw
+        # nothing of its partner across the boundary: mobilenetv1's chain carrier 273
+        # (packed first, unanchored) sat 135 rows below the boundary and the FIFO
+        # feeding it from SLR1 85 rows above, a 324-tile crossing that was the
+        # design's worst path at 250 MHz (-2.57 ns, 17 Oct 2026). With every SLR
+        # placed, each is refined once more with its crossing edges in the objective.
+        for packer, slr_units in packers.values():
+            packer.refine(slr_units, units, result, round_no, crossings=True)
     return result
 
 
