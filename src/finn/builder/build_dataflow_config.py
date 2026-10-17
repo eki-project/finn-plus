@@ -152,7 +152,16 @@ class DataflowOutputType(str, Enum):
 
 
 class VitisOptStrategy(Enum):
-    """Values applicable to VitisBuild optimization strategy."""
+    """Values applicable to VitisBuild optimization strategy.
+
+    The value is the ``v++ -O`` level. The two performance strategies also set the
+    Vivado implementation directives of the link and the kernels' synthesis options
+    (`vitis_linking_configuration.implementation_directives` and
+    `kernel_synth_options`): PERFORMANCE runs the ``Explore`` directives with
+    physical optimisation on and synthesises the kernels with retiming;
+    PERFORMANCE_BEST runs ``ExtraTimingOpt`` placement, ``AggressiveExplore``
+    physical optimisation and routing, and post-route physical optimisation.
+    """
 
     DEFAULT = "0"
     POWER = "1"
@@ -861,6 +870,33 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Configuration that provides parameters for Multi-FPGA partitioning.
     #: If set to something other than None, we assume the Multi-FPGA case
     partitioning_configuration: Optional[PartitioningConfiguration] = None
+
+    #: Register the kernel reset this many times in front of every dataflow node (a
+    #: `reset_pipe` cell per node in the stitched design, replicated at synthesis), behind
+    #: one kernel-level stage that synthesis replicates per 16 loads. Without it a single
+    #: register drives every node's synchronous reset across the device; on mobilenetv1
+    #: (U55C, 100 MHz, 13 Oct 2026) that net was the worst path of the design (2.6 ns of
+    #: slack, against 3.7 ns and more for everything else), and a single hop to a node
+    #: 400 tiles away routed in 9 ns. The per-node registers are free to sit anywhere
+    #: between the tree and the node, so the placer strings them out along the way.
+    #: Applies to the Vitis and Zynq hardware kernels; the stitched IP used for rtlsim
+    #: keeps the direct reset so a delayed release cannot drop the first samples a
+    #: testbench drives. 0 disables it; the kernel otherwise leaves reset this many plus
+    #: one cycles after its port.
+    reset_pipeline_stages: int = 2
+
+    #: Put Vivado's auto-pipelined AXI-stream register slice in front of every dataflow
+    #: node input another node drives (FIFOs excepted: their input ready is a register
+    #: already). A node's ready is usually combinational in its valid, so each stream
+    #: carries a round trip producer -> consumer logic -> producer that crosses the
+    #: distance between the two twice. The slice registers the ready, and the placer
+    #: inserts as many stages as a stream's length needs (up to 24). Throughput is
+    #: unchanged; latency grows by the stages inserted. On mobilenetv1 (U55C, kernel cores
+    #: generated for each target, 17 Oct 2026) kernel LUTs and registers grew by 8 % and
+    #: the link by about 40 minutes, for 3-8 % more clock frequency than a fully
+    #: registered slice (see `stream_slices`). Hardware kernels only, like
+    #: `reset_pipeline_stages`.
+    stream_register_slices: bool = False
 
     #: If set to True, the FINN compiler tries to create an MLO design based on
     #: loop_body_hierarchy and loop_body_range

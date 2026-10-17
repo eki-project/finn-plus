@@ -180,11 +180,21 @@ class BuildAllXOs(Transformation):
     successors or predecessors.
     """
 
-    def __init__(self, fpga_part: str, synth_clk_period_ns: float) -> None:
-        """Build all XOs."""
+    def __init__(
+        self,
+        fpga_part: str,
+        synth_clk_period_ns: float,
+        reset_pipeline_stages: int = 0,
+        stream_register_slices: bool = False,
+        synth_options: str = "",
+    ) -> None:
+        """Build all XOs; see `CreateStitchedIP` for the three kernel options."""
         super().__init__()
         self.fpga_part = fpga_part
         self.synth_clk_period_ns = synth_clk_period_ns
+        self.reset_pipeline_stages = reset_pipeline_stages
+        self.stream_register_slices = stream_register_slices
+        self.synth_options = synth_options
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build all XOs."""
@@ -216,6 +226,9 @@ class BuildAllXOs(Transformation):
                     self.synth_clk_period_ns,
                     sdp_node.name,
                     run_synth=True,
+                    reset_pipeline_stages=self.reset_pipeline_stages,
+                    stream_register_slices=self.stream_register_slices,
+                    synth_options=self.synth_options,
                 ),
                 CreateVitisXO(sdp_node.name),
             ]
