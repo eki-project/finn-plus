@@ -2705,3 +2705,26 @@ REG_CONFIG 16, whose `autopipeline_*` attributes let the placer insert up to 24 
 stream. Running, free placement, cores at the target clock:
 `v2_mobilenetv1_baseline_{300,350,400}mhz_{registered,auto_pipelined}`, plus the
 representative 250 MHz pair `v2_mobilenetv1_{baseline,per_node}_250mhz_registered`.
+
+**Free placement pushed, cores at the target clock (17 Oct 2026).** Restarts of
+`v2_mobilenetv1_baseline_5ns` at `step_generate_hardware`, worktree finn-plus-v2d:
+
+| requested | registered slices | auto-pipelined slices |
+|---|---|---|
+| 300 MHz | 259.9 MHz | 280.8 MHz |
+| 350 MHz | 260.5 MHz | 269.9 MHz |
+| 400 MHz | 270.9 MHz | 278.2 MHz |
+
+Auto-pipelining adds 8-21 MHz (3-8 %). The ceiling of both is logic depth, not distance:
+the worst paths of the 280.8 MHz build run from block RAMs of `MVAU_rtl_14`'s weight stream
+(`memstream`, `genUnpumped.mem/blkMem.Mem_reg_bram_*`) through 8-9 logic levels with under
+1 ns of route. With registered slices the 400 MHz build also fails on long single-level
+nets from the slice in front of `StreamingDataWidthConverter_rtl_1` (3.5 ns of route),
+which the auto-pipelined slices take away. Raising the ceiling needs a registered block
+RAM output in the weight stream, which is outside the floorplanner.
+
+**250 MHz pair, cores at 4 ns:** free 250 MHz (+0.046), floorplanned with `27442e0ee`
+236.4 MHz (-0.229 ns, 24 failing endpoints, TNS -2.47; 152.2 MHz before the packer fixes,
+on 5 ns cores). Left: the SLR crossing ConvolutionInputGenerator 273 -> FIFO 272, 130
+tiles, 10 levels (-0.229; 324 tiles before), and the same `memstream` class inside MVAU 279
+(9 levels, -0.114; +0.048 with 8 levels in the free build).
