@@ -28,12 +28,20 @@ into the unit of the node it feeds).
 from onnx import NodeProto
 from qonnx.core.modelwrapper import ModelWrapper
 
+from finn.builder.build_dataflow_config import StreamRegisterSlices
+
 #: Vivado's AXI4-Stream register slice.
 SLICE_VLNV = "xilinx.com:ip:axis_register_slice:1.1"
 
-#: ``REG_CONFIG`` 8 is "FWD_REV": both the forward (valid/data) and the reverse
-#: (ready) direction registered, two beats of storage, no throughput loss.
-SLICE_REG_CONFIG = 8
+#: The slice's ``REG_CONFIG`` per mode (choices of the IP in Vivado 2024.2): 8,
+#: "Fully-registered", registers both the forward (valid/data) and the reverse (ready)
+#: direction with two beats of storage and no throughput loss; 16, "Auto-pipelined",
+#: carries Vivado's ``autopipeline_*`` attributes (limit 24 stages) so the placer adds
+#: the register stages a stream's length needs.
+SLICE_REG_CONFIG: dict[StreamRegisterSlices, int] = {
+    StreamRegisterSlices.REGISTERED: 8,
+    StreamRegisterSlices.AUTO_PIPELINED: 16,
+}
 
 
 def slice_cell_name(node_name: str, input_index: int) -> str:

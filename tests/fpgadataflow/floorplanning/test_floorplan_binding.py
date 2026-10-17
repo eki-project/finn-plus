@@ -6,7 +6,11 @@ from fpgadataflow.floorplanning.util import U55C_PART, attr, make_chain
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 
-from finn.builder.build_dataflow_config import FpgaMemoryType, VitisOptStrategy
+from finn.builder.build_dataflow_config import (
+    FpgaMemoryType,
+    StreamRegisterSlices,
+    VitisOptStrategy,
+)
 from finn.transformation.fpgadataflow.floorplanning.binding import (
     PBLOCK_PREFIX,
     UNASSIGNED_SLR,
@@ -387,11 +391,16 @@ def test_kernel_xdc_is_scoped_to_the_block_design_cell() -> None:
 
 
 @pytest.mark.fpgadataflow
-def test_register_slices_sit_in_front_of_non_fifo_inputs() -> None:
-    """With the option on, every node input another node drives gets a fully registered slice."""
+@pytest.mark.parametrize(
+    ("mode", "reg_config"),
+    [(StreamRegisterSlices.REGISTERED, 8), (StreamRegisterSlices.AUTO_PIPELINED, 16)],
+)
+def test_register_slices_sit_in_front_of_non_fifo_inputs(
+    mode: StreamRegisterSlices, reg_config: int
+) -> None:
+    """With slices on, every node input another node drives gets one, configured per mode."""
     from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
     from finn.transformation.fpgadataflow.stream_slices import (
-        SLICE_REG_CONFIG,
         SLICE_VLNV,
         register_slice_inputs,
         slice_cell_name,
@@ -405,7 +414,7 @@ def test_register_slices_sit_in_front_of_non_fifo_inputs() -> None:
     assert register_slice_inputs(third, model) == [0]
 
     plain = CreateStitchedIP(U55C_PART, 5.0, reset_pipeline_stages=2)
-    piped = CreateStitchedIP(U55C_PART, 5.0, reset_pipeline_stages=2, stream_register_slices=True)
+    piped = CreateStitchedIP(U55C_PART, 5.0, reset_pipeline_stages=2, stream_register_slices=mode)
     for builder in (plain, piped):
         for node in model.graph.node:
             builder.connect_clk_rst(node)
@@ -417,7 +426,7 @@ def test_register_slices_sit_in_front_of_non_fifo_inputs() -> None:
         cell = slice_cell_name(node.name, 0)
         assert f"create_bd_cell -type ip -vlnv {SLICE_VLNV} {cell}" in piped.create_cmds
         assert (
-            f"set_property CONFIG.REG_CONFIG {{{SLICE_REG_CONFIG}}} [get_bd_cells {cell}]"
+            f"set_property CONFIG.REG_CONFIG {{{reg_config}}} [get_bd_cells {cell}]"
             in piped.create_cmds
         )
         # Clocked with the kernel clock, reset together with the node it feeds.
@@ -443,7 +452,10 @@ def test_register_slices_join_the_unit_of_the_node_they_feed() -> None:
     model = _floorplanned(3)
     without = collect_floorplan_units(model, U55C_PART, record_pblock_names=False)
     with_slices = collect_floorplan_units(
-        model, U55C_PART, record_pblock_names=False, stream_register_slices=True
+        model,
+        U55C_PART,
+        record_pblock_names=False,
+        stream_register_slices=StreamRegisterSlices.AUTO_PIPELINED,
     )
     assert [s.cells for s in without] == [[n.name] for n in model.graph.node]
     by_unit = {s.cells[0]: s.cells for s in with_slices}

@@ -44,6 +44,7 @@ from shutil import copy
 from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, Literal, cast
 
+from finn.builder.build_dataflow_config import StreamRegisterSlices
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.floorplan import Floorplan
@@ -269,7 +270,7 @@ class MakeZYNQProject(Transformation):
         floorplan_resource_margin: float = DEFAULT_RESOURCE_MARGIN,
         floorplan_slicem_utilization: float = DEFAULT_SLICEM_UTILIZATION,
         floorplan_logic_utilization: float = DEFAULT_LOGIC_UTILIZATION,
-        stream_register_slices: bool = False,
+        stream_register_slices: StreamRegisterSlices = StreamRegisterSlices.NONE,
     ) -> None:
         """Initialize MakeZYNQProject with the target platform and clock period.
 
@@ -1896,7 +1897,7 @@ class ZynqBuild(Transformation):
         floorplan_slicem_utilization: float = DEFAULT_SLICEM_UTILIZATION,
         floorplan_logic_utilization: float = DEFAULT_LOGIC_UTILIZATION,
         reset_pipeline_stages: int = 0,
-        stream_register_slices: bool = False,
+        stream_register_slices: StreamRegisterSlices = StreamRegisterSlices.NONE,
     ) -> None:
         """Initialize ZynqBuild with platform and build settings.
 

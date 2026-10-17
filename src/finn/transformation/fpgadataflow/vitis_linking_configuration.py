@@ -15,7 +15,11 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from typing import TYPE_CHECKING, Any, cast
 
-from finn.builder.build_dataflow_config import FpgaMemoryType, VitisOptStrategy
+from finn.builder.build_dataflow_config import (
+    FpgaMemoryType,
+    StreamRegisterSlices,
+    VitisOptStrategy,
+)
 from finn.templates import get_jinja_environment
 from finn.transformation.fpgadataflow.floorplanning.binding import collect_floorplan_units
 from finn.transformation.fpgadataflow.floorplanning.placer_retry import OVERRIDES_FILE
@@ -717,7 +721,7 @@ class BuildBasicVitisLinkConfig(Transformation):
         floorplan_resource_margin: float = DEFAULT_RESOURCE_MARGIN,
         floorplan_slicem_utilization: float = DEFAULT_SLICEM_UTILIZATION,
         floorplan_logic_utilization: float = DEFAULT_LOGIC_UTILIZATION,
-        stream_register_slices: bool = False,
+        stream_register_slices: StreamRegisterSlices = StreamRegisterSlices.NONE,
     ) -> None:
         """Build a basic linking configuration and store it. Afterwards, the
         model can be linked, or the config can be modified further.

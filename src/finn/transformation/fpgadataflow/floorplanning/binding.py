@@ -15,6 +15,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from typing import cast
 
+from finn.builder.build_dataflow_config import StreamRegisterSlices
 from finn.transformation.fpgadataflow.floorplanning.grouping import (
     UNASSIGNED_GROUP,
     is_placeable_node,
@@ -125,7 +126,7 @@ def collect_floorplan_units(
     margin: float = DEFAULT_RESOURCE_MARGIN,
     use_hls_reports: bool = False,
     record_pblock_names: bool = True,
-    stream_register_slices: bool = False,
+    stream_register_slices: StreamRegisterSlices = StreamRegisterSlices.NONE,
 ) -> list[FloorplanUnitSpec]:
     """Turn a floorplanned model into the unit list the Vivado engine takes.
 
@@ -197,7 +198,7 @@ def collect_floorplan_units(
                             for n in nodes
                             for i in register_slice_inputs(n, submodel)
                         ]
-                        if stream_register_slices
+                        if stream_register_slices != StreamRegisterSlices.NONE
                         else []
                     ),
                 )

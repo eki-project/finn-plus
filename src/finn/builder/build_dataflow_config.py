@@ -171,6 +171,24 @@ class VitisOptStrategy(Enum):
     BUILD_SPEED = "quick"
 
 
+class StreamRegisterSlices(str, Enum):
+    """AXI-stream register slices in front of every dataflow node input another node drives.
+
+    See `DataflowBuildConfig.stream_register_slices`.
+    """
+
+    #: No slices; producer and consumer connect directly.
+    NONE = "none"
+    #: A fully registered slice (both directions, two beats): one cycle of latency, and
+    #: the consumer's combinational ready no longer reaches the producer.
+    REGISTERED = "registered"
+    #: Vivado's auto-pipelined slice: the placer inserts as many register stages
+    #: (up to 24) as the distance between producer and consumer needs, with a
+    #: credit buffer at the consumer, so a long stream does not have to fit one
+    #: clock period.
+    AUTO_PIPELINED = "auto_pipelined"
+
+
 class FpgaMemoryType(str, Enum):
     """Memory Type used by the FPGA to store input/output data."""
 
@@ -948,9 +966,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: one cycles after its port.
     reset_pipeline_stages: int = 2
 
-    #: Put a fully registered AXI-stream register slice in front of every dataflow node
-    #: input another node drives (FIFOs excepted: their input ready is a register
-    #: already). A node's ready is usually combinational in its valid, so each stream
+    #: Put an AXI-stream register slice in front of every dataflow node input another
+    #: node drives (FIFOs excepted: their input ready is a register already), see
+    #: `StreamRegisterSlices`. A node's ready is usually combinational in its valid, so each stream
     #: carries a round trip producer -> consumer logic -> producer that crosses the
     #: distance between the two twice; it is the one inter-unit path class distance
     #: breaks, in floorplanned and free designs alike (a FIFO 597 tiles from its window
@@ -958,8 +976,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: mobilenetv1, 14-15 Oct 2026). The slice's ready is a register, so the round trip
     #: ends inside the consumer's placement unit. Throughput is unchanged, latency grows
     #: by one cycle per slice, flip-flops by two per stream bit (9 % on mobilenetv1).
-    #: Hardware kernels only, like `reset_pipeline_stages`.
-    stream_register_slices: bool = False
+    #: Hardware kernels only, like `reset_pipeline_stages`. AUTO_PIPELINED lets Vivado's
+    #: placer pipeline each stream as far as its length requires instead.
+    stream_register_slices: StreamRegisterSlices = StreamRegisterSlices.NONE
 
     #: (Only relevant if enable_auto_floorplanning is True) Whether to merge Vitis HLS
     #: synthesis reports into the resource estimates the SLR assignment works from, taking
