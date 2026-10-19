@@ -15,9 +15,11 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - Multi-FPGA partition strategy `resource_utilization` is replaced by `balance_resource` (new default), `balance_resource_weighted` and `minimize_max_resource`, and `ideal_utilization` is removed (eki-project#289)
 - Reworked Multi-FPGA partitioner infrastructure (`FindMultiFPGADeviceMapping`, `ApplyDeviceMapping`, MILP base class) (eki-project#289)
 - QSFP interface names are defined per platform in `platforms.py` instead of being hard-coded (eki-project#289)
+- The `finn` CLI prints user errors (`FINNUserError`) without a stack trace, set `FINN_DEBUG=1` to show it. Unknown keys and invalid values in the build config, including nested configs such as `multifpga_configuration`, raise a `FINNConfigurationError` that names the config class and the field (eki-project#289)
 
 ### Fixed
 - `fifo_config_file` is resolved relative to the build config, like the other config files (eki-project#289)
+- Unknown keys in `multifpga_configuration` (e.g. the removed `ideal_utilization`) were silently ignored instead of being rejected (eki-project#289)
 - The cycle estimate of the RTL sliding window generator in 1D depthwise mode ignored that the buffered window is replayed once per channel fold and that the next frame cannot enter the buffer meanwhile, so a global pooling window over a whole sequence was estimated at half its real period (963 instead of 1971 cycles for the RadioML transformer); `SetFolding` additionally kept the window generator at the parallelism of the pooling layer it feeds without checking the generator's own cycles, which left it as the unnoticed throughput bottleneck. The estimate now matches XSI within 1 % for overlapping, non-overlapping and full-map windows, and the folding raises the shared parallelism of window generator and pooling/depthwise layer until both meet the target (eki-project#280)
 
 ## 1.6.0 - 28.09.2026

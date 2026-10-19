@@ -6,7 +6,6 @@ from __future__ import annotations
 import click
 import inspect
 import json
-import mashumaro.exceptions
 import os
 import rich
 import shlex
@@ -21,7 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import finn.util.settings
 import finn.xsi
-from finn.interface import IS_POSIX
+from finn.interface import DEBUG, IS_POSIX
 from finn.interface.interface_utils import (
     NullablePath,
     error,
@@ -33,7 +32,7 @@ from finn.interface.interface_utils import (
 from finn.interface.manage_deps import DependencyUpdater
 from finn.interface.manage_tests import run_test
 from finn.interface.settings import FINNSettings
-from finn.util.exception import FINNUserError, FINNValidationError
+from finn.util.exception import FINNUserError
 from finn.util.multiprocessing import configure_start_method
 
 if TYPE_CHECKING:
@@ -720,12 +719,6 @@ def _build(
             )
             sys.exit(1)
         dfbc = DataflowBuildConfig.construct_from(flow_config)
-    except mashumaro.exceptions.ExtraKeysError as e:
-        error(
-            f"The following keys were found in your config, "
-            f"but are not known DataflowBuildConfig options: \n\t{', '.join(e.extra_keys)}"
-        )
-        sys.exit(1)
     except FileNotFoundError:
         error(f"The flow configuration file could not be found at {flow_config}.")
         sys.exit(1)
@@ -1298,7 +1291,11 @@ def main() -> None:
     main_group.add_command(finn_check)
     try:
         main_group()
-    except FINNValidationError as e:
+    except FINNUserError as e:
+        # User errors (e.g. an invalid flow config) are shown without a stack trace, unless
+        # FINN_DEBUG=1 is set
+        if DEBUG:
+            raise
         error(str(e))
         sys.exit(1)
 

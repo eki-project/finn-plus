@@ -54,6 +54,8 @@ import mip
 import numpy as np
 from dataclasses import dataclass, field
 from enum import Enum
+from mashumaro.core.meta.helpers import type_name
+from mashumaro.exceptions import ExtraKeysError, InvalidFieldValue
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
 from pathlib import Path, PosixPath, PurePath
@@ -276,6 +278,11 @@ class MultiFPGAConfiguration:
     set in the BuildDataflowConfig, FINN+ automatically switches to Multi-FPGA.
     """
 
+    class Config(mashumaro.config.BaseConfig):
+        """Config for (de)serialization as part of the dataflow builder class."""
+
+        forbid_extra_keys = True
+
     # Existing partitionings can either be loaded from a file or
     # passed directly. If set to None, partitioning is done and the results are
     # saved in the output dir instead.
@@ -496,11 +503,47 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             from_this = cast("Path", from_this)
 
             data = from_this.read_text()
-            match from_this.suffix:
-                case ".json":
-                    dfbc = DataflowBuildConfig.from_json(data)
-                case ".yml" | ".yaml":
-                    dfbc = DataflowBuildConfig.from_yaml(data)
+            try:
+                match from_this.suffix:
+                    case ".json":
+                        dfbc = DataflowBuildConfig.from_json(data)
+                    case ".yml" | ".yaml":
+                        dfbc = DataflowBuildConfig.from_yaml(data)
+            except (ExtraKeysError, InvalidFieldValue) as e:
+                # Turn mashumaro's errors for unknown keys and invalid values into a
+                # FINNConfigurationError. These are mistakes in the user's config, so the CLI
+                # should print a short message instead of a stack trace (which it does for every
+                # FINNUserError). Also, mashumaro's own message is misleading for nested configs.
+
+                # Mashumaro raises one error per nesting level, collect them outermost first
+                chain: list[BaseException] = [e]
+                while chain[-1].__context__ is not None:
+                    chain.append(chain[-1].__context__)
+                # Only the innermost mashumaro error names the wrong field, the outer ones only
+                # name the nested config that contains it (e.g. multifpga_configuration)
+                field_error = [
+                    err for err in chain if isinstance(err, (ExtraKeysError, InvalidFieldValue))
+                ][-1]
+                # Errors not from mashumaro say why a value is invalid (e.g. the ValueError of int)
+                reasons = [
+                    err for err in chain if not isinstance(err, (ExtraKeysError, InvalidFieldValue))
+                ]
+                # Unknown keys have no such error, so the reason is optional
+                reason = f": {reasons[0]}" if reasons else ""
+                if isinstance(field_error, ExtraKeysError):
+                    msg = (
+                        f"Unknown {field_error.target_type.__name__} option(s) in {from_this}: "
+                        f"{', '.join(sorted(field_error.extra_keys))}"
+                    )
+                else:
+                    msg = (
+                        f"Invalid value {field_error.field_value!r} for "
+                        f"{field_error.holder_class.__name__} option '{field_error.field_name}' "
+                        f"(expected {type_name(field_error.field_type, short=True)}) in "
+                        f"{from_this}{reason}"
+                    )
+                # Keep the original error as the cause, so that it is still visible with FINN_DEBUG
+                raise FINNConfigurationError(msg) from e
             dfbc.config_path = from_this.absolute()
         elif type(from_this) is DataflowBuildConfig:
             dfbc = from_this
