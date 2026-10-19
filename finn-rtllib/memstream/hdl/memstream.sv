@@ -188,7 +188,15 @@ module memstream #(
 	logic  Rs3 = 0;
 	data_t  Dat3 = 'x; /* absorbed register */
 	if(1) begin : blkMem
-		(* RAM_STYLE = RAM_STYLE *)
+		// A deep memory is built from block RAMs chained through their cascade pins.
+		// Left to itself, synthesis chains up to eight and leaves Dat2 in the fabric,
+		// so the whole chain plus the output mux falls into one cycle: the worst path
+		// of mobilenetv1 on the U55C (64000 x 64 weights, 7 cascade hops, -0.396 ns at
+		// 3.333 ns out of context, 19 Oct 2026). Chains of two take Dat2 into the last
+		// block RAM's output register and close with +0.656 ns, for 128 instead of 113
+		// RAMB36 on that memory; chains of four (+0.406 ns) and none (+0.479 ns) close
+		// with less slack.
+		(* RAM_STYLE = RAM_STYLE, CASCADE_HEIGHT = 2 *)
 		data_t  Mem[SETS*DEPTH];
 
 		// Optional Memory Initialization
