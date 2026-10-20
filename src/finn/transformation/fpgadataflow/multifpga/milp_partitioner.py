@@ -42,7 +42,7 @@ class MILPPartitioner(BasePartitioner):
     The solver only exists while `solve()` runs: it is created, built and optimized there and
     released right afterwards, so that its license is held as short as possible and checks in
     `__init__` can fail before a license is requested. Afterwards `self.model` must not be used
-    any more. Only `status` and `objective_value` remain. Caching of the result is done by the
+    any more. Only `_status` and `objective_value` remain. Caching of the result is done by the
     base-class solve() method.
     """
 
@@ -61,7 +61,8 @@ class MILPPartitioner(BasePartitioner):
     def __init__(self, model: ModelWrapper, cfg: DataflowBuildConfig) -> None:
         """Initialize the partitioner. The MILP model itself is only created by `solve()`."""
         super().__init__(model, cfg)
-        self.status: mip.OptimizationStatus | None = None
+        # Only kept after solving so that tests can check the solver outcome
+        self._status: mip.OptimizationStatus | None = None
         self.objective_value: Real | None = None
 
     @abstractmethod
@@ -140,21 +141,21 @@ class MILPPartitioner(BasePartitioner):
         try:
             self.model.emphasis = self.mfcfg.partition_solver_emphasis
             self._build_model()
-            self.status = self.model.optimize(self.mfcfg.partition_solver_timeout)  # type: ignore
-            if self.status == mip.OptimizationStatus.ERROR:
+            self._status = self.model.optimize(self.mfcfg.partition_solver_timeout)  # type: ignore
+            if self._status == mip.OptimizationStatus.ERROR:
                 raise FINNMultiFPGAError(
                     f"The solver returned an ERROR optimization status! Please check the model "
                     f"definition file at: {self._dump_model_definition().absolute()}"
                 )
             # Any other status than OPTIMAL or FEASIBLE (e.g. INFEASIBLE, INT_INFEASIBLE,
             # NO_SOLUTION_FOUND, CUTOFF) means that no solution is available
-            if self.status not in (
+            if self._status not in (
                 mip.OptimizationStatus.OPTIMAL,
                 mip.OptimizationStatus.FEASIBLE,
             ):
                 raise FINNMultiFPGAUnsolvableError(
                     f"The solver found no partitioning for {self.mfcfg.num_fpgas} devices "
-                    f"(optimization status: {self.status.name})."
+                    f"(optimization status: {self._status.name})."
                 )
             self.objective_value = self.model.objective_value
             return self._create_result()

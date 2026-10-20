@@ -37,7 +37,9 @@ from finn.builder.build_dataflow_config import (
     ShellFlowType,
 )
 from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
-from finn.transformation.fpgadataflow.multifpga.aurora.partitioner import AuroraPartitioner
+from finn.transformation.fpgadataflow.multifpga.aurora.partitioner import (
+    PointToPointBidirectionalFixedPartitioner,
+)
 from finn.transformation.fpgadataflow.multifpga.aurora.prepare_aurora import PrepareAuroraFlow
 from finn.transformation.fpgadataflow.multifpga.create_multi_sdp import (
     CreateMultiFPGAStreamingDataflowPartition,
@@ -372,7 +374,7 @@ class TestAuroraFlowPartitioning:
 
         # Check that partitioning was successful
         assert part.partitioner is not None
-        assert part.partitioner.status in [
+        assert part.partitioner._status in [  # noqa: SLF001
             mip.OptimizationStatus.FEASIBLE,
             mip.OptimizationStatus.OPTIMAL,
         ]
@@ -581,7 +583,9 @@ class TestAuroraFlowPartitioning:
                 thismodel = thismodel.transform(partition_transform)
 
                 # Check that we in fact used the solver assigned and not the fallback
-                partitioner = cast("AuroraPartitioner", partition_transform.partitioner)
+                partitioner = cast(
+                    "PointToPointBidirectionalFixedPartitioner", partition_transform.partitioner
+                )
                 assert partitioner.model.solver_name == SOLVER.value, (
                     f"Solver was set to {SOLVER.value}, but "
                     f"{partitioner.model.solver_name} was used. "
@@ -758,7 +762,7 @@ class TestAuroraFlowPartitioning:
 
         # Create the partitioner (and run checks implicitly)
         with exception_context:
-            part = AuroraPartitioner(cfg, cast("ModelWrapper", model))
+            part = PointToPointBidirectionalFixedPartitioner(cfg, cast("ModelWrapper", model))
 
         # If the model is infeasbile due to resource constraints end the test here
         if type(exception_context) is not contextlib.nullcontext:
@@ -890,4 +894,4 @@ class TestAuroraFlowPartitioning:
 
         # Assert the error that should be raised
         with pytest.raises(FINNMultiFPGAPartitionerError):
-            _ = AuroraPartitioner(cfg, cast("ModelWrapper", model))
+            _ = PointToPointBidirectionalFixedPartitioner(cfg, cast("ModelWrapper", model))

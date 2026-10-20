@@ -3,6 +3,7 @@ import pytest
 import json
 import networkx as nx
 import onnx.helper as oh
+import shutil
 from copy import deepcopy
 from onnx import TensorProto
 from pathlib import Path
@@ -362,6 +363,43 @@ def test_aurora_metadata_plot(
             assert not path.exists()
         case _:
             raise NotImplementedError(f"No checks implemented for topology {topology.name}")
+
+
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
+@pytest.mark.parametrize("with_model", [True, False])
+def test_aurora_metadata_plot_dot(with_model: bool) -> None:
+    """Test that the DOT graph contains one edge per used cable direction, and, with the model,
+    the data flow inside the FPGAs and to and from the host. It is rendered only if Graphviz is
+    available.
+    """
+    # Duplex chain: n0 (0) -> n1 (1) -> n2 (2) -> n3 (2) -> n4 (1) -> n5 (0)
+    model = chain_model(6)
+    for node, device in zip(model.graph.node, [0, 1, 2, 2, 1, 0], strict=True):
+        set_device_id(node, device)
+    cfg = make_chain_partitioning_cfg(3, topology=MFTopology.DUPLEX_CHAIN)
+    model = model.transform(
+        CreateNetworkMetadata(cast("MultiFPGAConfiguration", cfg.multifpga_configuration))
+    )
+    meta = AuroraNetworkMetadata.load_from_model(model)
+
+    path = Path(make_build_dir("test_aurora_metadata_plot_dot_")) / "network_graph.dot"
+    meta.plot_dot(path, model if with_model else None)
+    dot = path.read_text(encoding="utf-8")
+    assert dot.startswith("digraph")
+    # Four cable directions: 0 -> 1 -> 2 and back
+    assert dot.count("penwidth=2") == 4
+    for device in range(3):
+        assert f"subgraph cluster_fpga{device}" in dot
+    if with_model:
+        assert 'host_in -> "n0"' in dot
+        assert '"n5" -> host_out' in dot
+        # Only the SDPs on the same FPGA are connected directly
+        assert '"n2" -> "n3"' in dot
+        assert '"n0" -> "n1"' not in dot
+    else:
+        assert "host_in" not in dot
+    assert path.with_suffix(".svg").exists() == (shutil.which("dot") is not None)
 
 
 @pytest.mark.multifpga

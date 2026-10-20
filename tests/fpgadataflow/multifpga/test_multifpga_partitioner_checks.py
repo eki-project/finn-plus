@@ -11,7 +11,9 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 from finn.builder.build_dataflow_config import PartitioningStrategy
-from finn.transformation.fpgadataflow.multifpga.aurora.partitioner import AuroraPartitioner
+from finn.transformation.fpgadataflow.multifpga.aurora.partitioner import (
+    PointToPointBidirectionalFixedPartitioner,
+)
 from finn.transformation.fpgadataflow.multifpga.partition_model import (
     ApplyDeviceMapping,
     FindMultiFPGADeviceMapping,
@@ -53,6 +55,17 @@ def test_single_device_solution_is_rejected() -> None:
 
 @pytest.mark.multifpga
 @pytest.mark.usefixtures("mocked_resources")
+def test_single_device_skips_solving() -> None:
+    """Test that a single device directly yields the only possible mapping, without a MILP."""
+    partitioner = PointToPointBidirectionalFixedPartitioner(
+        make_chain_partitioning_cfg(num_fpgas=1), chain_model(3)
+    )
+    assert partitioner.solve() == {"n0": 0, "n1": 0, "n2": 0}
+    assert partitioner._status is None  # noqa: SLF001
+
+
+@pytest.mark.multifpga
+@pytest.mark.usefixtures("mocked_resources")
 @pytest.mark.parametrize(
     ("constraints", "match"),
     [({"unknown_node": 0}, "no node of that name"), ({"n0": -1}, "invalid device -1")],
@@ -61,7 +74,7 @@ def test_invalid_custom_partitioning_constraints(constraints: dict[str, int], ma
     """Test that custom constraints for unknown nodes or negative devices raise an error."""
     cfg = make_chain_partitioning_cfg(num_fpgas=2, custom_partitioning_constraints=constraints)
     with pytest.raises(FINNMultiFPGAConfigError, match=match):
-        AuroraPartitioner(cfg, chain_model(2))
+        PointToPointBidirectionalFixedPartitioner(cfg, chain_model(2))
 
 
 @pytest.mark.multifpga
@@ -75,10 +88,10 @@ def test_max_utilization_above_one_is_rejected(strategy: PartitioningStrategy) -
         num_fpgas=2, partition_strategy=strategy, max_utilization=1.01
     )
     with pytest.raises(FINNMultiFPGAPartitionerError, match="Decrease max_utilization") as excinfo:
-        AuroraPartitioner(cfg, chain_model(2))
+        PointToPointBidirectionalFixedPartitioner(cfg, chain_model(2))
     assert not isinstance(excinfo.value, FINNMultiFPGAUnsolvableError)
     cfg = make_chain_partitioning_cfg(num_fpgas=2, partition_strategy=strategy, max_utilization=1.0)
-    AuroraPartitioner(cfg, chain_model(2))
+    PointToPointBidirectionalFixedPartitioner(cfg, chain_model(2))
 
 
 @pytest.mark.multifpga
@@ -102,11 +115,13 @@ def test_all_zero_resource_estimates_are_rejected(
         estimate,
     )
     with pytest.raises(FINNMultiFPGAError, match="faulty resource estimations"):
-        AuroraPartitioner(
+        PointToPointBidirectionalFixedPartitioner(
             make_chain_partitioning_cfg(num_fpgas=2, partition_strategy=strategy), chain_model(2)
         )
     # LAYER_COUNT does not use the estimates
-    AuroraPartitioner(make_chain_partitioning_cfg(num_fpgas=2), chain_model(2))
+    PointToPointBidirectionalFixedPartitioner(
+        make_chain_partitioning_cfg(num_fpgas=2), chain_model(2)
+    )
 
 
 @pytest.mark.multifpga
@@ -128,7 +143,9 @@ def test_non_integer_device_raises() -> None:
     """Test that a non-integer device in the solution raises an internal error instead of being
     truncated, while integral values are accepted.
     """
-    partitioner = AuroraPartitioner.__new__(AuroraPartitioner)
+    partitioner = PointToPointBidirectionalFixedPartitioner.__new__(
+        PointToPointBidirectionalFixedPartitioner
+    )
     partitioner.modelwrapper = chain_model(2)
     # A solver keeps integer variables integral within its tolerance, so the solved model is
     # replaced by stand-ins with only the attributes _create_result reads. The casts tell the type

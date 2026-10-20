@@ -25,9 +25,19 @@ if TYPE_CHECKING:
     from numbers import Real
 
 
-class AuroraPartitioner(MILPPartitioner):
-    """Concrete partitioner implementation for usage with AuroraFlow cores.
-    This model differs from the one utilized in Elastic-DF (see milp_partitioner.py).
+class PointToPointBidirectionalFixedPartitioner(MILPPartitioner):
+    """Partitioner for point-to-point (potentially) bidirectional
+    connections between fixed devices.
+
+    Originally only for AuroraFlow.
+
+    Assumes that every connection is potentially duplex, and
+    that every connection has a fixed target (i.e. no online/dynamic routing).
+
+    For similar previous work refer to Elastic-DF.
+
+    This class assumes that `links_per_device` refers to bidirectional links.
+    (1 link to a device can hold 2 connections, back and forth).
     """
 
     def get_successors(self, node: NodeProto) -> list[NodeProto]:
@@ -225,6 +235,22 @@ class AuroraPartitioner(MILPPartitioner):
                                 "The node cannot fit on a device of this type."
                             )
 
+        # Chains and rings need one link to each neighbouring device. A link is duplex, so a
+        # device with a single neighbour (2 devices, or the ends of a chain) needs only one link.
+        if self.mfcfg.topology in [
+            MFTopology.SIMPLEX_CHAIN,
+            MFTopology.DUPLEX_CHAIN,
+            MFTopology.RING,
+        ]:
+            required_links = min(self.mfcfg.num_fpgas - 1, 2)
+            if self.mfcfg.links_per_device < required_links:
+                raise FINNMultiFPGAConfigError(
+                    f"The topology {self.mfcfg.topology.name} with {self.mfcfg.num_fpgas} devices "
+                    f"requires {required_links} bidirectional links per device, "
+                    f"but links_per_device is "
+                    f"{self.mfcfg.links_per_device}."
+                )
+
         # If we can expect a fork, some strategies may not yield the desired mapping
         if (
             self.mfcfg.topology
@@ -354,57 +380,83 @@ class AuroraPartitioner(MILPPartitioner):
         for device in range(self.mfcfg.num_fpgas):
             self.model += self.nodesperdevice[device] >= 1
 
-        # Connections that a device has with other devices
-        # Helper variable that says whether A is on device D and A->B is a device switch
-        self.device_switch: list[dict[str, dict[str, mip.Var]]] = [
-            {
-                node.name: {
-                    suc.name: self.model.add_var(
-                        name=f"device_switch_d{device}_from_{node.name}_to_{suc.name}",
-                        var_type=mip.INTEGER,
-                    )
-                    for suc in self.get_successors(node)
-                }
-                for node in self.modelwrapper.graph.node
-            }
-            for device in range(self.mfcfg.num_fpgas)
-        ]
-
-        # Condition A: NODE is on DEVICE
-        # Condition B: SUCCESSOR has a different device than NODE
-        # Variable C: If both are given, device_switch is constrained:
-        #   C <= 1, C <= 1, C >= 1 (thus C = 1)
-        # If one is not true, then
-        #   C <= 0, C <= 1, C >= 0 (thus C = 0)
-        for device in range(self.mfcfg.num_fpgas):
-            for node in self.modelwrapper.graph.node:
-                for suc in self.get_successors(node):
-                    self.model += (
-                        self.device_switch[device][node.name][suc.name]
-                        <= self.devices[node.name][device]
-                    )
-                    self.model += self.device_switch[device][node.name][suc.name] <= (
-                        1 - self.devices[suc.name][device]
-                    )
-                    self.model += self.device_switch[device][node.name][suc.name] >= (
-                        self.devices[node.name][device] + (1 - self.devices[suc.name][device]) - 1
-                    )
-
-        # Finally calculating the connections per device
+        # Count in/out edges, where one of the nodes is on the given device
+        # self.edges[device][node a][node b] == 1 if a and b are on different devices,
+        # one of them being <device>
+        self.edges: dict[int, dict[str, dict[str, mip.Var]]] = {
+            d: {} for d in range(self.mfcfg.num_fpgas)
+        }
         self.connections_per_device = [
             self.model.add_var(name=f"connections_on_device_{device}", var_type=mip.INTEGER)
             for device in range(self.mfcfg.num_fpgas)
         ]
-        for device in range(self.mfcfg.num_fpgas):
-            device_switches = []
-            for node in self.modelwrapper.graph.node:
-                for suc in self.get_successors(node):
-                    device_switches.append(self.device_switch[device][node.name][suc.name])
-            self.model += self.connections_per_device[device] == xsum(device_switches)
+        for node in self.modelwrapper.graph.node:
+            suc = self.modelwrapper.find_direct_successors(node)
+            if suc is None:
+                continue
+            for successor in suc:
+                for d in range(self.mfcfg.num_fpgas):
+                    if node.name not in self.edges[d]:
+                        self.edges[d][node.name] = {}
+                    if successor.name not in self.edges[d][node.name]:
+                        self.edges[d][node.name][successor.name] = self.model.add_var(
+                            name=f"edge_{d}_{node.name}_{successor.name}", var_type=mip.BINARY
+                        )
 
-        # Limit the number of connections per device (depends on the FPGAs QSFP ports)
+                    # 1)
+                    # Take the absolute difference between the is-on-device variables for the nodes
+                    # This will be 0 if they are one the same device or 1 if
+                    # they are on different devices. This is the _lower bound_
+                    self.model += self.edges[d][node.name][successor.name] >= (
+                        self.devices[node.name][d] - self.devices[successor.name][d]
+                    )
+                    self.model += self.edges[d][node.name][successor.name] >= (
+                        self.devices[successor.name][d] - self.devices[node.name][d]
+                    )
+
+                    # 2)
+                    # Necessary check to upper bound the value to 0 if both nodes
+                    # are on device d.
+                    self.model += self.edges[d][node.name][successor.name] <= (
+                        2 - self.devices[node.name][d] - self.devices[successor.name][d]
+                    )
+
+                    # 3)
+                    # Upper bound
+                    self.model += self.edges[d][node.name][successor.name] <= (
+                        self.devices[node.name][d] + self.devices[successor.name][d]
+                    )
+
+                    # If a and b are on the same device (device d):
+                    # e >= 0 (1), e <= 0 (2), e <= 2 (3), ===> e = 0
+                    # If a and b are on different devices (but one is _d_):
+                    # e >= 1 (1), e <= 1 (2), e <= 1 (3), ===> e = 1
+                    # If neither a nor b are on device d:
+                    # e >= 0 (1), e <= 2 (2), e <= 0 (3), ===> e = 0
+                    #
+                    # So since the variable is only 1, iff both are on different devices,
+                    # one of them being d, we can count the total number of connections
+                    # by summing over all edges
+
+        # Finally calculating the connections per device
+        # This refer to UNIDIRECTIONAL CONNECTIONS.
+        # This means a device with connections_per_device == 2 and mfcfg.links_per_device == 1
+        # work together fine, as long as both connections are to/from the same device.
         for device in range(self.mfcfg.num_fpgas):
-            self.model += self.connections_per_device[device] <= self.mfcfg.links_per_device
+            self.model += self.connections_per_device[device] == xsum(
+                self.edges[device][a][b] for a in self.edges[device] for b in self.edges[device][a]
+            )
+
+        # Without a fixed topology, only the total can be limited: a duplex link carries at most
+        # one connection per direction. This is necessary but not sufficient, since both
+        # directions of a link must lead to the same partner device.
+        if self.mfcfg.topology in [
+            MFTopology.ARBITRARY,
+            MFTopology.ARBITRARY_OPEN,
+            MFTopology.ARBITRARY_CLOSED,
+        ]:
+            for device in range(self.mfcfg.num_fpgas):
+                self.model += self.connections_per_device[device] <= 2 * self.mfcfg.links_per_device
 
         # Consecutive nodes must be on consecutive devices
         self.device_diff: dict[str, dict[str, mip.Var]] = {}
@@ -431,7 +483,9 @@ class AuroraPartitioner(MILPPartitioner):
                         self.model += self.device_diff[node.name][suc.name] <= 1
                         self.model += self.device_diff[node.name][suc.name] >= 0
                     case MFTopology.DUPLEX_CHAIN:
-                        raise NotImplementedError()
+                        # In a duplex chain, the same goes, A <==> B may be 1 device ID apart
+                        self.model += self.device_diff[node.name][suc.name] <= 1
+                        self.model += self.device_diff[node.name][suc.name] >= 0
                     case MFTopology.RING:
                         # In a ring, just as in a simplex chain, the device difference is almost
                         # always 1: Only the last jump from N back to 0 is allowed to be larger
@@ -465,13 +519,28 @@ class AuroraPartitioner(MILPPartitioner):
                     for suc in self.get_successors(node):
                         self.model += self.chosen_device[suc.name] >= self.chosen_device[node.name]
 
+                # Every inner device has 2 connections (one in, one out),
+                # and every outer device only 1
+                for device in range(self.mfcfg.num_fpgas):
+                    if device in [0, self.mfcfg.num_fpgas - 1]:
+                        self.model += self.connections_per_device[device] == 1
+                    else:
+                        self.model += self.connections_per_device[device] == 2
+
             case MFTopology.DUPLEX_CHAIN:
                 for node in input_nodes:
                     self.model += self.chosen_device[node.name] == 0
                 for node in output_nodes:
                     self.model += self.chosen_device[node.name] == 0
 
-                # TODO: Don't allow back and forth on devices with more ports than 2
+                # Here we limit the connections of inner devices to exactly 4, and
+                # the connections of outer devices to 2. Together with the max 1 ID difference
+                # between devices, this forces a duplex chain
+                for device in range(self.mfcfg.num_fpgas):
+                    if device in [0, self.mfcfg.num_fpgas - 1]:
+                        self.model += self.connections_per_device[device] == 2
+                    else:
+                        self.model += self.connections_per_device[device] == 4
 
             case MFTopology.RING:
                 for node in input_nodes:
@@ -490,6 +559,10 @@ class AuroraPartitioner(MILPPartitioner):
                             # The ring closes only from the last device. Otherwise, with forks,
                             # a branch could jump back to device 0 early (e.g. from device 1).
                             self.model += self.chosen_device[node.name] == self.mfcfg.num_fpgas - 1
+
+                # A ring has 2 connections for every device
+                for device in range(self.mfcfg.num_fpgas):
+                    self.model += self.connections_per_device[device] == 2
 
             case MFTopology.ARBITRARY:
                 log.warning(

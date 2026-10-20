@@ -9,6 +9,7 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.util.basic import log
 from finn.util.exception import FINNMissingMappingError
 from finn.util.resources import (
     ResourceEstimates,
@@ -44,7 +45,15 @@ class Partitioner(ABC):
         """
         if self.mapping is None:
             start = time.time()
-            self.mapping = self._solve()
+            if self.mfcfg.num_fpgas == 1:
+                # There is only one possible mapping, so skip solving
+                log.warning(
+                    "Skipping solving - only one device provided. Assuming "
+                    "default mapping (all nodes on device 0)."
+                )
+                self.mapping = {node.name: 0 for node in self.modelwrapper.graph.node}
+            else:
+                self.mapping = self._solve()
             self.solve_seconds = time.time() - start
         return self.mapping
 

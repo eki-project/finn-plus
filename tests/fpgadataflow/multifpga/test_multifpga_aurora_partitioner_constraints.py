@@ -7,22 +7,29 @@ import pytest
 from fpgadataflow.multifpga.utils import chain_model, make_chain_partitioning_cfg
 
 from finn.builder.build_dataflow_config import MFTopology
-from finn.transformation.fpgadataflow.multifpga.aurora.partitioner import AuroraPartitioner
-from finn.util.exception import FINNMultiFPGAUnsolvableError
+from finn.transformation.fpgadataflow.multifpga.aurora.partitioner import (
+    PointToPointBidirectionalFixedPartitioner,
+)
+from finn.util.exception import FINNMultiFPGAConfigError, FINNMultiFPGAUnsolvableError
 
 
 @pytest.mark.multifpga
 @pytest.mark.usefixtures("mocked_resources")
 def test_port_limit_is_enforced_simplex() -> None:
-    """Test that the number of links per device constrains the partitioning. A chain across
-    three devices needs at least one link per device.
+    """Test that the number of links per device constrains the partitioning. In a chain across
+    three devices the middle device sends to and receives from different devices, so it needs
+    two links.
     """
     model = chain_model(3)
-    cfg = make_chain_partitioning_cfg(num_fpgas=3, links_per_device=0)
-    with pytest.raises(FINNMultiFPGAUnsolvableError):
-        AuroraPartitioner(cfg, model).solve()
     cfg = make_chain_partitioning_cfg(num_fpgas=3, links_per_device=1)
-    assert AuroraPartitioner(cfg, model).solve() == {"n0": 0, "n1": 1, "n2": 2}
+    with pytest.raises(FINNMultiFPGAConfigError, match="requires 2 links per device"):
+        PointToPointBidirectionalFixedPartitioner(cfg, model)
+    cfg = make_chain_partitioning_cfg(num_fpgas=3, links_per_device=2)
+    assert PointToPointBidirectionalFixedPartitioner(cfg, model).solve() == {
+        "n0": 0,
+        "n1": 1,
+        "n2": 2,
+    }
 
 
 @pytest.mark.multifpga
@@ -36,12 +43,18 @@ def test_port_limit_is_enforced_duplex() -> None:
     cfg = make_chain_partitioning_cfg(
         num_fpgas=3, links_per_device=1, topology=MFTopology.DUPLEX_CHAIN
     )
-    with pytest.raises(FINNMultiFPGAUnsolvableError):
-        AuroraPartitioner(cfg, model).solve()
+    with pytest.raises(FINNMultiFPGAConfigError, match="requires 2 links per device"):
+        PointToPointBidirectionalFixedPartitioner(cfg, model)
     cfg = make_chain_partitioning_cfg(
         num_fpgas=3, links_per_device=2, topology=MFTopology.DUPLEX_CHAIN
     )
-    assert AuroraPartitioner(cfg, model).solve() == {"n0": 0, "n1": 1, "n2": 2, "n3": 1, "n4": 0}
+    assert PointToPointBidirectionalFixedPartitioner(cfg, model).solve() == {
+        "n0": 0,
+        "n1": 1,
+        "n2": 2,
+        "n3": 1,
+        "n4": 0,
+    }
 
 
 @pytest.mark.multifpga
@@ -60,7 +73,7 @@ def test_duplex_chain_rejects_revisiting_devices() -> None:
         topology=MFTopology.DUPLEX_CHAIN,
     )
     with pytest.raises(FINNMultiFPGAUnsolvableError):
-        AuroraPartitioner(cfg, chain_model(7)).solve()
+        PointToPointBidirectionalFixedPartitioner(cfg, chain_model(7)).solve()
 
 
 @pytest.mark.multifpga

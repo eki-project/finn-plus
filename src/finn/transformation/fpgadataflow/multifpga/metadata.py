@@ -124,6 +124,17 @@ class NetworkMetadata(ABC):
         Overwrite this method if possible."""
         log.warning("Cannot plot metadata for the chosen backend!")
 
+    def plot_dot(
+        self,
+        path: Path,  # noqa: ARG002
+        model: ModelWrapper | None = None,  # noqa: ARG002
+    ) -> None:
+        """Write the metadata as a Graphviz DOT graph to the given path. If Graphviz' `dot` is
+        available, also render it next to the DOT file. If the model (with SDPs and their device
+        IDs) is given, the SDPs on each device and the data flow between them are included.
+        Overwrite this method if possible."""
+        log.warning("Cannot create a DOT graph of the metadata for the chosen backend!")
+
     @abstractmethod
     def export(self, path: Path) -> None:
         """Export the metadata to the given path. In many cases this can be

@@ -6,6 +6,7 @@ import contextlib
 import json
 import networkx as nx
 import numpy as np
+import shutil
 from collections import defaultdict
 from dataclasses import dataclass, field
 from mashumaro.mixins.yaml import DataClassYAMLMixin
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from finn.builder.build_dataflow_config import MFTopology
 from finn.transformation.fpgadataflow.multifpga.metadata import DataDirection, NetworkMetadata
+from finn.util.basic import launch_process_helper
 from finn.util.exception import FINNInternalError, FINNMultiFPGAConfigError, FINNUserError
 from finn.util.fpgadataflow import get_device_id
 from finn.util.logging import log
@@ -337,6 +339,11 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         path.write_text(json.dumps(nx.node_link_data(g), indent=4))
         log.info(f"Exported Multi-FPGA node-link data to {path}")
 
+    @staticmethod
+    def short_node_name(node: str) -> str:
+        """Shorten the default SDP node names for diagrams."""
+        return node.replace("StreamingDataflowPartition", "SDP")
+
     def plot(
         self,
         path: Path,
@@ -357,6 +364,7 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
             log.warning("Cannot plot the Multi-FPGA network: the metadata contains no devices.")
             return
         devices = sorted(self.data)
+        short = self.short_node_name
         box = np.array([5.2, 3.2])  # Width and height of an FPGA box
         pitch = box[0] + 3.8  # Distance between the centers of neighbouring boxes
         port_size, lane = 0.56, 0.14  # Side of a port square, offset of the TX/RX arrows
@@ -374,10 +382,6 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
             "text": "#e5e7eb",
             "muted": "#94a3b8",
         }
-
-        def short(node: str) -> str:
-            """Shorten the default SDP node names."""
-            return node.replace("StreamingDataflowPartition", "SDP")
 
         # 1. Place the FPGAs (their box centers) according to the topology
         match self.topology:
@@ -727,3 +731,97 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
 
         fig.savefig(path, facecolor=fig.get_facecolor())
         log.info(f"Saved a diagram of the Multi-FPGA network to {path}")
+
+    def plot_dot(self, path: Path, model: ModelWrapper | None = None) -> None:
+        """Write the AuroraFlow network as a Graphviz DOT graph to `path`. If Graphviz' `dot` is
+        found, the graph is also rendered as an SVG with the same name next to it.
+
+        Every FPGA is a cluster with its used QSFP ports `Q<link index>`. Every used direction of
+        a cable is an edge from the sending to the receiving port, labelled with the sending and
+        receiving SDP. If `model` is given, the SDPs are placed in the cluster of their FPGA and
+        connected to each other, to the ports they send and receive through, and to the host.
+        """
+        short = self.short_node_name
+
+        def quote(name: str) -> str:
+            """Return `name` as a quoted DOT ID."""
+            return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+        def port(device: int, link: int | None) -> str:
+            """Return the DOT ID of a QSFP port."""
+            return quote(f"FPGA{device}_Q{link}")
+
+        title = (
+            f"AuroraFlow network: {len(self.data)} FPGAs, "
+            f"{self.topology.value.replace('_', ' ')}"
+        )
+        lines = [
+            "digraph multifpga {",
+            f"    label={quote(title)}; labelloc=t; rankdir=LR;",
+            "    node [fontname=Helvetica, fontsize=10]; edge [fontname=Helvetica, fontsize=8];",
+        ]
+
+        # Every FPGA is a cluster with its ports and, if the model is given, its SDPs
+        for device in sorted(self.data):
+            lines.append(f"    subgraph cluster_fpga{device} {{")
+            lines.append(f'        label="FPGA {device}"; style=rounded;')
+            lines += [
+                f"        {port(device, e.link_index)} "
+                f'[label="Q{e.link_index}", shape=square, style=filled, fillcolor=lightblue];'
+                for e in self[device]
+            ]
+            if model is not None:
+                lines += [
+                    f"        {quote(node.name)} [label={quote(short(node.name))}, shape=box];"
+                    for node in model.graph.node
+                    if get_device_id(node) == device
+                ]
+            lines.append("    }")
+
+        # One edge per used direction of a cable, from the sending to the receiving port. With the
+        # model also from the sending SDP to its port, and from the port to the receiving SDP.
+        for device in sorted(self.data):
+            for e in self[device]:
+                if (tx := e.connecting_kernels[DataDirection.TX]) is not None:
+                    label = f"{short(tx[0])} → {short(tx[1])}"
+                    lines.append(
+                        f"    {port(device, e.link_index)} -> "
+                        f"{port(e.partner_device, e.partner_link_index)} "
+                        f"[label={quote(label)}, penwidth=2];"
+                    )
+                    if model is not None:
+                        lines.append(f"    {quote(tx[0])} -> {port(device, e.link_index)};")
+                rx = e.connecting_kernels[DataDirection.RX]
+                if model is not None and rx is not None:
+                    lines.append(f"    {port(device, e.link_index)} -> {quote(rx[0])};")
+
+        # With the model: the data between the SDPs of the same FPGA, and from and to the host
+        if model is not None:
+            for node in model.graph.node:
+                lines += [
+                    f"    {quote(node.name)} -> {quote(successor.name)};"
+                    for successor in model.find_direct_successors(node) or []
+                    if get_device_id(successor) == get_device_id(node)
+                ]
+            lines.append('    host_in [label="host in", shape=ellipse];')
+            lines.append('    host_out [label="host out", shape=ellipse];')
+            for tensor in model.graph.input:
+                lines += [
+                    f"    host_in -> {quote(node.name)};"
+                    for node in model.find_consumers(tensor.name) or []
+                ]
+            for tensor in model.graph.output:
+                if (producer := model.find_producer(tensor.name)) is not None:
+                    lines.append(f"    {quote(producer.name)} -> host_out;")
+        lines.append("}")
+
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        log.info(f"Saved a DOT graph of the Multi-FPGA network to {path}")
+
+        dot = shutil.which("dot")
+        if dot is None:
+            log.info("Graphviz 'dot' was not found, so the DOT graph is not rendered.")
+            return
+        svg = path.with_suffix(".svg")
+        launch_process_helper([dot, "-Tsvg", path, "-o", svg], print_stdout=False)
+        log.info(f"Rendered the DOT graph of the Multi-FPGA network to {svg}")

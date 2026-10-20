@@ -19,7 +19,9 @@ from finn.transformation.fpgadataflow.multifpga.aurora.link_config_transform imp
     AddAuroraToLinkConfig,
 )
 from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
-from finn.transformation.fpgadataflow.multifpga.aurora.partitioner import AuroraPartitioner
+from finn.transformation.fpgadataflow.multifpga.aurora.partitioner import (
+    PointToPointBidirectionalFixedPartitioner,
+)
 from finn.transformation.fpgadataflow.multifpga.aurora.prepare_aurora import PrepareAuroraFlow
 from finn.util.exception import FINNInternalError, FINNMultiFPGAConfigError
 
@@ -111,7 +113,7 @@ def _get_board(cfg: DataflowBuildConfig) -> str:
 # AuroraFlow
 register_backend(
     MFNetworkBackendType.AURORAFLOW,
-    partitioner=AuroraPartitioner,
+    partitioner=PointToPointBidirectionalFixedPartitioner,
     metadata_type=AuroraNetworkMetadata,
     prepare_kernels=lambda cfg: PrepareAuroraFlow(
         cfg._resolve_vitis_platform(),  # noqa: SLF001
