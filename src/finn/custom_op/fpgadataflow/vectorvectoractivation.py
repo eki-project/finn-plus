@@ -46,7 +46,7 @@ from qonnx.util.basic import (
     roundup_to_integer_multiple,
 )
 
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import MEMSTREAM_NODEATTRS, HWCustomOp
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.logging import log
 from finn.util.settings import get_settings
@@ -122,6 +122,7 @@ class VVAU(HWCustomOp):
             # as bipolar
             "binaryXnorMode": ("i", False, 0, {0, 1}),
         }
+        my_attrs.update(MEMSTREAM_NODEATTRS)
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 

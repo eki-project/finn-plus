@@ -7,6 +7,7 @@ import os
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import roundup_to_integer_multiple
 
+from finn.custom_op.fpgadataflow.hwcustomop import MEMSTREAM_NODEATTRS
 from finn.custom_op.fpgadataflow.requant import Requant
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import fifo_rtl_files, get_dsp_block, make_build_dir
@@ -36,6 +37,7 @@ class Requant_rtl(Requant, RTLBackend):
         my_attrs = {}
         my_attrs.update(Requant.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
+        my_attrs.update(MEMSTREAM_NODEATTRS)
         my_attrs.update(
             {
                 # memory mode for the scale/bias parameters

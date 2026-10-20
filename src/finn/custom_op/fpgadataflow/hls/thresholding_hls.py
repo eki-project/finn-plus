@@ -36,6 +36,7 @@ from qonnx.core.datatype import DataType
 from qonnx.util.basic import roundup_to_integer_multiple
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.custom_op.fpgadataflow.hwcustomop import MEMSTREAM_NODEATTRS
 from finn.custom_op.fpgadataflow.thresholding import Thresholding
 from finn.util.basic import get_vivado_version, is_versal
 from finn.util.data_packing import (
@@ -85,6 +86,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             # weight data from the weight FIFOs.
             "runtime_writeable_weights": ("i", False, 0, {0, 1}),
         }
+        my_attrs.update(MEMSTREAM_NODEATTRS)
         my_attrs.update(Thresholding.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs

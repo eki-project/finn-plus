@@ -39,7 +39,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from typing import cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import MEMSTREAM_NODEATTRS, HWCustomOp
 from finn.util.exception import FINNInternalError
 
 # FINN logging
@@ -83,6 +83,7 @@ class ElementwiseBinaryOperation(HWCustomOp):
         """Return the node attribute schema for this operator."""
         # Start from parent operator class attributes
         attrs = HWCustomOp.get_nodeattr_types(self)
+        attrs.update(MEMSTREAM_NODEATTRS)
         # Update attributes dictionary for new custom operator
         attrs.update(
             {

@@ -10,7 +10,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import get_by_name, qonnx_make_model, roundup_to_integer_multiple
 
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import MEMSTREAM_NODEATTRS, HWCustomOp
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
@@ -46,6 +46,7 @@ class NodeContainer(RTLBackend, HWCustomOp):
         }
         my_attrs.update(HWCustomOp.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
+        my_attrs.update(MEMSTREAM_NODEATTRS)
         return my_attrs
 
     def get_nodeattr(self, name):
@@ -214,6 +215,7 @@ class NodeContainer(RTLBackend, HWCustomOp):
         inst = getCustomOp(self._get_reference_node())
         bodies = self.get_nodeattr("bodies")
         inst.set_nodeattr("bodies", bodies)
+        inst.set_nodeattr("ram_cascade_height", self.get_nodeattr("ram_cascade_height"))
         code_gen_dir_ipgen = self.get_nodeattr("code_gen_dir_ipgen")
         inst.set_nodeattr("code_gen_dir_ipgen", code_gen_dir_ipgen)
         if pumped_memory in inst.get_nodeattr_types():
