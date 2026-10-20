@@ -118,9 +118,29 @@ RESET_TREE_CELL: str = "ap_rst_n_tree"
 RESET_TREE_FANOUT: int = 16
 
 
+#: Metadata property listing the finn-rtllib IP repositories the stitched block
+#: design takes cores from besides the nodes' own (memstream, reset_pipe,
+#: axi_info). The packaged stitched IP regenerates these cores as its children,
+#: so every project that instantiates it needs the same repositories; without
+#: reset_pipe, every Zynq link failed with "Cannot upgrade to invalid target ''"
+#: on the partitions' ap_rst_n_tree (CI regression, 19 Oct 2026).
+STITCH_LIBRARY_REPOS_PROP: str = "vivado_stitch_library_repos"
+
+
 def reset_cell_name(node_name: str) -> str:
     """Name of the reset_pipe cell that feeds a node's reset in the stitched design."""
     return f"{node_name}_rst"
+
+
+def stitched_ip_library_repos(model: ModelWrapper) -> list[str]:
+    """finn-rtllib IP repositories a project needs to instantiate the model's stitched IP."""
+    repos = model.get_metadata_prop(STITCH_LIBRARY_REPOS_PROP)
+    if repos is None:
+        raise FINNUserError(
+            "The model carries no list of the IP repositories its stitched IP depends on. "
+            "Run CreateStitchedIP (step_create_stitched_ip) again."
+        )
+    return json.loads(repos)
 
 
 def kernel_xdc_export_tcl(block_name: str) -> list[str]:
@@ -263,6 +283,19 @@ class CreateStitchedIP(Transformation):
             "axilite": [],
             "ap_none": [],
         }
+
+    def library_repos(self) -> list[str]:
+        """finn-rtllib IP repositories the block design takes cores from.
+
+        Recorded on the model as `STITCH_LIBRARY_REPOS_PROP` for the projects that
+        instantiate the packaged stitched IP (see `stitched_ip_library_repos`).
+        """
+        repos = ["$::env(FINN_RTLLIB)/memstream"]
+        if self.signature:
+            repos.append("$::env(FINN_RTLLIB)/axi_info")
+        if self.reset_pipeline_stages > 0:
+            repos.append("$::env(FINN_RTLLIB)/reset_pipe")
+        return repos
 
     def is_double_pumped(self, node: "NodeProto") -> bool:
         """Check if node uses double-pumped compute or memory."""
@@ -701,13 +734,9 @@ class CreateStitchedIP(Transformation):
         """Apply the CreateStitchedIP transformation to the model."""
         # ensure non-relative readmemh .dat files
         model = model.transform(ReplaceVerilogRelPaths())
-        ip_dirs = ["list"]
-        # add RTL streamer IP
-        ip_dirs.append("$::env(FINN_RTLLIB)/memstream")
-        if self.signature:
-            ip_dirs.append("$::env(FINN_RTLLIB)/axi_info")
-        if self.reset_pipeline_stages > 0:
-            ip_dirs.append("$::env(FINN_RTLLIB)/reset_pipe")
+        library_repos = self.library_repos()
+        model.set_metadata_prop(STITCH_LIBRARY_REPOS_PROP, json.dumps(library_repos))
+        ip_dirs = ["list", *library_repos]
         if (
             model.graph.node[0].op_type not in ["StreamingFIFO_rtl", "IODMA_hls"]
             and self.functional_simulation is False

@@ -9,6 +9,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
 from finn.custom_op.fpgadataflow.templates import ipgentcl_template
+from finn.transformation.fpgadataflow.create_stitched_ip import stitched_ip_library_repos
 from finn.util.basic import make_build_dir
 from finn.util.hls import CallHLS
 from finn.util.settings import get_settings
@@ -18,7 +19,6 @@ from finn.util.settings import get_settings
 def collect_ip_dirs(model, ipstitch_path):
     """Collect list of all IP directories required by the design."""
     ip_dirs = []
-    need_memstreamer = False
     for node in model.graph.node:
         node_inst = getCustomOp(node)
         ip_dir_value = node_inst.get_nodeattr("ip_path")
@@ -27,13 +27,9 @@ def collect_ip_dirs(model, ipstitch_path):
         ), """The directory that should
         contain the generated ip blocks doesn't exist."""
         ip_dirs += [ip_dir_value]
-        if node.op_type.startswith("MVAU") or node.op_type == "Thresholding_hls":
-            if node_inst.get_nodeattr("mem_mode") == "internal_decoupled":
-                need_memstreamer = True
     ip_dirs += [ipstitch_path + "/ip"]
-    if need_memstreamer:
-        # add RTL streamer IP
-        ip_dirs.append("$::env(FINN_RTLLIB)/memstream")
+    # cores the stitched block design took from finn-rtllib (memstream, reset_pipe, ...)
+    ip_dirs += stitched_ip_library_repos(model)
     return ip_dirs
 
 

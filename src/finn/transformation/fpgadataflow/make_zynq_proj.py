@@ -45,7 +45,10 @@ from subprocess import CalledProcessError
 from typing import Literal
 
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
-from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
+from finn.transformation.fpgadataflow.create_stitched_ip import (
+    CreateStitchedIP,
+    stitched_ip_library_repos,
+)
 from finn.transformation.fpgadataflow.floorplan import Floorplan
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
@@ -169,7 +172,6 @@ def _build_sdp_kernel(args):
 def collect_ip_dirs(model, ipstitch_path):
     """Collect list of all IP directories required by the design."""
     ip_dirs = []
-    need_memstreamer = False
     for node in model.graph.node:
         node_inst = getCustomOp(node)
         if node.op_type == "NodeContainer":
@@ -195,9 +197,6 @@ def collect_ip_dirs(model, ipstitch_path):
             ), """The directory that should
             contain the generated ip blocks doesn't exist."""
             ip_dirs += [ip_dir_value]
-        if node.op_type.startswith("MVAU") or node.op_type == "Thresholding_hls":
-            if node_inst.get_nodeattr("mem_mode") == "internal_decoupled":
-                need_memstreamer = True
         if node.op_type == "FINNLoop":
             loop_body = node_inst.get_nodeattr("body")
             loop_body_ipstitch_path = loop_body.get_metadata_prop("vivado_stitch_proj")
@@ -205,10 +204,9 @@ def collect_ip_dirs(model, ipstitch_path):
                 raise FINNError(f"No stitched IPI design found for the body of {node.name}")
             ip_dirs += collect_ip_dirs(loop_body, loop_body_ipstitch_path)
     ip_dirs += [ipstitch_path + "/ip"] if ipstitch_path else []
-    if need_memstreamer:
-        # add RTL streamer IP
-        ip_dirs.append("$::env(FINN_RTLLIB)/memstream")
-    return ip_dirs
+    # cores the stitched block design took from finn-rtllib (memstream, reset_pipe, ...)
+    ip_dirs += stitched_ip_library_repos(model)
+    return list(dict.fromkeys(ip_dirs))
 
 
 class MakeZYNQProject(Transformation):

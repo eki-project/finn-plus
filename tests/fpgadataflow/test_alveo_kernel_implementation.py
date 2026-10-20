@@ -7,6 +7,8 @@ Vivado settings, the v++ config sections, and the platform PCIe SLR.
 
 import pytest
 
+import json
+
 import numpy as np
 from onnx import TensorProto
 from onnx import helper as oh
@@ -195,6 +197,58 @@ def test_stitched_ip_puts_a_reset_stage_in_front_of_every_node() -> None:
     assert not any(
         c.startswith("connect_bd_net [get_bd_ports ap_rst_n]") for c in piped.connect_cmds
     )
+
+
+@pytest.mark.fpgadataflow
+def test_projects_using_the_stitched_ip_find_its_library_cores(tmp_path: Path) -> None:
+    """Every project that instantiates the stitched IP gets the finn-rtllib repos it used.
+
+    The packaged stitched IP regenerates its reset_pipe cells as child IPs; a Zynq
+    project without the reset_pipe repository failed on every partition with
+    "Cannot upgrade to invalid target ''" (CI regression, 19 Oct 2026).
+    """
+    from finn.custom_op.fpgadataflow.rtl.finn_loop import (
+        collect_ip_dirs as collect_loop_body_ip_dirs,
+    )
+    from finn.transformation.fpgadataflow.create_stitched_ip import (
+        STITCH_LIBRARY_REPOS_PROP,
+        CreateStitchedIP,
+        stitched_ip_library_repos,
+    )
+    from finn.transformation.fpgadataflow.instrumentation import (
+        collect_ip_dirs as collect_instrumentation_ip_dirs,
+    )
+    from finn.transformation.fpgadataflow.make_zynq_proj import collect_ip_dirs
+    from finn.util.exception import FINNUserError
+
+    reset_pipe = "$::env(FINN_RTLLIB)/reset_pipe"
+    assert reset_pipe not in CreateStitchedIP(U55C_PART, 5.0).library_repos()
+    piped = CreateStitchedIP(U55C_PART, 5.0, reset_pipeline_stages=2).library_repos()
+    assert reset_pipe in piped
+
+    model = make_chain(2)
+    for node in model.graph.node:
+        ip_dir = tmp_path / node.name
+        ip_dir.mkdir()
+        for attr in node.attribute:
+            if attr.name == "ip_path":
+                attr.s = str(ip_dir).encode()
+                break
+        else:
+            node.attribute.append(oh.make_attribute("ip_path", str(ip_dir)))
+    stitch_dir = str(tmp_path / "stitch")
+    with pytest.raises(FINNUserError):
+        stitched_ip_library_repos(model)
+
+    model.set_metadata_prop(STITCH_LIBRARY_REPOS_PROP, json.dumps(piped))
+    for dirs in (
+        collect_ip_dirs(model, stitch_dir),
+        collect_instrumentation_ip_dirs(model, stitch_dir),
+        collect_loop_body_ip_dirs(model, stitch_dir),
+    ):
+        assert f"{stitch_dir}/ip" in dirs
+        for repo in piped:
+            assert dirs.count(repo) == 1
 
 
 @pytest.mark.fpgadataflow
