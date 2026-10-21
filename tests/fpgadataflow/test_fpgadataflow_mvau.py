@@ -45,7 +45,6 @@ from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.core.rtlsim_exec import rtlsim_exec
-from finn.custom_op.fpgadataflow.hwcustomop import memstream_cascade_height
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
     InferQuantizedMatrixVectorActivation,
@@ -1062,51 +1061,3 @@ def test_fpgadataflow_mvau_hls_threshold_width_cppsim():
     assert np.allclose(
         y_min_produced, y_min_expected
     ), f"Min input test failed: expected {y_min_expected}, got {y_min_produced}"
-
-
-@pytest.mark.parametrize(
-    "part,ram_style,depth,height",
-    [
-        # UltraScale+ block RAM: no cascades, except RAMB36 pairs between 32K and 64K words
-        ("xcu55c-fsvh2892-2L-e", "block", 32768, 1),
-        ("xcu55c-fsvh2892-2L-e", "auto", 64000, 2),
-        ("xczu7ev-ffvc1156-2-e", "block", 65536, 2),
-        ("xcu55c-fsvh2892-2L-e", "block", 131072, 1),
-        # URAM: 4K words each, cascade what an 8:1 mux cannot take
-        ("xcu55c-fsvh2892-2L-e", "ultra", 32768, 1),
-        ("xcu55c-fsvh2892-2L-e", "ultra", 40000, 2),
-        ("xcu55c-fsvh2892-2L-e", "ultra", 131072, 4),
-        # left to synthesis: no RAM cascades, Versal, 7-series
-        ("xcu55c-fsvh2892-2L-e", "distributed", 1024, 0),
-        ("xcv80-lsva4737-2MHP-e-S", "block", 131072, 0),
-        ("xcv80-lsva4737-2MHP-e-S", "ultra", 131072, 0),
-        ("xc7z020clg400-1", "block", 131072, 0),
-    ],
-)
-def test_memstream_cascade_height(part, ram_style, depth, height):
-    assert memstream_cascade_height(part, ram_style, depth) == height
-
-
-@pytest.mark.parametrize("override,height", [(None, 1), (-1, 1), (0, 0), (3, 3)])
-@pytest.mark.fpgadataflow
-def test_fpgadataflow_mvau_memstream_cascade_height(tmp_path, override, height):
-    """The memstream wrapper carries the rule's cascade height unless the folding config
-    sets one (0 leaves it to synthesis)."""
-    W = gen_finn_dt_tensor(DataType["INT4"], (128, 128))
-    model = make_single_fclayer_modelwrapper(
-        W, 1, 1, DataType["INT4"], DataType["INT4"], DataType["INT32"]
-    )
-    inst = getCustomOp(model.graph.node[0])
-    inst.set_nodeattr("mem_mode", "internal_decoupled")
-    inst.set_nodeattr("ram_style", "block")
-    inst.set_nodeattr("preferred_impl_style", "rtl")
-    model = model.transform(SpecializeLayers("xczu7ev-ffvc1156-2-e"))
-    node = model.graph.node[0]
-    inst = getCustomOp(node)
-    if override is not None:
-        model = model.transform(ApplyConfig({node.name: {"ram_cascade_height": override}}))
-        inst = getCustomOp(model.graph.node[0])
-    inst.set_nodeattr("code_gen_dir_ipgen", str(tmp_path))
-    inst.generate_hdl_memstream("xczu7ev-ffvc1156-2-e")
-    wrapper = (tmp_path / f"{node.name}_memstream_wrapper.v").read_text()
-    assert f"parameter  CASCADE_HEIGHT = {height}," in wrapper

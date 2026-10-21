@@ -39,7 +39,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from typing import cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
-from finn.custom_op.fpgadataflow.hwcustomop import MEMSTREAM_NODEATTRS, HWCustomOp
+from finn.custom_op.fpgadataflow.memstream import MemStreamOp
 from finn.util.exception import FINNInternalError
 
 # FINN logging
@@ -47,7 +47,7 @@ from finn.util.logging import log
 
 
 # Generic implementation for elementwise binary operations
-class ElementwiseBinaryOperation(HWCustomOp):
+class ElementwiseBinaryOperation(MemStreamOp):
     """Base class for elementwise binary dataflow operators."""
 
     # Specifies the elementwise operation to be implemented
@@ -82,8 +82,7 @@ class ElementwiseBinaryOperation(HWCustomOp):
     def get_nodeattr_types(self):
         """Return the node attribute schema for this operator."""
         # Start from parent operator class attributes
-        attrs = HWCustomOp.get_nodeattr_types(self)
-        attrs.update(MEMSTREAM_NODEATTRS)
+        attrs = MemStreamOp.get_nodeattr_types(self)
         # Update attributes dictionary for new custom operator
         attrs.update(
             {
@@ -319,6 +318,10 @@ class ElementwiseBinaryOperation(HWCustomOp):
         assert num_elems % self.pe == 0, "PE must divide last axis"
         # Folding along the last dimension
         return *num_inputs, num_elems // self.pe, self.pe
+
+    def memstream_depth(self):
+        """Return the words of the constant right-hand side (WMEM)."""
+        return int(self.calc_wmem())
 
     def calc_wmem(self):
         """Calculates and returns WMEM."""

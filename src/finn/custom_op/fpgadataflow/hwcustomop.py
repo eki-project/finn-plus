@@ -43,7 +43,7 @@ from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import get_by_name, roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Any, cast
 
-from finn.util.basic import get_watchdog_timeout_cycles, is_versal
+from finn.util.basic import get_watchdog_timeout_cycles
 from finn.util.exception import FINNInternalError
 from finn.util.settings import get_settings
 
@@ -53,45 +53,6 @@ if TYPE_CHECKING:
     from finn.xsi import SimEngine
 
 import finn.xsi as finnxsi
-
-
-#: Node attributes of the ops that stream weights or parameters from a memstream.
-#: ``ram_cascade_height`` is the longest chain of block or ultra RAMs the memstream may
-#: join through their cascade pins: -1 picks it from the part and memory shape
-#: (:func:`memstream_cascade_height`), 0 leaves it to synthesis, n > 0 forces n. Like
-#: ``ram_style`` it can be set per node in the folding config.
-MEMSTREAM_NODEATTRS: dict[str, tuple[str, bool, int]] = {
-    "ram_cascade_height": ("i", False, -1),
-}
-
-
-def memstream_cascade_height(fpgapart: str, ram_style: str, depth: int) -> int:
-    """Return the CASCADE_HEIGHT for a memstream of ``depth`` words, 0 leaving it to synthesis.
-
-    Fitted to out-of-context runs of memstream (U55C at 2.5, 3.3 and 5 ns, ZU28DR and
-    V80 at 5 ns; block and ultra RAM, 8 to 512 bits wide, 2K to 128K words). On
-    UltraScale+ the synthesis default chains up to eight RAMs and leaves the read register
-    in the fabric, losing up to 1.9 ns to the best height. The heights below were best or
-    within 0.1 ns of best in 54 of 60 cases:
-
-    - Block RAM holds 32K words per RAMB36 without cascading, so height 1. Between 32K and
-      64K words each bit takes exactly a RAMB36 pair, whose built-in cascade replaces a 2:1
-      read mux in the fabric: height 2 saved 75 LUTs and 0.2 ns on 64000 x 64 words at
-      3.3 ns. At 128K words heights 1 and 2 were even. "auto" mapped deep memories to block
-      RAM with the same results.
-    - URAM holds 4K words; cascading only what an 8:1 read mux in the fabric cannot take
-      gives height 1 up to 32K words and 4 at 128K words.
-
-    On Versal the default was as good as any fixed height; 7-series ignores the attribute.
-    Unlike the default, bounded block RAM heights cannot pack 64- or 512-bit words into
-    RAMB36 parity bits and take up to 12% more RAMB36; ``ram_cascade_height`` = 0 on a
-    node trades that back for timing.
-    """
-    if is_versal(fpgapart) or fpgapart[2] == "7" or ram_style == "distributed":
-        return 0
-    if ram_style == "ultra":
-        return max(1, -(-depth // (8 * 4096)))
-    return 2 if 32768 < depth <= 65536 else 1
 
 
 class HWCustomOp(CustomOp):
@@ -452,92 +413,6 @@ class HWCustomOp(CustomOp):
         """
         out_width = self.get_outstream_width(ind=ind)
         return roundup_to_integer_multiple(out_width, 8)
-
-    def calc_tmem(self) -> int:
-        """Calculate and returns the TMEM."""
-        raise NotImplementedError()
-
-    def calc_wmem(self) -> int:
-        """Calculate and returns the WMEM."""
-        raise NotImplementedError()
-
-    def generate_hdl_memstream(
-        self,
-        fpgapart: str,
-        pumped_memory: int = 0,
-        name: str | None = None,
-        depth: int | None = None,
-        width: int | None = None,
-        init_file: str | None = None,
-        ram_style: str | None = None,
-    ) -> None:
-        """Generate the Verilog wrapper of the node's memstream.
-        Used by MVAU, VVAU, HLS Thresholding, RTL Requant and the elementwise ops.
-
-        By default a single memstream wrapper named after the node is emitted,
-        with depth/width/init_file/ram_style derived from the node. Callers that
-        need more than one memstreamer (e.g. RTL Requant streams scale and bias
-        separately) can pass explicit ``name``, ``depth``, ``width``,
-        ``init_file`` and ``ram_style`` to emit a named streamer without relying
-        on the op-specific defaults."""
-        ops = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl", "Thresholding_hls", "Requant_rtl"]
-        if self.onnx_node.op_type in ops or self.onnx_node.op_type.startswith("Elementwise"):
-            template_path = (
-                Path(get_settings().finn_rtllib)
-                / "memstream"
-                / "hdl"
-                / "memstream_wrapper_template.v"
-            )
-            mname = name if name is not None else self.onnx_node.name
-            sets = 1
-            mlo_max_iter = cast("int", self.get_nodeattr("mlo_max_iter"))
-            bodies = cast("int", self.get_nodeattr("bodies"))
-            if mlo_max_iter:
-                sets = mlo_max_iter
-            elif bodies:
-                sets = bodies
-            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
-            if depth is None:
-                if self.onnx_node.op_type.startswith("Thresholding"):
-                    depth = self.calc_tmem()
-                elif self.onnx_node.op_type.startswith("MVAU"):
-                    depth = self.calc_wmem() * cast("int", self.get_nodeattr("TH"))
-                else:
-                    depth = self.calc_wmem()
-            if width is None:
-                width = self.get_instream_width_padded(1)
-            if ram_style is None:
-                ram_style = cast("str", self.get_nodeattr("ram_style"))
-            if init_file is None:
-                init_file = code_gen_dir + "/memblock.dat"
-            if ram_style == "ultra" and not is_versal(fpgapart):
-                init_file = ""
-            cascade_height = cast("int", self.get_nodeattr("ram_cascade_height"))
-            if cascade_height < 0:
-                # a pumped memory holds twice the words at half the width
-                words = sets * depth * (2 if pumped_memory else 1)
-                cascade_height = memstream_cascade_height(fpgapart, ram_style, words)
-            code_gen_dict = {
-                "$MODULE_NAME$": [mname],
-                "$SETS$": [str(sets)],
-                "$DEPTH$": [str(depth)],
-                "$WIDTH$": [str(width)],
-                "$INIT_FILE$": [init_file],
-                "$RAM_STYLE$": [ram_style],
-                "$CASCADE_HEIGHT$": [str(cascade_height)],
-                "$PUMPED_MEMORY$": [str(pumped_memory)],
-            }
-            # apply code generation to template
-            with template_path.open() as f:
-                template_wrapper = f.read()
-            for key in code_gen_dict:
-                # transform list into long string separated by '\n'
-                code_gen_line = "\n".join(code_gen_dict[key])
-                template_wrapper = template_wrapper.replace(key, code_gen_line)
-            with (Path(code_gen_dir) / (mname + "_memstream_wrapper.v")).open("w") as f:
-                f.write(template_wrapper)
-        else:
-            pass
 
     def generate_hdl_fetch_weights(self) -> None:
         """Generate verilog code for fetch_weights component.

@@ -10,14 +10,15 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import get_by_name, qonnx_make_model, roundup_to_integer_multiple
 
-from finn.custom_op.fpgadataflow.hwcustomop import MEMSTREAM_NODEATTRS, HWCustomOp
+from finn.custom_op.fpgadataflow.memstream import MemStreamOp
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.util.exception import FINNInternalError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
 
-class NodeContainer(RTLBackend, HWCustomOp):
+class NodeContainer(RTLBackend, MemStreamOp):
     """Some functions are (partially) copied from FINNLoop
     Currently unsupported features:
         - Multiple inputs/outputs
@@ -44,9 +45,8 @@ class NodeContainer(RTLBackend, HWCustomOp):
             "tuser_width": ("i", False, 0),
             **b,
         }
-        my_attrs.update(HWCustomOp.get_nodeattr_types(self))
+        my_attrs.update(MemStreamOp.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
-        my_attrs.update(MEMSTREAM_NODEATTRS)
         return my_attrs
 
     def get_nodeattr(self, name):
@@ -210,9 +210,24 @@ class NodeContainer(RTLBackend, HWCustomOp):
         inst = getCustomOp(node)
         return inst.get_outstream_width(ind=ind)
 
-    def generate_hdl_memstream(self, fpgapart, pumped_memory=0):
-        """Delegate memstream HDL generation to the reference node's implementation."""
+    def _get_reference_memstream_op(self) -> MemStreamOp:
+        """Return the reference node, whose memstream holds the parameters of all bodies."""
         inst = getCustomOp(self._get_reference_node())
+        if not isinstance(inst, MemStreamOp):
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: reference node {inst.onnx_node.name} has no memstream"
+            )
+        return inst
+
+    def memstream_depth(self):
+        """Return the reference body's memstream depth; all bodies share its shape."""
+        return self._get_reference_memstream_op().memstream_depth()
+
+    def generate_hdl_memstream(
+        self, fpgapart, pumped_memory=0, name=None, width=None, init_file=None, ram_style=None
+    ):
+        """Delegate memstream HDL generation to the reference node's implementation."""
+        inst = self._get_reference_memstream_op()
         bodies = self.get_nodeattr("bodies")
         inst.set_nodeattr("bodies", bodies)
         inst.set_nodeattr("ram_cascade_height", self.get_nodeattr("ram_cascade_height"))
@@ -220,7 +235,7 @@ class NodeContainer(RTLBackend, HWCustomOp):
         inst.set_nodeattr("code_gen_dir_ipgen", code_gen_dir_ipgen)
         if pumped_memory in inst.get_nodeattr_types():
             pumped_memory = inst.get_nodeattr("pumpedMemory")
-        inst.generate_hdl_memstream(fpgapart, pumped_memory)
+        inst.generate_hdl_memstream(fpgapart, pumped_memory, name, width, init_file, ram_style)
 
     def generate_params(self, model, path):
         """Write weight parameter files for all bodies into the given path."""

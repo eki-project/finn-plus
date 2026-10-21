@@ -36,7 +36,7 @@ from qonnx.core.datatype import DataType
 from qonnx.util.basic import roundup_to_integer_multiple
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.hwcustomop import MEMSTREAM_NODEATTRS
+from finn.custom_op.fpgadataflow.memstream import MemStreamOp
 from finn.custom_op.fpgadataflow.thresholding import Thresholding
 from finn.util.basic import get_vivado_version, is_versal
 from finn.util.data_packing import (
@@ -54,7 +54,7 @@ from finn.util.settings import get_settings
 # the ... here can be any shape (representing groups of vectors)
 
 
-class Thresholding_hls(Thresholding, HLSBackend):
+class Thresholding_hls(Thresholding, HLSBackend, MemStreamOp):
     """Class that corresponds to finn-hls Thresholding_Batch function."""
 
     def __init__(self, onnx_node, **kwargs):
@@ -86,10 +86,14 @@ class Thresholding_hls(Thresholding, HLSBackend):
             # weight data from the weight FIFOs.
             "runtime_writeable_weights": ("i", False, 0, {0, 1}),
         }
-        my_attrs.update(MEMSTREAM_NODEATTRS)
+        my_attrs.update(MemStreamOp.get_nodeattr_types(self))
         my_attrs.update(Thresholding.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
+
+    def memstream_depth(self):
+        """Return the threshold words of one set (TMEM)."""
+        return self.calc_tmem()
 
     def _threshold_mem_width(self):
         """Return the bit width of one threshold memory word (PE * threshold bits * numSteps)."""

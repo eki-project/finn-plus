@@ -195,7 +195,7 @@ module memstream #(
 		// to itself, synthesis chains up to eight block RAMs and leaves Dat2 in the
 		// fabric, so the whole chain plus the output mux falls into one cycle. A
 		// shorter chain takes Dat2 into the last RAM's output register. The caller
-		// picks the height (see memstream_cascade_height in hwcustomop.py).
+		// picks the height (see memstream_cascade_height in custom_op/fpgadataflow/memstream.py).
 		//
 		// Execute Memory Operation (memory datapath without reset)
 		if(CASCADE_HEIGHT == 0) begin : genFreeCascade
