@@ -1,5 +1,5 @@
 {
-  "Defaults": {},
+  "Defaults": {"ram_cascade_height": [0, ["ElementwiseAdd_hls", "ElementwiseMul_hls", "MVAU_hls", "MVAU_rtl"]]},
   "Thresholding_rtl_0": {
     "PE": 1,
     "runtime_writeable_weights": 0,
