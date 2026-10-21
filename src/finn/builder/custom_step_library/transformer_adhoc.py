@@ -310,6 +310,7 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
         "ram_style",
         "ram_style_thresholds",
         "ram_style_mask",
+        "ram_cascade_height",
         "depth",
         "impl_style",
         "resType",

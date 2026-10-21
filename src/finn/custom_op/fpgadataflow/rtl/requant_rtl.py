@@ -6,7 +6,9 @@ import numpy as np
 import os
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import roundup_to_integer_multiple
+from typing import cast
 
+from finn.custom_op.fpgadataflow.memstream import MemStreamOp
 from finn.custom_op.fpgadataflow.requant import Requant
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import fifo_rtl_files, get_dsp_block, make_build_dir
@@ -24,7 +26,7 @@ def _clog2(n):
     return (n - 1).bit_length()
 
 
-class Requant_rtl(Requant, RTLBackend):
+class Requant_rtl(Requant, RTLBackend, MemStreamOp):
     """RTL backend for Requant operation using finn-rtllib/requant."""
 
     def __init__(self, onnx_node, **kwargs):
@@ -36,6 +38,7 @@ class Requant_rtl(Requant, RTLBackend):
         my_attrs = {}
         my_attrs.update(Requant.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
+        my_attrs.update(MemStreamOp.get_nodeattr_types(self))
         my_attrs.update(
             {
                 # memory mode for the scale/bias parameters
@@ -355,7 +358,6 @@ class Requant_rtl(Requant, RTLBackend):
 
         pe = self.get_nodeattr("PE")
         num_channels = self.get_nodeattr("NumChannels")
-        cf = num_channels // pe
         k = self.get_input_datatype(0).bitwidth()
         n = self.get_output_datatype().bitwidth()
 
@@ -398,11 +400,14 @@ class Requant_rtl(Requant, RTLBackend):
         self.generate_hdl_memstream(
             fpgapart,
             name=node_name + "_params",
-            depth=cf,
             width=info["params_stream_width"],
             init_file=os.path.join(code_gen_dir, "params_memblock.dat"),
             ram_style="auto",
         )
+
+    def memstream_depth(self) -> int:
+        """Return the parameter words of the memstream: one per channel fold."""
+        return cast("int", self.get_nodeattr("NumChannels")) // cast("int", self.get_nodeattr("PE"))
 
     def get_rtl_file_list(self, abspath=False):
         """Return list of RTL files needed for this node."""

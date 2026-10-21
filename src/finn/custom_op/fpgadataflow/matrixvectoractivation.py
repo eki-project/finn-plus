@@ -32,6 +32,7 @@ import numpy as np
 import os
 import qonnx.custom_op.general.xnorpopcount as xp
 import textwrap
+from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.util.basic import (
@@ -40,8 +41,9 @@ from qonnx.util.basic import (
     interleave_matrix_outer_dim_from_partitions,
     roundup_to_integer_multiple,
 )
+from typing import cast
 
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.memstream import MemStreamOp
 from finn.util.basic import fifo_rtl_files, is_versal
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.exception import FINNUserError
@@ -56,7 +58,7 @@ from finn.util.settings import get_settings
 # the ... here can be any shape (representing groups of vectors)
 
 
-class MVAU(HWCustomOp):
+class MVAU(MemStreamOp):
     """Abstraction layer for HW implementation of MatrixVectorActivation layers."""
 
     def __init__(self, onnx_node, **kwargs):
@@ -378,6 +380,10 @@ class MVAU(HWCustomOp):
             )
         wmem = mw * mh // (pe * simd)
         return wmem
+
+    def memstream_depth(self) -> int:
+        """Return the weight words of one set: WMEM per tile, times the tiles TH."""
+        return self.calc_wmem() * cast("int", self.get_nodeattr("TH"))
 
     def calc_tmem(self):
         """Calculates and returns TMEM."""
@@ -1039,6 +1045,68 @@ class MVAU(HWCustomOp):
                     intf_names["axilite"] = ["s_axilite"]
 
         return intf_names
+
+    def generate_hdl_fetch_weights(self) -> None:
+        """Generate the Verilog wrapper of the unit that fetches the weights from external
+        memory (``mem_mode = "external_mem"``)."""
+        template_path = (
+            Path(get_settings().finn_rtllib) / "fetch_weights" / "fetch_weights_wrapper.v"
+        )
+        mname = self.onnx_node.name
+        theight = cast("int", self.get_nodeattr("TH"))
+        n_reps = np.prod(cast("list[int]", self.get_nodeattr("numInputVectors"))) // theight
+        # upper bound on how many layers can be supported, set to 64 for now
+        n_max_layers = 64
+        code_gen_dict = {
+            "$MODULE_NAME_AXI_WRAPPER$": mname + "_fetch_weights_wrapper",
+            "$MW$": str(self.get_nodeattr("MW")),
+            "$MH$": str(self.get_nodeattr("MH")),
+            "$PE$": str(self.get_nodeattr("PE")),
+            "$SIMD$": str(self.get_nodeattr("SIMD")),
+            "$N_REPS$": str(n_reps),
+            "$WEIGHT_WIDTH$": str(self.get_input_datatype(1).bitwidth()),
+            "$N_LAYERS$": str(n_max_layers),
+            "$TH$": str(theight),
+            "$EN_MLO$": "EN_MLO" if self.get_nodeattr("mlo_max_iter") else "NO_MLO",
+            "$ADDRESS_OFFSET$": str(self.get_nodeattr("address_offset")),
+        }
+        template_wrapper = template_path.read_text()
+        for key, value in code_gen_dict.items():
+            template_wrapper = template_wrapper.replace(key, value)
+        # DDR exposes a runtime base_address port; HBM leaves the macro undefined
+        # so the port is dropped and the streamer reads from address 0.
+        if get_by_name(self.onnx_node.attribute, "address_offset") is not None:
+            template_wrapper = "`define HAS_BASE_ADDRESS\n" + template_wrapper
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
+        (code_gen_dir / (mname + "_fetch_weights_wrapper.v")).write_text(template_wrapper)
+
+    def generate_hdl_dynload(self) -> None:
+        """Generate the Verilog wrapper of the dynamic weight loader
+        (``mem_mode = "dynamic"``)."""
+        template_path = (
+            Path(get_settings().finn_rtllib) / "dynload" / "hdl" / "dynamic_load_wrapper_template.v"
+        )
+        mname = self.onnx_node.name
+        num_vectors = self.get_nodeattr("numInputVectors")
+        n_reps = (
+            str(num_vectors[-1])
+            if isinstance(num_vectors, (list, np.ndarray))
+            else str(num_vectors)
+        )
+        code_gen_dict = {
+            "$MODULE_NAME$": mname,
+            "$PE$": str(self.get_nodeattr("PE")),
+            "$SIMD$": str(self.get_nodeattr("SIMD")),
+            "$MH$": str(self.get_nodeattr("MH")),
+            "$MW$": str(self.get_nodeattr("MW")),
+            "$WEIGHT_WIDTH$": str(self.get_input_datatype(1).bitwidth()),
+            "$N_REPS$": n_reps,
+        }
+        template_wrapper = template_path.read_text()
+        for key, value in code_gen_dict.items():
+            template_wrapper = template_wrapper.replace(key, value)
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
+        (code_gen_dir / f"{mname}_dynamic_load_wrapper.v").write_text(template_wrapper)
 
     def generate_infra_hdl(self, fpgapart):
         """Generate the weight-infrastructure HDL (dynamic load / external-memory

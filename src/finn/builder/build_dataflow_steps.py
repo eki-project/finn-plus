@@ -186,6 +186,7 @@ from finn.transformation.fpgadataflow.transpose_decomposition import (
     ShuffleDecomposition,
 )
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild
+from finn.transformation.fpgadataflow.vitis_linking_configuration import kernel_synth_options
 from finn.transformation.fpgadataflow.vivado_power_estimation import VivadoPowerEstimation
 from finn.transformation.general import ApplyConfig
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
@@ -785,6 +786,7 @@ def step_set_fifo_depths(
                 "ram_style",
                 "ram_style_thresholds",
                 "ram_style_mask",
+                "ram_cascade_height",
                 "depth",
                 "impl_style",
                 "resType",
@@ -1444,6 +1446,7 @@ def step_target_fps_parallelization(model: ModelWrapper, cfg: DataflowBuildConfi
             "ram_style",
             "ram_style_thresholds",
             "ram_style_mask",
+            "ram_cascade_height",
             "depth",
             "impl_style",
             "resType",
@@ -1481,6 +1484,7 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
             "ram_style",
             "ram_style_thresholds",
             "ram_style_mask",
+            "ram_cascade_height",
             "depth",
             "impl_style",
             "resType",
@@ -2061,7 +2065,15 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                 model = model.transform(PrepareCommunicationKernels(platform, part, pc))
 
             # Create / package XOs for all SDPs
-            model = model.transform(BuildAllXOs(part, clk_ns))
+            model = model.transform(
+                BuildAllXOs(
+                    part,
+                    clk_ns,
+                    reset_pipeline_stages=cfg.reset_pipeline_stages,
+                    stream_register_slices=cfg.stream_register_slices,
+                    synth_options=kernel_synth_options(cfg.vitis_opt_strategy),
+                )
+            )
 
         case ShellFlowType.VIVADO_ZYNQ:
             log.warning(
@@ -2274,6 +2286,8 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
                 cfg.instrumentation_avg_n,
                 cfg.auto_fifo_depths and cfg.auto_fifo_strategy == AutoFIFOSizingMethod.LIVE_FIFO,
                 partition_model_dir=str(partition_model_dir),
+                reset_pipeline_stages=cfg.reset_pipeline_stages,
+                stream_register_slices=cfg.stream_register_slices,
             )
         )
     elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:

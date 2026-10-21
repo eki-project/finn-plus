@@ -33,6 +33,179 @@ SYSTEM_PORT_REGEX = re.compile(r"^(HOST(\[\d+(:\d+)?\])?|(DDR|HBM|PLRAM)(\[\d+(:
 """Regex object to test whether a system port tag (sp) looks correct."""
 
 
+#: opt_design replicates the driver of any net with more loads than this inside
+#: one hierarchy (``-hier_fanout_limit``). Resets and other wide control nets then
+#: reach their loads from registers placed next to them.
+OPT_HIER_FANOUT_LIMIT: int = 512
+
+#: Vivado implementation run directives per `VitisOptStrategy`, as ``[vivado]`` lines of
+#: the link config. DEFAULT, POWER, SIZE and BUILD_SPEED leave Vivado's defaults.
+#: PERFORMANCE is the ``Explore`` set with physical optimisation switched on (what
+#: PERFORMANCE_BEST used to be); PERFORMANCE_BEST is the strongest timing-driven set Vivado
+#: offers: ``ExtraTimingOpt`` placement, ``AggressiveExplore`` physical optimisation and
+#: routing, and post-route physical optimisation. No opt_design
+#: directive: Vivado rejects ``opt_design -directive`` together with any other option
+#: ("Cannot specify additional options with '-directive'"), and the per-SLR
+#: reset handling gives opt_design ``-hier_fanout_limit`` (`OPT_HIER_FANOUT_LIMIT`), which
+#: stays. (v++ ``-O3`` itself adds ``-retiming`` to place_design; that one Vivado accepts
+#: next to a directive.)
+IMPLEMENTATION_DIRECTIVES: dict[VitisOptStrategy, tuple[str, ...]] = {
+    VitisOptStrategy.PERFORMANCE: (
+        "prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE=Explore",
+        "prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.IS_ENABLED=true",
+        "prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE=Explore",
+        "prop=run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE=Explore",
+    ),
+    VitisOptStrategy.PERFORMANCE_BEST: (
+        "prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE=ExtraTimingOpt",
+        "prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.IS_ENABLED=true",
+        "prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE=AggressiveExplore",
+        "prop=run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE=AggressiveExplore",
+        "prop=run.impl_1.STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED=true",
+        "prop=run.impl_1.STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE=AggressiveExplore",
+    ),
+}
+
+#: ``synth_design`` options for the kernels' out-of-context synthesis per strategy. Both
+#: performance strategies retime: the worst paths of mobilenetv1 at 200 MHz that no
+#: placement could shorten were 5-9 LUT levels of window-buffer and MVAU control logic,
+#: and moving registers across that logic is the synthesiser's job.
+KERNEL_SYNTH_OPTIONS: dict[VitisOptStrategy, str] = {
+    VitisOptStrategy.PERFORMANCE: "-retiming",
+    VitisOptStrategy.PERFORMANCE_BEST: "-retiming",
+}
+
+
+def implementation_directives(strategy: VitisOptStrategy) -> tuple[str, ...]:
+    """Vivado run property lines the link config gets for ``strategy`` (see the table)."""
+    return IMPLEMENTATION_DIRECTIVES.get(strategy, ())
+
+
+def kernel_synth_options(strategy: VitisOptStrategy) -> str:
+    """Extra ``synth_design`` options for the kernels under ``strategy`` ("" for none)."""
+    return KERNEL_SYNTH_OPTIONS.get(strategy, "")
+
+
+#: The kernel clock pin of the Alveo dynamic platforms' clocking subsystem
+#: (``<ulp>/ulp_ucs/aclk_kernel_00``); FINN's kernels run on clock 0.
+KERNEL_CLOCK_PIN: str = "aclk_kernel_00"
+
+
+def render_kernel_clock_tcl(f_mhz: int) -> str:
+    """Tcl for the opt_design pre-hook: time the kernel clock at ``f_mhz`` in implementation.
+
+    v++ turns ``--kernel_frequency`` into a generated clock on the kernel MMCM's
+    output whose multiply/divide come from Vivado's clock-wizard solver
+    (``ocl_util.tcl``, ``GetClosestSolution``). In Vivado 2023.1, 2023.2 and 2024.2
+    that solver returns no solution -- 2024.2 says ``[Ip 78-110] Invalid part string
+    <project>``, 2023.x fails silently -- and both values stay 1, so placement and
+    routing are timed at the MMCM's input frequency (100 MHz on the U55C) whatever
+    frequency was requested. 2022.2 and 2024.1 solve it (x12 / 6 for 200 MHz from 100
+    MHz). Measured with Vitis' exact call in bare Vivado sessions; on
+    2024.2 the real links show it too (every 5 ns build reported the same placer and
+    router WNS as the 10 ns builds). This script re-creates the clock with the ratio
+    of the requested to the input frequency, and leaves it alone when the two
+    already agree (a 100 MHz build, or a Vivado whose solver works).
+    """
+    return "\n".join(
+        [
+            "# FINN+: time the kernel clock at the requested frequency in implementation",
+            f"set finn_kclk_mhz {f_mhz}",
+            "proc finn_kclk_gcd {a b} {",
+            "    while {$b != 0} { lassign [list $b [expr {$a % $b}]] a b }",
+            "    return $a",
+            "}",
+            "set finn_kclk_pin [get_pins -quiet -of_objects \\",
+            "    [get_cells -quiet -hierarchical -filter {NAME =~ */ulp_ucs}] \\",
+            f"    -filter {{REF_PIN_NAME == {KERNEL_CLOCK_PIN}}}]",
+            "if {[llength $finn_kclk_pin] != 1} {",
+            (
+                '    puts "CRITICAL WARNING: FINN kernel clock: expected one ulp_ucs/'
+                f'{KERNEL_CLOCK_PIN} pin, found [llength $finn_kclk_pin]; not changed"'
+            ),
+            "} else {",
+            "    set finn_kclk [get_clocks -of_objects $finn_kclk_pin]",
+            "    set finn_kclk_name [get_property NAME $finn_kclk]",
+            "    set finn_kclk_out [lindex [get_pins [get_property SOURCE_PINS $finn_kclk]] 0]",
+            "    set finn_kclk_in [get_property SOURCE $finn_kclk]",
+            "    set finn_kclk_want [expr {1000.0 / $finn_kclk_mhz}]",
+            "    set finn_kclk_have [get_property PERIOD $finn_kclk]",
+            '    if {$finn_kclk_in eq ""} {',
+            (
+                '        puts "CRITICAL WARNING: FINN kernel clock: $finn_kclk_name '
+                'is not a generated clock; not changed"'
+            ),
+            "    } elseif {abs($finn_kclk_have - $finn_kclk_want) < 0.001} {",
+            '        puts "FINN kernel clock: $finn_kclk_name already at $finn_kclk_have ns"',
+            "    } else {",
+            (
+                "        set finn_kclk_in_period [get_property PERIOD [get_clocks -of_objects "
+                "[get_pins $finn_kclk_in]]]"
+            ),
+            "        set finn_kclk_m [expr {int(round($finn_kclk_mhz * 1000.0))}]",
+            "        set finn_kclk_d [expr {int(round(1000000.0 / $finn_kclk_in_period))}]",
+            "        set finn_kclk_g [finn_kclk_gcd $finn_kclk_m $finn_kclk_d]",
+            "        set finn_kclk_m [expr {$finn_kclk_m / $finn_kclk_g}]",
+            "        set finn_kclk_d [expr {$finn_kclk_d / $finn_kclk_g}]",
+            "        create_generated_clock -name $finn_kclk_name -multiply_by $finn_kclk_m \\",
+            "            -divide_by $finn_kclk_d -source $finn_kclk_in $finn_kclk_out",
+            (
+                '        puts "FINN kernel clock: $finn_kclk_name $finn_kclk_have ns -> '
+                "[get_property PERIOD [get_clocks $finn_kclk_name]] ns "
+                '(x$finn_kclk_m/$finn_kclk_d of $finn_kclk_in_period ns)"'
+            ),
+            "    }",
+            "}",
+        ]
+    )
+
+
+def render_slr_reset_tcl(pinned: dict[str, str]) -> str:
+    """Tcl for the post-system-link hook: move each pinned kernel's reset to its SLR.
+
+    Args:
+        pinned: Compute-unit instance name -> ``"SLR<n>"``.
+
+    The script leaves a kernel alone, and says so, when the platform has no
+    ``proc_sys_reset_kernel_slr<n>`` (single-SLR platforms) or the kernel is
+    already on it.
+    """
+    pairs = " ".join(f"{cu} {slr[3:]}" for cu, slr in sorted(pinned.items()))
+    return "\n".join(
+        [
+            "# FINN+: connect each kernel's ap_rst_n to the kernel reset of the SLR it is",
+            "# pinned to. v++ wires every kernel to proc_sys_reset_kernel_slr0, which makes",
+            "# the reset of a kernel in another SLR an SLR-crossing net with a fan-out in",
+            "# the thousands (vitis_linking_configuration._configure_slr_resets).",
+            f"set finn_rst_pinned {{{pairs}}}",
+            "foreach {inst slr} $finn_rst_pinned {",
+            "    set pin [get_bd_pins -quiet $inst/ap_rst_n]",
+            '    if {$pin eq ""} {',
+            '        puts "FINN reset: $inst has no ap_rst_n pin; left as linked"',
+            "        continue",
+            "    }",
+            "    set rst [get_bd_pins -quiet proc_sys_reset_kernel_slr$slr/peripheral_aresetn]",
+            '    if {$rst eq ""} {',
+            '        puts "FINN reset: no proc_sys_reset_kernel_slr$slr in this platform;\\',
+            '            $inst keeps the reset v++ linked"',
+            "        continue",
+            "    }",
+            "    set net [get_bd_nets -quiet -of_objects $pin]",
+            '    if {$net ne ""} {',
+            "        set on_net [get_property PATH [get_bd_pins -of_objects $net]]",
+            "        if {[lsearch -exact $on_net [get_property PATH $rst]] >= 0} {",
+            '            puts "FINN reset: $inst already takes SLR$slr\'s kernel reset"',
+            "            continue",
+            "        }",
+            "        disconnect_bd_net $net $pin",
+            "    }",
+            "    connect_bd_net $rst $pin",
+            '    puts "FINN reset: $inst/ap_rst_n -> proc_sys_reset_kernel_slr$slr"',
+            "}",
+        ]
+    )
+
+
 @dataclass
 class VitisLinkConfiguration(DataClassYAMLMixin):
     """Manages XO files, CU instantiations, stream connections,
@@ -57,6 +230,7 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
     slr: dict[str, str] = field(default_factory=dict)
     connects: list[tuple[str, str]] = field(default_factory=list)
     vivado_section: str = ""
+    advanced_section: str = ""
     connectivity_section: str = ""
 
     def __post_init__(self) -> None:
@@ -237,8 +411,12 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
         self.connects.append((a, b))
 
     def add_vivado_line(self, line: str) -> None:
-        """Add a custom line to the vivado section."""
-        self.vivado_section += line + ("" if line[-1] != "\n" else "\n")
+        """Add a custom line to the vivado section (one entry per line)."""
+        self.vivado_section += line if line.endswith("\n") else line + "\n"
+
+    def add_advanced_line(self, line: str) -> None:
+        """Add a custom line to the [advanced] section (``param=...`` entries)."""
+        self.advanced_section += line if line.endswith("\n") else line + "\n"
 
     def add_xo(self, xo_files: Path | list[Path] | str) -> None:
         """Add an XO file to the list of XO files that will be passed upon linking.
@@ -462,6 +640,7 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
             connects=self.connects,
             connectivity_extras=self.connectivity_section,
             vivado_extras=self.vivado_section,
+            advanced_extras=self.advanced_section,
         )
         self.config_path.write_text(rendered)
 
@@ -526,7 +705,16 @@ class BuildBasicVitisLinkConfig(Transformation):
         f_mhz: int,
     ) -> None:
         """Build a basic linking configuration and store it. Afterwards, the
-        model can be linked, or the config can be modified further."""
+        model can be linked, or the config can be modified further.
+
+        Args:
+            platform: Vitis platform name.
+            board: Target board name.
+            mem_type: Build-wide external memory choice.
+            vitis_opt_strategy: Vitis optimization strategy.
+            optimization_level: v++ optimization level.
+            f_mhz: Target kernel clock in MHz.
+        """
         super().__init__()
         self.platform = platform
         self.board = board
@@ -534,6 +722,52 @@ class BuildBasicVitisLinkConfig(Transformation):
         self.optimization_level = optimization_level
         self.vitis_opt_strategy = vitis_opt_strategy
         self.f_mhz = f_mhz
+
+    def _configure_kernel_clock(self, config: VitisLinkConfiguration) -> None:
+        """Make implementation time the kernel clock at the requested frequency.
+
+        Writes `render_kernel_clock_tcl` next to the link config and runs it as the
+        opt_design pre-hook (Vitis appends a user hook to its own), so opt_design,
+        placement, physical optimisation and routing all see the requested period
+        and v++'s post-route frequency scaling starts from it. Applies to every
+        Alveo build; at the platform's own input frequency it changes nothing.
+        """
+        script = config.config_path.parent / "finn_kernel_clock.tcl"
+        script.write_text(render_kernel_clock_tcl(self.f_mhz) + "\n")
+        config.add_vivado_line(f"prop=run.impl_1.STEPS.OPT_DESIGN.TCL.PRE={script}")
+
+    def _configure_slr_resets(self, config: VitisLinkConfiguration) -> None:
+        """Give every SLR-pinned kernel the kernel reset of its own SLR.
+
+        v++ wires ``ap_rst_n`` of every kernel to ``proc_sys_reset_kernel_slr0``
+        whatever SLR the kernel was pinned to, although the Alveo platforms carry
+        one kernel reset per SLR. A kernel in another SLR then takes a reset that
+        crosses the SLR boundary with a fan-out in the thousands; on mobilenetv1
+        (U55C) that net was the worst FINN path, 1.54 ns of slack at
+        100 MHz against 2.14 ns for the same reset inside SLR0.
+
+        The rewiring is a Tcl script run as ``compiler.userPostSysLinkOverlayTcl``,
+        the v++ hook that sees the finished block design before synthesis. The
+        per-SLR resets are released a
+        few cycles apart, which is harmless for a FINN dataflow design: nothing
+        flows between kernels until the host starts them, long after reset.
+
+        ``-hier_fanout_limit`` on opt_design replicates the driver of every net
+        whose fan-out exceeds the limit per hierarchy, so the reset (and any other
+        wide control net) is driven from registers the placer can put next to
+        their loads instead of one register per SLR.
+        """
+        pinned = {cu: slr for cu, slr in config.slr.items() if slr.upper().startswith("SLR")}
+        if not pinned:
+            return
+        script = config.config_path.parent / "finn_reset_per_slr.tcl"
+        script.write_text(render_slr_reset_tcl(pinned) + "\n")
+        config.add_advanced_line(f"param=compiler.userPostSysLinkOverlayTcl={script}")
+        config.add_vivado_line(
+            "prop=run.impl_1.{STEPS.OPT_DESIGN.ARGS.MORE OPTIONS}="
+            f"{{-hier_fanout_limit {OPT_HIER_FANOUT_LIMIT}}}"
+        )
+        log.info(f"Per-SLR kernel resets for {', '.join(sorted(pinned))} via {script}")
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build the configuration."""
@@ -577,16 +811,10 @@ class BuildBasicVitisLinkConfig(Transformation):
                     f_mhz=self.f_mhz,
                 )
 
-        # Already add optimization strategies for all devices
+        # The implementation directives of the strategy, for every device
         for device in configs.keys():
-            if self.vitis_opt_strategy == VitisOptStrategy.PERFORMANCE_BEST:
-                configs[device].add_vivado_line(
-                    "prop=run.impl_1.STEPS.OPT_DESIGN.ARGS.DIRECTIVE=ExploreWithRemap\n"
-                    "prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE=Explore\n"
-                    "prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.IS_ENABLED=true\n"
-                    "prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE=Explore\n"
-                    "prop=run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE=Explore\n"
-                )
+            for line in implementation_directives(self.vitis_opt_strategy):
+                configs[device].add_vivado_line(line)
 
         # Some temporary variables needed to construct the configs
         current_device: int
@@ -674,6 +902,15 @@ class BuildBasicVitisLinkConfig(Transformation):
                         cu_outputs[node.name] += 1
                         cu_inputs[successor.name] += 1
 
+            # Pin the kernel to its SLR. Until now this was only ever done for the
+            # Aurora transceiver CU, so ordinary kernels were placed wherever Vitis
+            # chose -- including in builds that supplied a `vitis_floorplan_file`,
+            # whose SLR assignment therefore did not reach placement at all. Logged
+            # rather than silent, because it changes where such a build puts its kernels.
+            if node_slr != -1:
+                configs[current_device].add_slr(cu_names[node.name], f"SLR{node_slr}")
+                log.info(f"Pinning kernel {cu_names[node.name]} to SLR{node_slr}")
+
             # Add system ports
             mem_type: str
             mem_idx: int
@@ -705,6 +942,9 @@ class BuildBasicVitisLinkConfig(Transformation):
                 )
 
         # Store everything, generate scripts and return
+        for config in configs.values():
+            self._configure_kernel_clock(config)
+            self._configure_slr_resets(config)
         model = VitisLinkConfiguration.store_to_model(configs, model)
         for config in configs.values():
             config.generate_config()

@@ -53,6 +53,13 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.templates import get_templates_folder
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
+from finn.transformation.fpgadataflow.stream_slices import (
+    SLICE_REG_CONFIG,
+    SLICE_VLNV,
+    register_slice_inputs,
+    slice_cell_name,
+    slice_reset_dont_touch_tcl,
+)
 from finn.util.basic import (
     launch_process_helper,
     make_build_dir,
@@ -92,6 +99,87 @@ def is_external_output(model: ModelWrapper, node: "NodeProto", i: int) -> bool:
     return consumers == []
 
 
+#: The packaged finn-rtllib reset stage (`finn-rtllib/reset_pipe`).
+RESET_PIPE_VLNV: str = "AMD:user:reset_pipe:1.0"
+
+#: The kernel-level reset stage every node's own stage is fed from.
+RESET_TREE_CELL: str = "ap_rst_n_tree"
+
+#: Loads per replica of the kernel-level stage. Fed straight from the platform's
+#: reset register, the 118 per-node stages of one SLR made a single net that
+#: spread over the whole SLR and routed in 9.8 ns (0.25 ns of slack at 100 MHz);
+#: below the opt_design replication threshold, it was never split.
+#: Synthesis replicates the tree stage per this many loads. Fan-out alone is not
+#: enough, though: a replica's 16 loads lie anywhere in the SLR, it settles at
+#: their centroid, and its farthest net still routed in 9.3 ns (0.42 ns of slack,
+#: same day). Distance is bounded by the per-node stages instead: the placer
+#: spreads a node's two registers along the way from the replica to the node
+#: (`DataflowBuildConfig.reset_pipeline_stages`).
+RESET_TREE_FANOUT: int = 16
+
+
+#: Metadata property listing the finn-rtllib IP repositories the stitched block
+#: design takes cores from besides the nodes' own (memstream, reset_pipe,
+#: axi_info). The packaged stitched IP regenerates these cores as its children,
+#: so every project that instantiates it needs the same repositories; without
+#: reset_pipe, every Zynq link failed with "Cannot upgrade to invalid target ''"
+#: on the partitions' ap_rst_n_tree.
+STITCH_LIBRARY_REPOS_PROP: str = "vivado_stitch_library_repos"
+
+
+def reset_cell_name(node_name: str) -> str:
+    """Name of the reset_pipe cell that feeds a node's reset in the stitched design."""
+    return f"{node_name}_rst"
+
+
+def stitched_ip_library_repos(model: ModelWrapper) -> list[str]:
+    """finn-rtllib IP repositories a project needs to instantiate the model's stitched IP."""
+    repos = model.get_metadata_prop(STITCH_LIBRARY_REPOS_PROP)
+    if repos is None:
+        raise FINNUserError(
+            "The model carries no list of the IP repositories its stitched IP depends on. "
+            "Run CreateStitchedIP (step_create_stitched_ip) again."
+        )
+    return json.loads(repos)
+
+
+def kernel_xdc_export_tcl(block_name: str) -> list[str]:
+    """Tcl that writes the synthesized kernel's constraints relative to its block design.
+
+    The packaged kernel is a DCP-based IP: at link time Vivado replaces the kernel
+    cell's contents with the checkpoint, whose top holds the block design as
+    ``<block>_i``. The IP integrator scopes an IP's constraint file to a cell
+    ``inst`` below the IP cell by default, which such a kernel does not have, so
+    every FINN kernel XDC was dropped with ``Designutils 20-1275`` (on every Alveo
+    link). The file is therefore written
+    relative to ``<block>_i`` and packaged scoped to that cell
+    (:func:`kernel_xdc_package_tcl`), the combination that applied in the link.
+    """
+    return [f"write_xdc -force -cell {block_name}_i {block_name}.xdc"]
+
+
+def kernel_xdc_package_tcl(block_name: str) -> list[str]:
+    """Tcl that adds the kernel's XDC to the packaged IP, scoped to its block design cell.
+
+    See :func:`kernel_xdc_export_tcl` for why the file is scoped to ``<block>_i``.
+    """
+    xdc = (
+        f"[ipx::get_files impl/{block_name}.xdc "
+        "-of_objects [ipx::get_file_groups xilinx_implementation]]"
+    )
+    return [
+        f"ipx::add_file impl/{block_name}.xdc [ipx::get_file_groups xilinx_implementation]",
+        f"set_property used_in [list implementation] {xdc}",
+        f"set_property scoped_to_cells {block_name}_i {xdc}",
+    ]
+
+
+# The reset tree's hops carry no timing exception of their own: they are register to
+# register in the kernel clock and the period bounds them. When appending to a
+# `write_xdc -cell` file, start with `current_instance -quiet`: the file ends inside the
+# scope of the last XPM instance it constrained, and an appended query runs there.
+
+
 class CreateStitchedIP(Transformation):
     """Create a Vivado IP Block Design project from all the generated IPs of a
     graph. All nodes in the graph must have the fpgadataflow backend attribute,
@@ -117,6 +205,9 @@ class CreateStitchedIP(Transformation):
         nodecontainer: bool = False,
         functional_simulation: bool = False,
         synth_jobs: int | None = None,
+        reset_pipeline_stages: int = 0,
+        stream_register_slices: bool = False,
+        synth_options: str = "",
     ) -> None:
         """Initialize CreateStitchedIP transformation.
 
@@ -138,6 +229,20 @@ class CreateStitchedIP(Transformation):
                 count. The per-node projects of the FIFO-sizing simulation pass a small value,
                 since their handful of runs would otherwise all synthesize at once and multiply
                 the memory footprint of every parallel node build.
+            reset_pipeline_stages: Register ``ap_rst_n`` this many times in front of
+                every node (a `reset_pipe` cell named ``<node>_rst`` per node, from
+                finn-rtllib, left unconstrained so the placer strings its registers
+                out between the tree stage and the node), behind one kernel-level
+                stage (`RESET_TREE_CELL`) that synthesis replicates per
+                `RESET_TREE_FANOUT` loads; 0 keeps the direct connection. See
+                `DataflowBuildConfig.reset_pipeline_stages`.
+            stream_register_slices: Put an auto-pipelined AXI-stream register slice
+                (``<node>_in<i>_slice``) in front of every node input another node
+                drives, FIFOs excepted; see `finn.transformation.fpgadataflow.stream_slices`
+                and `DataflowBuildConfig.stream_register_slices`.
+            synth_options: Extra ``synth_design`` options for the kernel's out-of-context
+                synthesis (Vitis only), e.g. ``-retiming``; see
+                `vitis_linking_configuration.kernel_synth_options`.
         """
         if signature is None:
             signature = []
@@ -145,6 +250,10 @@ class CreateStitchedIP(Transformation):
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
         self.ip_name = ip_name
+        self.reset_pipeline_stages = reset_pipeline_stages
+        self.stream_register_slices = stream_register_slices
+        self.synth_options = synth_options
+        self.reset_tree_created = False
         self.is_mlo = False
         self.nodecontainer = nodecontainer
         self.run_synth = run_synth or run_pnr  # run_pnr requires synthesis
@@ -175,6 +284,19 @@ class CreateStitchedIP(Transformation):
             "ap_none": [],
         }
 
+    def library_repos(self) -> list[str]:
+        """finn-rtllib IP repositories the block design takes cores from.
+
+        Recorded on the model as `STITCH_LIBRARY_REPOS_PROP` for the projects that
+        instantiate the packaged stitched IP (see `stitched_ip_library_repos`).
+        """
+        repos = ["$::env(FINN_RTLLIB)/memstream"]
+        if self.signature:
+            repos.append("$::env(FINN_RTLLIB)/axi_info")
+        if self.reset_pipeline_stages > 0:
+            repos.append("$::env(FINN_RTLLIB)/reset_pipe")
+        return repos
+
     def is_double_pumped(self, node: "NodeProto") -> bool:
         """Check if node uses double-pumped compute or memory."""
         if node.op_type.startswith("MVAU"):
@@ -196,6 +318,36 @@ class CreateStitchedIP(Transformation):
             )
         clock_intf_name = node_inst.get_verilog_top_module_intf_names()["clk"][0]
         reset_intf_name = node_inst.get_verilog_top_module_intf_names()["rst"][0]
+        node_rst_pin = f"[get_bd_pins {inst_name}/{reset_intf_name}]"
+
+        # The node's reset comes from the port itself or, with a reset pipeline,
+        # from a reset_pipe cell of its own, fed by the kernel-level tree stage
+        # (see __init__). The port then drives only the tree stage.
+        piped = self.reset_pipeline_stages > 0
+        rst_cell = reset_cell_name(inst_name)
+        if piped:
+            if not self.reset_tree_created:
+                self.create_cmds.extend(
+                    [
+                        f"create_bd_cell -type ip -vlnv {RESET_PIPE_VLNV} {RESET_TREE_CELL}",
+                        (
+                            f"set_property -dict [list CONFIG.STAGES {{1}} "
+                            f"CONFIG.MAX_FANOUT {{{RESET_TREE_FANOUT}}}] "
+                            f"[get_bd_cells {RESET_TREE_CELL}]"
+                        ),
+                    ]
+                )
+                self.reset_tree_created = True
+            self.create_cmds.extend(
+                [
+                    f"create_bd_cell -type ip -vlnv {RESET_PIPE_VLNV} {rst_cell}",
+                    (
+                        f"set_property CONFIG.STAGES {{{self.reset_pipeline_stages}}} "
+                        f"[get_bd_cells {rst_cell}]"
+                    ),
+                ]
+            )
+        port_sink = f"[get_bd_pins {RESET_TREE_CELL}/ap_rst_n]" if piped else node_rst_pin
 
         # make clock and reset external, if they aren't already
         if not self.clock_reset_are_external:
@@ -203,21 +355,34 @@ class CreateStitchedIP(Transformation):
                 [
                     f"make_bd_pins_external [get_bd_pins {inst_name}/{clock_intf_name}]",
                     "set_property name ap_clk [get_bd_ports ap_clk_0]",
-                    f"make_bd_pins_external [get_bd_pins {inst_name}/{reset_intf_name}]",
+                    f"make_bd_pins_external {port_sink}",
                     "set_property name ap_rst_n [get_bd_ports ap_rst_n_0]",
                 ]
             )
+            if piped:
+                self.connect_cmds.append(
+                    f"connect_bd_net [get_bd_ports ap_clk] [get_bd_pins {RESET_TREE_CELL}/ap_clk]"
+                )
             self.clock_reset_are_external = True
             self.intf_names["clk"] = ["ap_clk"]
             self.intf_names["rst"] = ["ap_rst_n"]
         # otherwise connect clock and reset
         else:
+            self.connect_cmds.append(
+                f"connect_bd_net [get_bd_ports ap_clk] "
+                f"[get_bd_pins {inst_name}/{clock_intf_name}]"
+            )
+            if not piped:
+                self.connect_cmds.append(f"connect_bd_net [get_bd_ports ap_rst_n] {port_sink}")
+        if piped:
             self.connect_cmds.extend(
                 [
-                    f"connect_bd_net [get_bd_ports ap_rst_n] "
-                    f"[get_bd_pins {inst_name}/{reset_intf_name}]",
-                    f"connect_bd_net [get_bd_ports ap_clk] "
-                    f"[get_bd_pins {inst_name}/{clock_intf_name}]",
+                    f"connect_bd_net [get_bd_ports ap_clk] [get_bd_pins {rst_cell}/ap_clk]",
+                    (
+                        f"connect_bd_net [get_bd_pins {RESET_TREE_CELL}/rst_n_out] "
+                        f"[get_bd_pins {rst_cell}/ap_rst_n]"
+                    ),
+                    f"connect_bd_net [get_bd_pins {rst_cell}/rst_n_out] {node_rst_pin}",
                 ]
             )
 
@@ -240,6 +405,36 @@ class CreateStitchedIP(Transformation):
                         f"connect_bd_net [get_bd_ports ap_clk2x] "
                         f"[get_bd_pins {inst_name}/{clock2x_intf_name}]"
                     )
+
+    def insert_register_slice(self, node: "NodeProto", i: int, src: str, dst: str) -> None:
+        """Put an auto-pipelined AXI-stream register slice between two stream pins.
+
+        The slice is clocked with the kernel clock and reset like the node it feeds
+        (from the node's reset_pipe cell when there is a reset pipeline, so the two
+        leave reset together), and takes its data width from the stream it is
+        connected to.
+        """
+        cell = slice_cell_name(node.name, i)
+        piped = self.reset_pipeline_stages > 0
+        rst = (
+            f"[get_bd_pins {reset_cell_name(node.name)}/rst_n_out]"
+            if piped
+            else "[get_bd_ports ap_rst_n]"
+        )
+        self.create_cmds.extend(
+            [
+                f"create_bd_cell -type ip -vlnv {SLICE_VLNV} {cell}",
+                f"set_property CONFIG.REG_CONFIG {{{SLICE_REG_CONFIG}}} [get_bd_cells {cell}]",
+            ]
+        )
+        self.connect_cmds.extend(
+            [
+                f"connect_bd_net [get_bd_ports ap_clk] [get_bd_pins {cell}/aclk]",
+                f"connect_bd_net {rst} [get_bd_pins {cell}/aresetn]",
+                f"connect_bd_intf_net [get_bd_intf_pins {src}] [get_bd_intf_pins {cell}/S_AXIS]",
+                f"connect_bd_intf_net [get_bd_intf_pins {cell}/M_AXIS] [get_bd_intf_pins {dst}]",
+            ]
+        )
 
     def connect_axi(self, node: "NodeProto", model: "ModelWrapper") -> None:
         """Connect AXI-Lite and AXI-MM interfaces for a node."""
@@ -539,11 +734,9 @@ class CreateStitchedIP(Transformation):
         """Apply the CreateStitchedIP transformation to the model."""
         # ensure non-relative readmemh .dat files
         model = model.transform(ReplaceVerilogRelPaths())
-        ip_dirs = ["list"]
-        # add RTL streamer IP
-        ip_dirs.append("$::env(FINN_RTLLIB)/memstream")
-        if self.signature:
-            ip_dirs.append("$::env(FINN_RTLLIB)/axi_info")
+        library_repos = self.library_repos()
+        model.set_metadata_prop(STITCH_LIBRARY_REPOS_PROP, json.dumps(library_repos))
+        ip_dirs = ["list", *library_repos]
         if (
             model.graph.node[0].op_type not in ["StreamingFIFO_rtl", "IODMA_hls"]
             and self.functional_simulation is False
@@ -612,6 +805,14 @@ class CreateStitchedIP(Transformation):
                         )
                     src_intf_name = prod.get_verilog_top_module_intf_names()["m_axis"][j][0]
                     dst_intf_name = node_inst.get_verilog_top_module_intf_names()["s_axis"][i][0]
+                    if self.stream_register_slices and i in register_slice_inputs(node, model):
+                        self.insert_register_slice(
+                            node,
+                            i,
+                            f"{producer.name}/{src_intf_name}",
+                            f"{node.name}/{dst_intf_name}",
+                        )
+                        continue
                     self.connect_cmds.append(
                         f"connect_bd_intf_net [get_bd_intf_pins {producer.name}/{src_intf_name}] "
                         f"[get_bd_intf_pins {node.name}/{dst_intf_name}]"
@@ -753,18 +954,26 @@ class CreateStitchedIP(Transformation):
             tcl.extend(
                 [
                     f"set_property SYNTH_CHECKPOINT_MODE Hierarchical [ get_files {bd_filename} ]",
-                    "set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} "
-                    "-value {-mode out_of_context} -objects [get_runs synth_1]",
+                    (
+                        "set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} "
+                        f"-value {{-mode out_of_context {self.synth_options}}} "
+                        "-objects [get_runs synth_1]"
+                    ),
                     f"launch_runs synth_1 -jobs {num_workers}",
                     "wait_on_run [get_runs synth_1]",
                     "open_run synth_1 -name synth_1",
+                    *(slice_reset_dont_touch_tcl() if self.stream_register_slices else []),
                     f"write_verilog -force -mode synth_stub {block_name}.v",
                     f"write_checkpoint {block_name}.dcp",
-                    f"write_xdc {block_name}.xdc",
-                    f"report_utilization -hierarchical -hierarchical_depth 5 "
-                    f"-file {block_name}_partition_util.rpt",
-                    f"report_utilization -hierarchical -hierarchical_depth 5 "
-                    f"-file {block_name}_partition_util.xml -format xml",
+                    *kernel_xdc_export_tcl(block_name),
+                    (
+                        f"report_utilization -hierarchical -hierarchical_depth 5 "
+                        f"-file {block_name}_partition_util.rpt"
+                    ),
+                    (
+                        f"report_utilization -hierarchical -hierarchical_depth 5 "
+                        f"-file {block_name}_partition_util.xml -format xml"
+                    ),
                 ]
             )
             model.set_metadata_prop(
@@ -876,11 +1085,7 @@ class CreateStitchedIP(Transformation):
             tcl.extend(
                 [
                     "ipx::add_file_group xilinx_implementation [ipx::current_core]",
-                    f"ipx::add_file impl/{block_name}.xdc "
-                    "[ipx::get_file_groups xilinx_implementation]",
-                    f"set_property used_in [list implementation] "
-                    f"[ipx::get_files impl/{block_name}.xdc "
-                    f"-of_objects [ipx::get_file_groups xilinx_implementation]]",
+                    *kernel_xdc_package_tcl(block_name),
                     "ipx::add_file_group xilinx_synthesischeckpoint [ipx::current_core]",
                     f"ipx::add_file dcp/{block_name}.dcp "
                     f"[ipx::get_file_groups xilinx_synthesischeckpoint]",

@@ -37,6 +37,9 @@ module memstream #(
 
 	parameter  INIT_FILE = "",
 	parameter  RAM_STYLE = "auto",
+	// Longest chain of block or ultra RAMs joined through their cascade pins;
+	// 0 leaves the choice to synthesis.
+	int unsigned  CASCADE_HEIGHT = 0,
 
 	localparam int unsigned  ADDR_WIDTH0 = $clog2(SETS*DEPTH),
 	localparam int unsigned  ADDR_WIDTH = ADDR_WIDTH0? ADDR_WIDTH0 : 1,
@@ -76,7 +79,9 @@ module memstream #(
 		// Increment for wrapping DEPTH-1 back to zero
 		localparam int unsigned  WRAP_INC = 2**ADDR_WIDTH - DEPTH + 1;
 
-		addr_t  Ptr = 0;
+		// The read pointer addresses every block RAM of the memory; see the fan-out
+		// note in axi/hdl/axilite.sv for why synthesis replicates it.
+		(* MAX_FANOUT = 32 *)  addr_t  Ptr = 0;
 		logic   Lst = DEPTH < 2;
 		always_ff @(posedge clk) begin
 			if(rst) begin
@@ -118,7 +123,7 @@ module memstream #(
 			assign	lst = Cnt[$left(Cnt)];
 		end
 
-		addr_t  Ptr = 'x;
+		(* MAX_FANOUT = 32 *)  addr_t  Ptr = 'x;
 		logic   Vld =  0;
 		assign	srdy = !Vld || (lst && got0);
 		always_ff @(posedge clk) begin
@@ -186,21 +191,40 @@ module memstream #(
 	logic  Rs3 = 0;
 	data_t  Dat3 = 'x; /* absorbed register */
 	if(1) begin : blkMem
-		(* RAM_STYLE = RAM_STYLE *)
-		data_t  Mem[SETS*DEPTH];
+		// A deep memory is built from RAMs chained through their cascade pins. Left
+		// to itself, synthesis chains up to eight block RAMs and leaves Dat2 in the
+		// fabric, so the whole chain plus the output mux falls into one cycle. A
+		// shorter chain takes Dat2 into the last RAM's output register. The caller
+		// picks the height (see memstream_cascade_height in custom_op/fpgadataflow/memstream.py).
+		//
+		// Execute Memory Operation (memory datapath without reset)
+		if(CASCADE_HEIGHT == 0) begin : genFreeCascade
+			(* RAM_STYLE = RAM_STYLE *)
+			data_t  Mem[SETS*DEPTH];
+			if(INIT_FILE != "")  initial $readmemh(INIT_FILE, Mem);
 
-		// Optional Memory Initialization
-		if(INIT_FILE != "")  initial $readmemh(INIT_FILE, Mem);
+			data_t  Dat2 = 'x; /* absorbed register */
+			always_ff @(posedge clk) begin
+				if(Wr1)  Mem[Ptr1] <= Dat1;
+				Dat2 <= Mem[Ptr1];
+				Dat3 <= Dat2;
+			end
+		end : genFreeCascade
+		else begin : genBoundCascade
+			(* RAM_STYLE = RAM_STYLE, CASCADE_HEIGHT = CASCADE_HEIGHT *)
+			data_t  Mem[SETS*DEPTH];
+			if(INIT_FILE != "")  initial $readmemh(INIT_FILE, Mem);
 
-		// Execute Memory Operation
+			data_t  Dat2 = 'x; /* absorbed register */
+			always_ff @(posedge clk) begin
+				if(Wr1)  Mem[Ptr1] <= Dat1;
+				Dat2 <= Mem[Ptr1];
+				Dat3 <= Dat2;
+			end
+		end : genBoundCascade
+
 		logic  Rb2 = 0;
 		logic  Rs2 = 0;
-		data_t  Dat2 = 'x; /* absorbed register */
-		always_ff @(posedge clk) begin // Memory datapath without reset
-			if(Wr1)  Mem[Ptr1] <= Dat1;
-			Dat2 <= Mem[Ptr1];
-			Dat3 <= Dat2;
-		end
 		always_ff @(posedge clk) begin
 			if(rst) begin
 				Rb2 <= 0;
@@ -229,7 +253,11 @@ module memstream #(
 		// Stream Output SRL backing Credit Grant for Stream Reads in Flight
 		(* SHREG_EXTRACT = "yes" *)
 		data_t  OSrl[FULL_CREDIT-1];
-		logic [$clog2(FULL_CREDIT):0]  OPtr = -1;
+		// OPtr selects the SRL tap of every output data bit: 1,027 loads for a
+		// 1,024-bit weight stream, spread over the unit (route 6.6 ns across 155
+		// rows on mobilenetv1). Replicated per 64 loads so each copy
+		// serves one sixteenth of the output register.
+		(* MAX_FANOUT = 64 *)  logic [$clog2(FULL_CREDIT):0]  OPtr = -1;
 		always_ff @(posedge clk) begin
 			if(Rs3)  OSrl <= { Dat3, OSrl[0:FULL_CREDIT-3] };
 		end

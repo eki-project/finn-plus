@@ -50,6 +50,7 @@ from finn.custom_op.fpgadataflow import templates
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
+from finn.transformation.fpgadataflow.create_stitched_ip import stitched_ip_library_repos
 from finn.util.basic import getHWCustomOp, make_build_dir, resolve_xilinx_tool
 from finn.util.create import adjacency_list
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
@@ -60,11 +61,10 @@ from finn.util.settings import get_settings
 
 def collect_ip_dirs(model, ipstitch_path):
     """Return the IP directories of all nodes in the model plus
-    the stitched IP and memstream dirs.
+    the stitched IP and the finn-rtllib repos its block design took cores from.
     """
     # collect list of all IP dirs
     ip_dirs = []
-    need_memstreamer = False
     for node in model.graph.node:
         node_inst = getCustomOp(node)
         ip_dir_value = node_inst.get_nodeattr("ip_path")
@@ -73,13 +73,9 @@ def collect_ip_dirs(model, ipstitch_path):
         ), """The directory that should
         contain the generated ip blocks doesn't exist."""
         ip_dirs += [ip_dir_value]
-        if node.op_type.startswith("MVAU") or node.op_type == "Thresholding_hls":
-            if node_inst.get_nodeattr("mem_mode") == "internal_decoupled":
-                need_memstreamer = True
     ip_dirs += [ipstitch_path + "/ip"]
-    if need_memstreamer:
-        # add RTL streamer IP
-        ip_dirs.append(os.path.join(get_settings().finn_rtllib, "memstream"))
+    # cores the stitched block design took from finn-rtllib (memstream, reset_pipe, ...)
+    ip_dirs += stitched_ip_library_repos(model)
     return ip_dirs
 
 

@@ -40,12 +40,11 @@ from onnx import NodeProto
 from pathlib import Path
 from qonnx.core.datatype import BaseDataType
 from qonnx.custom_op.base import CustomOp
-from qonnx.util.basic import get_by_name, roundup_to_integer_multiple
+from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Any, cast
 
-from finn.util.basic import get_watchdog_timeout_cycles, is_versal
+from finn.util.basic import get_watchdog_timeout_cycles
 from finn.util.exception import FINNInternalError
-from finn.util.settings import get_settings
 
 if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
@@ -338,6 +337,7 @@ class HWCustomOp(CustomOp):
         Args:
             model: The model wrapper containing this node.
             path: Path where parameters should be generated.
+            fpgapart: Target FPGA part, for nodes whose parameter layout depends on it.
 
         """
 
@@ -412,183 +412,6 @@ class HWCustomOp(CustomOp):
         """
         out_width = self.get_outstream_width(ind=ind)
         return roundup_to_integer_multiple(out_width, 8)
-
-    def calc_tmem(self) -> int:
-        """Calculate and returns the TMEM."""
-        raise NotImplementedError()
-
-    def calc_wmem(self) -> int:
-        """Calculate and returns the WMEM."""
-        raise NotImplementedError()
-
-    def generate_hdl_memstream(
-        self,
-        fpgapart: str,
-        pumped_memory: int = 0,
-        name: str | None = None,
-        depth: int | None = None,
-        width: int | None = None,
-        init_file: str | None = None,
-        ram_style: str | None = None,
-    ) -> None:
-        """Helper function to generate verilog code for memstream component.
-        Currently utilized by MVAU, VVAU, HLS Thresholding and RTL Requant layer.
-
-        By default a single memstream wrapper named after the node is emitted,
-        with depth/width/init_file/ram_style derived from the node. Callers that
-        need more than one memstreamer (e.g. RTL Requant streams scale and bias
-        separately) can pass explicit ``name``, ``depth``, ``width``,
-        ``init_file`` and ``ram_style`` to emit a named streamer without relying
-        on the op-specific defaults."""
-        ops = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl", "Thresholding_hls", "Requant_rtl"]
-        if self.onnx_node.op_type in ops or self.onnx_node.op_type.startswith("Elementwise"):
-            template_path = (
-                Path(get_settings().finn_rtllib)
-                / "memstream"
-                / "hdl"
-                / "memstream_wrapper_template.v"
-            )
-            mname = name if name is not None else self.onnx_node.name
-            sets = 1
-            mlo_max_iter = self.get_nodeattr("mlo_max_iter")
-            bodies = self.get_nodeattr("bodies")
-            if mlo_max_iter:
-                sets = mlo_max_iter
-            elif bodies:
-                sets = bodies
-            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
-            if depth is None:
-                if self.onnx_node.op_type.startswith("Thresholding"):
-                    depth = self.calc_tmem()
-                elif self.onnx_node.op_type.startswith("MVAU"):
-                    depth = self.calc_wmem() * cast("int", self.get_nodeattr("TH"))
-                else:
-                    depth = self.calc_wmem()
-            if width is None:
-                width = self.get_instream_width_padded(1)
-            if ram_style is None:
-                ram_style = cast("str", self.get_nodeattr("ram_style"))
-            if init_file is None:
-                init_file = code_gen_dir + "/memblock.dat"
-            if ram_style == "ultra" and not is_versal(fpgapart):
-                init_file = ""
-            code_gen_dict = {
-                "$MODULE_NAME$": [mname],
-                "$SETS$": [str(sets)],
-                "$DEPTH$": [str(depth)],
-                "$WIDTH$": [str(width)],
-                "$INIT_FILE$": [init_file],
-                "$RAM_STYLE$": [ram_style],
-                "$PUMPED_MEMORY$": [str(pumped_memory)],
-            }
-            # apply code generation to template
-            with template_path.open() as f:
-                template_wrapper = f.read()
-            for key in code_gen_dict:
-                # transform list into long string separated by '\n'
-                code_gen_line = "\n".join(code_gen_dict[key])
-                template_wrapper = template_wrapper.replace(key, code_gen_line)
-            with (Path(code_gen_dir) / (mname + "_memstream_wrapper.v")).open("w") as f:
-                f.write(template_wrapper)
-        else:
-            pass
-
-    def generate_hdl_fetch_weights(self) -> None:
-        """Generate verilog code for fetch_weights component.
-        Currently utilized by MVAU and Elementwise layers."""
-        ops = ["MVAU_hls", "MVAU_rtl"]
-        if self.onnx_node.op_type in ops or self.onnx_node.op_type.startswith("Elementwise"):
-            template_path = (
-                Path(get_settings().finn_rtllib) / "fetch_weights" / "fetch_weights_wrapper.v"
-            )
-            mname = self.onnx_node.name
-            wdt = self.get_input_datatype(1)
-            en_mlo = "EN_MLO" if self.get_nodeattr("mlo_max_iter") else "NO_MLO"
-            if self.onnx_node.op_type in ops:
-                mw = cast("int", self.get_nodeattr("MW"))
-                mh = cast("int", self.get_nodeattr("MH"))
-                pe = cast("int", self.get_nodeattr("PE"))
-                simd = cast("int", self.get_nodeattr("SIMD"))
-                theight = cast("int", self.get_nodeattr("TH"))
-                n_reps = np.prod(cast("list[int]", self.get_nodeattr("numInputVectors"))) // theight
-            else:
-                # Eltwise layers only have one parallelism parameter
-                mw = 1
-                mh = cast("list[int]", self.get_nodeattr("rhs_shape"))[-1]
-                pe = cast("int", self.get_nodeattr("PE"))
-                simd = 1
-                # TODO use broadcast rhs shape here
-                n_reps = np.prod(cast("list[int]", self.get_nodeattr("rhs_shape"))[:-1])
-                theight = 1
-            # upper bound on how many layers can be supported, set to 64 for now
-            n_max_layers = 64
-            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
-            code_gen_dict = {
-                "$MODULE_NAME_AXI_WRAPPER$": [mname + "_fetch_weights_wrapper"],
-                "$MW$": [str(mw)],
-                "$MH$": [str(mh)],
-                "$PE$": [str(pe)],
-                "$SIMD$": [str(simd)],
-                "$N_REPS$": [str(n_reps)],
-                "$WEIGHT_WIDTH$": [str(wdt.bitwidth())],
-                "$N_LAYERS$": [str(n_max_layers)],
-                "$TH$": [str(theight)],
-                "$EN_MLO$": [en_mlo],
-                "$ADDRESS_OFFSET$": [str(self.get_nodeattr("address_offset"))],
-            }
-            # apply code generation to template
-            with template_path.open("r") as f:
-                template_wrapper = f.read()
-            for key, value in code_gen_dict.items():
-                # transform list into long string separated by '\n'
-                code_gen_line = "\n".join(value)
-                template_wrapper = template_wrapper.replace(key, code_gen_line)
-            # DDR exposes a runtime base_address port; HBM leaves the macro undefined
-            # so the port is dropped and the streamer reads from address 0.
-            if get_by_name(self.onnx_node.attribute, "address_offset") is not None:
-                template_wrapper = "`define HAS_BASE_ADDRESS\n" + template_wrapper
-            with (Path(code_gen_dir) / (mname + "_fetch_weights_wrapper.v")).open("w") as f:
-                f.write(template_wrapper)
-        else:
-            pass
-
-    def generate_hdl_dynload(self) -> None:
-        """Generate HDL for dynamic load wrapper."""
-        template_path = (
-            Path(get_settings().finn_rtllib) / "dynload" / "hdl" / "dynamic_load_wrapper_template.v"
-        )
-        mname = self.onnx_node.name
-        pe = cast("int", self.get_nodeattr("PE"))
-        simd = self.get_nodeattr("SIMD")
-        mh = self.get_nodeattr("MH")
-        mw = self.get_nodeattr("MW")
-        code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
-
-        num_vectors = self.get_nodeattr("numInputVectors")
-        n_reps = (
-            str(num_vectors[-1])  # type: ignore[index]
-            if isinstance(num_vectors, (list, np.ndarray))
-            else str(num_vectors)
-        )
-        code_gen_dict = {
-            "$MODULE_NAME$": [mname],
-            "$PE$": [str(pe)],
-            "$SIMD$": [str(simd)],
-            "$MH$": [str(mh)],
-            "$MW$": [str(mw)],
-            "$WEIGHT_WIDTH$": [str(self.get_input_datatype(1).bitwidth())],
-            "$N_REPS$": [n_reps],
-        }
-        # apply code generation to template
-        with template_path.open() as f:
-            template_wrapper = f.read()
-        for key in code_gen_dict:
-            # transform list into long string separated by '\n'
-            code_gen_line = "\n".join(code_gen_dict[key])
-            template_wrapper = template_wrapper.replace(key, code_gen_line)
-        output_path = Path(code_gen_dir) / f"{mname}_dynamic_load_wrapper.v"
-        with output_path.open("w") as f:
-            f.write(template_wrapper)
 
     def adapt_for_loop_body(self, input_types: "list[LoopBodyInputType]") -> None:
         """Called by LoopRolling transformation to allow operators to adapt their

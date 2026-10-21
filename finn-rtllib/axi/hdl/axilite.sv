@@ -158,12 +158,22 @@ module axilite #(
 
 	//-----------------------------------------------------------------------
 	// IP Backend
+	// The command registers below drive every block RAM of the memory behind this
+	// interface: enable, write enable, address and data each fan out to the whole
+	// array (125 RAMB36 in the large MVAUs of mobilenetv1). Placed inside one
+	// 90- to 180-row region such a net is the design's worst path at 200 MHz
+	// (6.1-7.3 ns of route on a one- or two-level path), and the
+	// placer replicates only what is already critical. MAX_FANOUT makes synthesis
+	// replicate the registers, and the placer puts each replica next to its share
+	// of the array: 32 loads is about a quarter of such an array, a column pair of
+	// forty rows.
+	localparam int unsigned  IP_MAX_FANOUT = 32;
 	if(FOLD == 1) begin : genNoFold
 
 		// Command Issue
-		logic  IpEn =  0;
-		logic  IpWe = 'x;
-		logic [IP_DATA_WIDTH-1:0]  IpData = 'x;
+		(* MAX_FANOUT = IP_MAX_FANOUT *)  logic  IpEn =  0;
+		(* MAX_FANOUT = IP_MAX_FANOUT *)  logic  IpWe = 'x;
+		(* MAX_FANOUT = IP_MAX_FANOUT *)  logic [IP_DATA_WIDTH-1:0]  IpData = 'x;
 		always_ff @(posedge aclk) begin
 			if(rst) begin
 				IpEn <=  0;
@@ -201,10 +211,10 @@ module axilite #(
 		for(genvar  i = 0; i < FOLD; i++)  assign  sel_fold[i] = (ofs_fold == i);
 
 		// Command Issue
-		logic  IpEn =  0;
-		logic  IpWe = 'x;
-		logic [ADDR_WIDTH-BSEL_BITS-1:0]  IpAddr = 'x;
-		logic [FOLD-1:0][DATA_WIDTH-1:0]  IpWData = 'x;
+		(* MAX_FANOUT = IP_MAX_FANOUT *)  logic  IpEn =  0;
+		(* MAX_FANOUT = IP_MAX_FANOUT *)  logic  IpWe = 'x;
+		(* MAX_FANOUT = IP_MAX_FANOUT *)  logic [ADDR_WIDTH-BSEL_BITS-1:0]  IpAddr = 'x;
+		(* MAX_FANOUT = IP_MAX_FANOUT *)  logic [FOLD-1:0][DATA_WIDTH-1:0]  IpWData = 'x;
 		always_ff @(posedge aclk) begin
 			if(rst) begin
 				IpEn <=  0;
