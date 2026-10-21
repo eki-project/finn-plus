@@ -381,9 +381,9 @@ class MVAU(MemStreamOp):
         wmem = mw * mh // (pe * simd)
         return wmem
 
-    def memstream_depth(self):
+    def memstream_depth(self) -> int:
         """Return the weight words of one set: WMEM per tile, times the tiles TH."""
-        return self.calc_wmem() * self.get_nodeattr("TH")
+        return self.calc_wmem() * cast("int", self.get_nodeattr("TH"))
 
     def calc_tmem(self):
         """Calculates and returns TMEM."""

@@ -6,6 +6,7 @@ import numpy as np
 import os
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import roundup_to_integer_multiple
+from typing import cast
 
 from finn.custom_op.fpgadataflow.memstream import MemStreamOp
 from finn.custom_op.fpgadataflow.requant import Requant
@@ -404,9 +405,9 @@ class Requant_rtl(Requant, RTLBackend, MemStreamOp):
             ram_style="auto",
         )
 
-    def memstream_depth(self):
+    def memstream_depth(self) -> int:
         """Return the parameter words of the memstream: one per channel fold."""
-        return self.get_nodeattr("NumChannels") // self.get_nodeattr("PE")
+        return cast("int", self.get_nodeattr("NumChannels")) // cast("int", self.get_nodeattr("PE"))
 
     def get_rtl_file_list(self, abspath=False):
         """Return list of RTL files needed for this node."""

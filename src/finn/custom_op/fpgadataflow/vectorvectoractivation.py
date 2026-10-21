@@ -384,7 +384,7 @@ class VVAU(MemStreamOp):
         wmem = (k_h * k_w * ch // pe) // simd
         return wmem
 
-    def memstream_depth(self):
+    def memstream_depth(self) -> int:
         """Return the weight words of one set (WMEM)."""
         return self.calc_wmem()
 

@@ -91,7 +91,7 @@ class Thresholding_hls(Thresholding, HLSBackend, MemStreamOp):
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def memstream_depth(self):
+    def memstream_depth(self) -> int:
         """Return the threshold words of one set (TMEM)."""
         return self.calc_tmem()
 

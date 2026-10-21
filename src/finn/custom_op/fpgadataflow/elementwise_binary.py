@@ -319,7 +319,7 @@ class ElementwiseBinaryOperation(MemStreamOp):
         # Folding along the last dimension
         return *num_inputs, num_elems // self.pe, self.pe
 
-    def memstream_depth(self):
+    def memstream_depth(self) -> int:
         """Return the words of the constant right-hand side (WMEM)."""
         return int(self.calc_wmem())
 

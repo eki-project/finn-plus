@@ -219,13 +219,19 @@ class NodeContainer(RTLBackend, MemStreamOp):
             )
         return inst
 
-    def memstream_depth(self):
+    def memstream_depth(self) -> int:
         """Return the reference body's memstream depth; all bodies share its shape."""
         return self._get_reference_memstream_op().memstream_depth()
 
     def generate_hdl_memstream(
-        self, fpgapart, pumped_memory=0, name=None, width=None, init_file=None, ram_style=None
-    ):
+        self,
+        fpgapart: str,
+        pumped_memory: int = 0,
+        name: str | None = None,
+        width: int | None = None,
+        init_file: str | None = None,
+        ram_style: str | None = None,
+    ) -> None:
         """Delegate memstream HDL generation to the reference node's implementation."""
         inst = self._get_reference_memstream_op()
         bodies = self.get_nodeattr("bodies")
