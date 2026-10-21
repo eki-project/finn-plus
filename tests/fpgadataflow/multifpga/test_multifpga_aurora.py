@@ -9,6 +9,7 @@ import pytest
 import contextlib
 import mip
 import os
+import shutil
 import types
 import yaml
 from copy import deepcopy
@@ -55,6 +56,7 @@ from finn.util.exception import (
     FINNMultiFPGAPartitionerError,
     FINNMultiFPGAUnsolvableError,
     FINNMultiFPGAUserError,
+    FINNUserError,
 )
 from finn.util.fpgadataflow import get_device_id
 from finn.util.resources import (
@@ -201,6 +203,43 @@ class TestAuroraFlowPreparationAndMetadata:
             build_dir = prep.aurora_storage / "auroraflow_build_dev1_ind2"
             assert build_dir.exists()
             assert res.exists()
+
+
+@pytest.mark.auroraflow
+@pytest.mark.multifpga
+@pytest.mark.parametrize(
+    ("xilinx_vivado", "expected_version"),
+    [
+        ("/tools/Xilinx/Vivado/2022.2", "12.0"),
+        ("/tools/Xilinx/Vivado/2023.1", "12.0"),
+        ("/tools/Xilinx/Vivado/2024.2", "13.0"),
+        ("/tools/Xilinx/2025.1/Vivado", "13.0"),
+        ("/opt/software/xilinx/2025.2/Vivado", "13.0"),
+        ("/tools/Xilinx/Vivado/latest", None),
+        (None, None),
+    ],
+)
+def test_aurora_version_detection(
+    xilinx_vivado: str | None, expected_version: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that the Aurora IP version is derived from XILINX_VIVADO for both install layouts,
+    and that a missing or unversioned XILINX_VIVADO raises a user error.
+    """
+    # The PATH entry must not matter, so it is set to one without a version
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/local/bin/vivado")
+    if xilinx_vivado is None:
+        monkeypatch.delenv("XILINX_VIVADO", raising=False)
+    else:
+        monkeypatch.setenv("XILINX_VIVADO", xilinx_vivado)
+    cfg = MultiFPGAConfiguration(num_fpgas=2, network_backend=MFNetworkBackendType.AURORAFLOW)
+
+    if expected_version is None:
+        match = "was not set" if xilinx_vivado is None else "Could not find a version number"
+        with pytest.raises(FINNUserError, match=match):
+            PrepareAuroraFlow("xilinx_u55c_gen3x16_xdma_3_202210_1", "xcu55c-fsvh2892-2L-e", cfg)
+    else:
+        prep = PrepareAuroraFlow("xilinx_u55c_gen3x16_xdma_3_202210_1", "xcu55c-fsvh2892-2L-e", cfg)
+        assert prep.aurora_version == expected_version
 
 
 @pytest.mark.auroraflow

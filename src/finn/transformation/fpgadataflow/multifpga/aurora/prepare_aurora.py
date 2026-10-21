@@ -1,6 +1,6 @@
 """Prepare and package AuroraFlow kernels."""
 
-import re
+import os
 import shlex
 import shutil
 import subprocess
@@ -14,7 +14,7 @@ from finn.transformation.fpgadataflow.multifpga.aurora.metadata import (
     AuroraLinkEndpoint,
     AuroraNetworkMetadata,
 )
-from finn.util.basic import make_build_dir
+from finn.util.basic import get_vivado_version, make_build_dir
 from finn.util.exception import (
     FINNInternalError,
     FINNMultiFPGAConfigError,
@@ -71,17 +71,20 @@ class PrepareAuroraFlow(Transformation):
             if vivado_path is None:
                 raise FINNUserError("Vivado is not available in PATH!")
 
-            # This will not match ISE versions, but we assume that Vivado is used everywhere now
-            match = re.compile(r".*?Vivado\/(\d{4})\.(\d*)\/.*").match(vivado_path)
-            if match is None:
-                raise FINNInternalError(
-                    f"Could not parse the Vivado version number from its path: {vivado_path}. "
-                    f'If this is not fixable, pass aurora_version="..." to the '
-                    f"PrepareAuroraFlow transformation manually."
+            # The PATH entry may be a wrapper or symlink, so the version is taken from
+            # XILINX_VIVADO, which works for both the <tool>/<version> and the
+            # <version>/<tool> install layout
+            vivado_root = os.environ.get("XILINX_VIVADO")
+            if vivado_root is None:
+                raise FINNUserError("XILINX_VIVADO was not set but is required.")
+            vivado_version = get_vivado_version()
+            if vivado_version is None:
+                raise FINNUserError(
+                    f"Could not find a version number in XILINX_VIVADO: {vivado_root}"
                 )
-            year, _release = match.group(1, 2)
+            year, _release = vivado_version
             self.aurora_version = ""
-            if int(year) < 2024:
+            if year < 2024:
                 self.aurora_version = "12.0"
             else:
                 # TODO: This might need to be updated for future versions.
