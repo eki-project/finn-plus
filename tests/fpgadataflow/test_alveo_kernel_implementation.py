@@ -205,7 +205,7 @@ def test_projects_using_the_stitched_ip_find_its_library_cores(tmp_path: Path) -
 
     The packaged stitched IP regenerates its reset_pipe cells as child IPs; a Zynq
     project without the reset_pipe repository failed on every partition with
-    "Cannot upgrade to invalid target ''" (CI regression, 19 Oct 2026).
+    "Cannot upgrade to invalid target ''".
     """
     from finn.custom_op.fpgadataflow.rtl.finn_loop import (
         collect_ip_dirs as collect_loop_body_ip_dirs,
@@ -257,7 +257,7 @@ def test_added_config_lines_stay_on_separate_lines() -> None:
 
     The old newline logic was inverted (a newline was appended only when the line
     already ended with one), so a second `prop=` line was glued onto the first and v++
-    read the first entry's value with the second appended (13 Oct 2026).
+    read the first entry's value with the second appended.
     """
     config = VitisLinkConfiguration(
         Path(make_build_dir("test_config_lines_")) / "link.cfg",

@@ -7,7 +7,7 @@
  * The stitched IP hands every node the kernel's ap_rst_n directly, so one
  * register in the platform drives tens of thousands of synchronous-reset
  * loads across the whole SLR; that net was the worst path of the kernel
- * (mobilenetv1 on U55C, 13 Oct 2026: 2.6 ns of slack at 100 MHz, every other
+ * (mobilenetv1 on U55C: 2.6 ns of slack at 100 MHz, every other
  * path above 3.7 ns). This module re-registers the reset STAGES times right
  * in front of its node. MAX_FANOUT makes synthesis replicate the last stage,
  * and the placer puts the replicas next to their loads.

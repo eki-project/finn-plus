@@ -255,7 +255,7 @@ module memstream #(
 		data_t  OSrl[FULL_CREDIT-1];
 		// OPtr selects the SRL tap of every output data bit: 1,027 loads for a
 		// 1,024-bit weight stream, spread over the unit (route 6.6 ns across 155
-		// rows on mobilenetv1, 14 Oct 2026). Replicated per 64 loads so each copy
+		// rows on mobilenetv1). Replicated per 64 loads so each copy
 		// serves one sixteenth of the output register.
 		(* MAX_FANOUT = 64 *)  logic [$clog2(FULL_CREDIT):0]  OPtr = -1;
 		always_ff @(posedge clk) begin

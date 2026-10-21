@@ -107,8 +107,8 @@ RESET_TREE_CELL: str = "ap_rst_n_tree"
 
 #: Loads per replica of the kernel-level stage. Fed straight from the platform's
 #: reset register, the 118 per-node stages of one SLR made a single net that
-#: spread over the whole SLR and routed in 9.8 ns (0.25 ns of slack at 100 MHz,
-#: 13 Oct 2026); below the opt_design replication threshold, it was never split.
+#: spread over the whole SLR and routed in 9.8 ns (0.25 ns of slack at 100 MHz);
+#: below the opt_design replication threshold, it was never split.
 #: Synthesis replicates the tree stage per this many loads. Fan-out alone is not
 #: enough, though: a replica's 16 loads lie anywhere in the SLR, it settles at
 #: their centroid, and its farthest net still routed in 9.3 ns (0.42 ns of slack,
@@ -123,7 +123,7 @@ RESET_TREE_FANOUT: int = 16
 #: axi_info). The packaged stitched IP regenerates these cores as its children,
 #: so every project that instantiates it needs the same repositories; without
 #: reset_pipe, every Zynq link failed with "Cannot upgrade to invalid target ''"
-#: on the partitions' ap_rst_n_tree (CI regression, 19 Oct 2026).
+#: on the partitions' ap_rst_n_tree.
 STITCH_LIBRARY_REPOS_PROP: str = "vivado_stitch_library_repos"
 
 
@@ -150,8 +150,8 @@ def kernel_xdc_export_tcl(block_name: str) -> list[str]:
     cell's contents with the checkpoint, whose top holds the block design as
     ``<block>_i``. The IP integrator scopes an IP's constraint file to a cell
     ``inst`` below the IP cell by default, which such a kernel does not have, so
-    every FINN kernel XDC was dropped with ``Designutils 20-1275`` (measured 14 Oct
-    2026 on every Alveo link). The file is therefore written
+    every FINN kernel XDC was dropped with ``Designutils 20-1275`` (on every Alveo
+    link). The file is therefore written
     relative to ``<block>_i`` and packaged scoped to that cell
     (:func:`kernel_xdc_package_tcl`), the combination that applied in the link.
     """

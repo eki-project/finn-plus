@@ -875,7 +875,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: `reset_pipe` cell per node in the stitched design, replicated at synthesis), behind
     #: one kernel-level stage that synthesis replicates per 16 loads. Without it a single
     #: register drives every node's synchronous reset across the device; on mobilenetv1
-    #: (U55C, 100 MHz, 13 Oct 2026) that net was the worst path of the design (2.6 ns of
+    #: (U55C, 100 MHz) that net was the worst path of the design (2.6 ns of
     #: slack, against 3.7 ns and more for everything else), and a single hop to a node
     #: 400 tiles away routed in 9 ns. The per-node registers are free to sit anywhere
     #: between the tree and the node, so the placer strings them out along the way.
@@ -892,7 +892,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: distance between the two twice. The slice registers the ready, and the placer
     #: inserts as many stages as a stream's length needs (up to 24). Throughput is
     #: unchanged; latency grows by the stages inserted. On mobilenetv1 (U55C, kernel cores
-    #: generated for each target, 17 Oct 2026) kernel LUTs and registers grew by 8 % and
+    #: generated for each target) kernel LUTs and registers grew by 8 % and
     #: the link by about 40 minutes, for 3-8 % more clock frequency than a fully
     #: registered slice (see `stream_slices`). Hardware kernels only, like
     #: `reset_pipeline_stages`.

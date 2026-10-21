@@ -45,7 +45,7 @@ OPT_HIER_FANOUT_LIMIT: int = 512
 #: offers: ``ExtraTimingOpt`` placement, ``AggressiveExplore`` physical optimisation and
 #: routing, and post-route physical optimisation. No opt_design
 #: directive: Vivado rejects ``opt_design -directive`` together with any other option
-#: ("Cannot specify additional options with '-directive'", 15 Oct 2026), and the per-SLR
+#: ("Cannot specify additional options with '-directive'"), and the per-SLR
 #: reset handling gives opt_design ``-hier_fanout_limit`` (`OPT_HIER_FANOUT_LIMIT`), which
 #: stays. (v++ ``-O3`` itself adds ``-retiming`` to place_design; that one Vivado accepts
 #: next to a directive.)
@@ -68,8 +68,8 @@ IMPLEMENTATION_DIRECTIVES: dict[VitisOptStrategy, tuple[str, ...]] = {
 
 #: ``synth_design`` options for the kernels' out-of-context synthesis per strategy. Both
 #: performance strategies retime: the worst paths of mobilenetv1 at 200 MHz that no
-#: placement could shorten were 5-9 LUT levels of window-buffer and MVAU control logic
-#: (15 Oct 2026), and moving registers across that logic is the synthesiser's job.
+#: placement could shorten were 5-9 LUT levels of window-buffer and MVAU control logic,
+#: and moving registers across that logic is the synthesiser's job.
 KERNEL_SYNTH_OPTIONS: dict[VitisOptStrategy, str] = {
     VitisOptStrategy.PERFORMANCE: "-retiming",
     VitisOptStrategy.PERFORMANCE_BEST: "-retiming",
@@ -101,7 +101,7 @@ def render_kernel_clock_tcl(f_mhz: int) -> str:
     <project>``, 2023.x fails silently -- and both values stay 1, so placement and
     routing are timed at the MMCM's input frequency (100 MHz on the U55C) whatever
     frequency was requested. 2022.2 and 2024.1 solve it (x12 / 6 for 200 MHz from 100
-    MHz). Measured 16 Oct 2026 with Vitis' exact call in bare Vivado sessions; on
+    MHz). Measured with Vitis' exact call in bare Vivado sessions; on
     2024.2 the real links show it too (every 5 ns build reported the same placer and
     router WNS as the 10 ns builds). This script re-creates the clock with the ratio
     of the requested to the input frequency, and leaves it alone when the two
@@ -743,7 +743,7 @@ class BuildBasicVitisLinkConfig(Transformation):
         whatever SLR the kernel was pinned to, although the Alveo platforms carry
         one kernel reset per SLR. A kernel in another SLR then takes a reset that
         crosses the SLR boundary with a fan-out in the thousands; on mobilenetv1
-        (U55C, 13 Oct 2026) that net was the worst FINN path, 1.54 ns of slack at
+        (U55C) that net was the worst FINN path, 1.54 ns of slack at
         100 MHz against 2.14 ns for the same reset inside SLR0.
 
         The rewiring is a Tcl script run as ``compiler.userPostSysLinkOverlayTcl``,

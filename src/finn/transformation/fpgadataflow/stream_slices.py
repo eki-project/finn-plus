@@ -6,8 +6,7 @@ node's state. The producer's next state depends on that ready, so every such
 stream carries a combinational round trip: producer register -> consumer logic
 -> producer register. That round trip crosses the distance between the two nodes
 twice, so it is the stream path class distance breaks: on mobilenetv1 (U55C) a
-FIFO 300 tiles from the window buffer it fed was 0.52 ns short at 200 MHz (15 Oct
-2026).
+FIFO 300 tiles from the window buffer it fed was 0.52 ns short at 200 MHz.
 
 An AXI-stream register slice at the consumer's input breaks the round trip: the
 producer sees a registered ready, and the consumer's combinational ready reaches
@@ -15,7 +14,7 @@ only the slice. The slice is Vivado's auto-pipelined one: the placer inserts as
 many register stages between producer and consumer as their distance needs (up to
 24), with a credit buffer at the consumer, so throughput is unchanged and latency
 grows by the stages inserted. Measured against a fully registered slice on
-mobilenetv1, free placement, cores at the target clock (17 Oct 2026): 280.8 /
+mobilenetv1, free placement, cores at the target clock: 280.8 /
 269.9 / 278.2 MHz against 259.9 / 260.5 / 270.9 at 300 / 350 / 400 MHz requested,
 for 8 % more kernel LUTs and registers (the credit buffers are LUT RAM) and about 40
 minutes more link time. The fully registered mode was removed on that measurement.
@@ -49,12 +48,12 @@ def slice_reset_dont_touch_tcl() -> list[str]:
     group, and ``write_bitstream`` checks that (DRC NTCN-15). All slices share one
     reset, so all their reset registers at equal delay are equivalent, and the
     placer's equivalent driver rewiring (Physical Synthesis In Placer, after the taps
-    go in) merges them across slices. On the vision transformer at 300 MHz (17 Oct
-    2026) it grafted 49 tap chains onto another slice's ``resp`` register, so their
+    go in) merges them across slices. On the vision transformer at 300 MHz it
+    grafted 49 tap chains onto another slice's ``resp`` register, so their
     groups counted a tap short: NTCN-15 on two slices, no bitstream.
 
     ``DONT_TOUCH`` on these four registers per slice takes them out of the rewiring.
-    Replayed from that link's post-``opt_design`` netlist (18 Oct 2026): no chain
+    Replayed from that link's post-``opt_design`` netlist: no chain
     ends on a foreign register any more (49 -> 0), NTCN-15 282 -> 0, the same 111
     groups get taps, routed WNS +0.007 against +0.016 ns. Taps of equal stage are
     still shared across slices, which the DRC accepts. ``DONT_TOUCH`` on the root

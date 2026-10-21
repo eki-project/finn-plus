@@ -162,7 +162,7 @@ module axilite #(
 	// interface: enable, write enable, address and data each fan out to the whole
 	// array (125 RAMB36 in the large MVAUs of mobilenetv1). Placed inside one
 	// 90- to 180-row region such a net is the design's worst path at 200 MHz
-	// (6.1-7.3 ns of route on a one- or two-level path, 15 Oct 2026), and the
+	// (6.1-7.3 ns of route on a one- or two-level path), and the
 	// placer replicates only what is already critical. MAX_FANOUT makes synthesis
 	// replicate the registers, and the placer puts each replica next to its share
 	// of the array: 32 loads is about a quarter of such an array, a column pair of
