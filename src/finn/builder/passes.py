@@ -145,6 +145,9 @@ class FINNPasses_v1(Sequential):
     ]
 
 
+from qonnx.transformation.infer_datatypes import InferDataTypes
+
+
 def _infer_qonnx_datatypes(model: ModelWrapper):
     """Adds QONNX datatypes to a model by inferring types from values."""
 
@@ -162,7 +165,7 @@ def _infer_qonnx_datatypes(model: ModelWrapper):
 
     # Potentially modified model, still as QONNX ModelWrapper, this step
     # operates in-place modifying the original
-    return model
+    return model.transform(InferDataTypes())
 
 
 def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
@@ -170,8 +173,6 @@ def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     # Convert the QONNX ModelWrapper instance to ONNX IR for pass application
     # and setup ONNX Passes configuration from the DataflowBuildConfig
-    ...
-
     model = ir.from_proto(model.model)
 
     verify = False
