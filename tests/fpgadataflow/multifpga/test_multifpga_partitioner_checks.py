@@ -45,12 +45,12 @@ RESOURCE_STRATEGIES = [
 
 @pytest.mark.multifpga
 @pytest.mark.usefixtures("mocked_resources")
-def test_single_device_solution_is_rejected() -> None:
-    """Test that a partitioning that puts the complete model on one device raises an error."""
-    with pytest.raises(FINNMultiFPGAConfigError, match="single device"):
-        chain_model(2).transform(
-            FindMultiFPGADeviceMapping(make_chain_partitioning_cfg(num_fpgas=1))
-        )
+def test_single_device_solution_is_accepted() -> None:
+    """Test that a partitioning that puts the complete model on one device is applied."""
+    model = chain_model(2).transform(
+        FindMultiFPGADeviceMapping(make_chain_partitioning_cfg(num_fpgas=1))
+    )
+    assert [get_device_id(node) for node in model.graph.node] == [0, 0]
 
 
 @pytest.mark.multifpga

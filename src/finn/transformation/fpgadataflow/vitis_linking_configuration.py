@@ -13,7 +13,7 @@ from mashumaro.mixins.yaml import DataClassYAMLMixin
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from finn.builder.build_dataflow_config import FpgaMemoryType, VitisOptStrategy
 from finn.templates import get_jinja_environment
@@ -286,7 +286,7 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
         """Add further lines to the connectivity section. For example to assign clocks or ports."""
         self.connectivity_section += txt + ("" if txt[-1] != "\n" else "\n")
 
-    def _get_kerneldefs(self) -> dict[str, dict[str, str]]:
+    def _get_kerneldefs(self) -> dict[str, dict[str, Any]]:
         """Use the `kernelinfo` utility to get information on all used kernels.
 
         Returns the kernel info indexed by kernel name. (Key is the kernel name,
@@ -323,7 +323,7 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
                 return kernel
         raise FINNInternalError()
 
-    def _get_ports_for_cu(self, cu: str, kerneldefs: dict) -> list[str]:
+    def _get_ports_for_cu(self, cu: str, kerneldefs: dict[str, dict[str, Any]]) -> list[str]:
         """For the given CU and kernel definitions, find the kernel type of the
         CU and list all ports that this kernel has.
         """

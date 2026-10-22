@@ -404,9 +404,10 @@ class PointToPointBidirectionalFixedPartitioner(MILPPartitioner):
                         )
 
                     # 1)
-                    # Take the absolute difference between the is-on-device variables for the nodes
-                    # This will be 0 if they are one the same device or 1 if
-                    # they are on different devices. This is the _lower bound_
+                    # Lower bound: the absolute difference of the is-on-device-d variables of the
+                    # two nodes. This is 1 if exactly one of the nodes is on device d, and 0 if
+                    # both or neither are on d (also if they are on two different devices other
+                    # than d)
                     self.model += self.edges[d][node.name][successor.name] >= (
                         self.devices[node.name][d] - self.devices[successor.name][d]
                     )
@@ -422,7 +423,7 @@ class PointToPointBidirectionalFixedPartitioner(MILPPartitioner):
                     )
 
                     # 3)
-                    # Upper bound
+                    # Upper bound to 0 if neither node is on device d
                     self.model += self.edges[d][node.name][successor.name] <= (
                         self.devices[node.name][d] + self.devices[successor.name][d]
                     )

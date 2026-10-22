@@ -143,7 +143,8 @@ class FindMultiFPGADeviceMapping(Transformation):
                     "Cannot partition the model automatically: One of the "
                     "considered resources is not available in the model estimates!"
                 )
-            expected_devices = ceil(max(factors.values()))
+            # A model without any usage of the considered resources would give 0 devices
+            expected_devices = max(1, ceil(max(factors.values())))
             device_counts = list(
                 range(expected_devices, expected_devices + self.auto_solution_attempts)
             )
@@ -207,15 +208,6 @@ class FindMultiFPGADeviceMapping(Transformation):
         # Log time required for solving the model
         if self.verbosity.value > MFVerbosity.LOW.value:
             log.info(f"Solver done. Took {self.partitioner.solve_seconds:.3f} seconds.")
-
-        # A solution that places the whole model on a single device is no Multi-FPGA design
-        if len(set(self.mapping.values())) == 1:
-            raise FINNMultiFPGAConfigError(
-                f"Partitioning placed the complete model on a single device. Use the "
-                f"Single-FPGA flow instead (no Multi-FPGA configuration), or set 'num_fpgas' "
-                f"in the MultiFPGAConfiguration to a fixed number higher than 1.\n"
-                f"A detailed report can be viewed at: {report.absolute()}"
-            )
 
         # Apply results back to the model
         model = model.transform(ApplyDeviceMapping(self.mapping))
