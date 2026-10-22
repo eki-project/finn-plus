@@ -200,7 +200,7 @@ def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
     # proto representation wrapped as QONNX ModelWrapper
     result = FINNPasses_v1(config).call(model)
 
-    model = ModelWrapper(ir.to_proto(model))
+    model = ModelWrapper(ir.to_proto(result.model))
 
     if state := result.model.meta["passes"]:
         total, modified_by, verified_by = (
