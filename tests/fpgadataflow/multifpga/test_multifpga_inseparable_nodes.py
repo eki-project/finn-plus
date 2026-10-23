@@ -237,9 +237,6 @@ def test_inseparable_nodes_qonnx(graph_data: tuple[DiGraph, list[list[str]]]) ->
     """
     g, expected_splits = graph_data
     model = networkx_to_onnx(g)
-    indices = {}
-    for i, node in enumerate(model.graph.node):
-        indices[node.name] = i
     found_splits = get_inseparable_nodes(model)
     assert len(found_splits) == len(expected_splits), (
         f"Expected {len(expected_splits)} but found {len(found_splits)} splits. "
@@ -248,9 +245,8 @@ def test_inseparable_nodes_qonnx(graph_data: tuple[DiGraph, list[list[str]]]) ->
     )
     for expected_split_list in expected_splits:
         found_and_correct = False
-        expected_split_list_int = [indices[n] for n in expected_split_list]
         for found_split_list in found_splits:
-            if list_contains_all_elements(expected_split_list_int, found_split_list) and len(
+            if list_contains_all_elements(expected_split_list, found_split_list) and len(
                 found_split_list
             ) == len(expected_split_list):
                 found_and_correct = True

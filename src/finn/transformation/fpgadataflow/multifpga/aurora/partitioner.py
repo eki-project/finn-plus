@@ -362,9 +362,7 @@ class PointToPointBidirectionalFixedPartitioner(MILPPartitioner):
         if self.inseparable_nodes is not None:
             for group in self.inseparable_nodes:
                 for i in range(len(group) - 1):
-                    first = self.modelwrapper.graph.node[group[i]].name
-                    second = self.modelwrapper.graph.node[group[i + 1]].name
-                    self.model += self.chosen_device[first] == self.chosen_device[second]
+                    self.model += self.chosen_device[group[i]] == self.chosen_device[group[i + 1]]
 
         # Number of nodes having this device as their ID
         self.nodesperdevice = [
