@@ -1110,7 +1110,7 @@ def test(
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
-    run_test(variant, num_test_workers, tests, quiet, collect_only)
+    sys.exit(run_test(variant, num_test_workers, tests, quiet, collect_only))
 
 
 @click.group(help="Dependency management")

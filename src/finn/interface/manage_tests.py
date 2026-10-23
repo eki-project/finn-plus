@@ -74,8 +74,9 @@ def run_test(
     tests: tuple[str, ...] = (),
     quiet: int = 0,
     collect_only: bool = False,
-) -> None:
-    """Run a given test variant with the given number of workers.
+) -> int:
+    """Run a given test variant with the given number of workers and return the exit code
+    of pytest (for full_ci and doctest: 1 if any part failed, else 0).
 
     Only for the custom variant: tests are the pytest paths / node IDs to run, quiet (count
     of -q) and collect_only are forwarded to pytest.
@@ -120,21 +121,23 @@ def run_test(
                 selected.append(f"{path.resolve()}{sep}{node_part}")
             pytest_opts = ["-q"] * quiet + (["--collect-only"] if collect_only else [])
             workers_arg = ["-n", num_workers] if num_workers not in ["1", ""] else []
-            subprocess.run([sys.executable, "-m", "pytest", *workers_arg, *pytest_opts, *selected])
+            returncode = subprocess.run(
+                [sys.executable, "-m", "pytest", *workers_arg, *pytest_opts, *selected]
+            ).returncode
         case "doctest":
             status("Running doctests on all relevant FINN submodules.")
-            run_doctests(int(num_workers))
+            returncode = int(run_doctests(int(num_workers)))
         case "quick":
-            subprocess.run(
+            returncode = subprocess.run(
                 shlex.split(
                     f"{sys.executable} -m pytest -v -m 'not "
                     f"(vivado or slow or vitis or board or bnn_pynq or end2end or xslow)' "
                     f"--dist=loadfile -n {num_workers}",
                     posix=IS_POSIX,
                 )
-            )
+            ).returncode
         case "quicktest_ci":
-            subprocess.run(
+            returncode = subprocess.run(
                 shlex.split(
                     f"{sys.executable} -m pytest -q -rf --tb=short -m 'not "
                     f"(vivado or slow or vitis or board or bnn_pynq or end2end or xslow)' "
@@ -144,7 +147,7 @@ def run_test(
                     f"--reruns 1 --dist worksteal -n {num_workers}",
                     posix=IS_POSIX,
                 )
-            )
+            ).returncode
         case "full_ci":
             main_xml = f"{ci_project_dir}/reports/main.xml"
             main_html = f"{ci_project_dir}/reports/main.html"
@@ -317,11 +320,11 @@ def run_test(
                     if Path(xml_file).exists():
                         Path(xml_file).unlink()
 
-            if main_returncode or test_2_returncode or test_3_returncode:
-                sys.exit(1)
+            returncode = int(bool(main_returncode or test_2_returncode or test_3_returncode))
 
         case _:
-            subprocess.run(
+            returncode = subprocess.run(
                 shlex.split(f"{sys.executable} -m pytest -k '{variant}'", posix=IS_POSIX)
-            )
+            ).returncode
     os.chdir(original_dir)
+    return returncode
