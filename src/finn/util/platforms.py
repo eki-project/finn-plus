@@ -72,12 +72,14 @@ ETH_RESOURCE_REQUIREMENTS: dict[str, int] = {
     "DSP": 0,
 }
 
-# QSFP interface names of the Alveo XDMA platforms, as previously hard-coded in the AuroraFlow
-# linking configuration.
-# TODO: Verify for the other Alveo platforms / shell versions
-ALVEO_QSFP_GT_INTERFACE: str = "io_gt_qsfp{index}_00"
-ALVEO_QSFP_REFCLK_INTERFACE: str = "io_clk_qsfp{index}_refclkb_00"
-ALVEO_FREERUNNING_CLOCK: str = "ii_level0_wire/ulp_m_aclk_freerun_ref_00"
+# QSFP interface names shared by the Alveo XDMA platforms. They are defined by the Vitis platform
+# (shell), not the board. Only verified for the U280 and the U55C
+# (xilinx_u55c_gen3x16_xdma_3_202210_1); the reference clock names differ between the two and are
+# set in the platform classes. The other Alveo platforms leave all QSFP names unset, so that
+# AuroraFlow builds raise an error instead of using wrong names.
+# TODO: Add the names for the other Alveo platforms / shell versions
+DEFAULT_ALVEO_QSFP_GT_INTERFACE: str = "io_gt_qsfp{index}_00"
+DEFAULT_ALVEO_FREERUNNING_CLOCK: str = "ii_level0_wire/ulp_m_aclk_freerun_ref_00"
 
 
 class Platform:
@@ -156,6 +158,8 @@ class Platform:
         Raises an error if the name is not known for this platform.
 
         >>> Alveo_NxU55C_Platform().get_qsfp_refclk_interface(1)
+        'io_clk_qsfp1_refclka_00'
+        >>> Alveo_NxU280_Platform().get_qsfp_refclk_interface(1)
         'io_clk_qsfp1_refclkb_00'
         """
         if index < 0:
@@ -446,9 +450,6 @@ class Alveo_NxU50_Platform(Platform):
             eth_slr=1,
             eth_gbps=100,
             qsfp_slr="SLR1",
-            qsfp_gt_interface=ALVEO_QSFP_GT_INTERFACE,
-            qsfp_refclk_interface=ALVEO_QSFP_REFCLK_INTERFACE,
-            freerunning_clock=ALVEO_FREERUNNING_CLOCK,
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -485,9 +486,6 @@ class Alveo_NxU200_Platform(Platform):
             eth_slr=2,
             eth_gbps=100,
             qsfp_slr="SLR2",
-            qsfp_gt_interface=ALVEO_QSFP_GT_INTERFACE,
-            qsfp_refclk_interface=ALVEO_QSFP_REFCLK_INTERFACE,
-            freerunning_clock=ALVEO_FREERUNNING_CLOCK,
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -531,9 +529,6 @@ class Alveo_NxU250_Platform(Platform):
             eth_slr=3,
             eth_gbps=100,
             qsfp_slr="SLR2",
-            qsfp_gt_interface=ALVEO_QSFP_GT_INTERFACE,
-            qsfp_refclk_interface=ALVEO_QSFP_REFCLK_INTERFACE,
-            freerunning_clock=ALVEO_FREERUNNING_CLOCK,
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -568,9 +563,9 @@ class Alveo_NxU280_Platform(Platform):
             eth_slr=2,
             eth_gbps=100,
             qsfp_slr="SLR2",
-            qsfp_gt_interface=ALVEO_QSFP_GT_INTERFACE,
-            qsfp_refclk_interface=ALVEO_QSFP_REFCLK_INTERFACE,
-            freerunning_clock=ALVEO_FREERUNNING_CLOCK,
+            qsfp_gt_interface=DEFAULT_ALVEO_QSFP_GT_INTERFACE,
+            qsfp_refclk_interface="io_clk_qsfp{index}_refclkb_00",
+            freerunning_clock=DEFAULT_ALVEO_FREERUNNING_CLOCK,
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -610,9 +605,9 @@ class Alveo_NxU55C_Platform(Platform):
             eth_slr=1,
             eth_gbps=100,
             qsfp_slr="SLR1",
-            qsfp_gt_interface=ALVEO_QSFP_GT_INTERFACE,
-            qsfp_refclk_interface=ALVEO_QSFP_REFCLK_INTERFACE,
-            freerunning_clock=ALVEO_FREERUNNING_CLOCK,
+            qsfp_gt_interface=DEFAULT_ALVEO_QSFP_GT_INTERFACE,
+            qsfp_refclk_interface="io_clk_qsfp{index}_refclka_00",
+            freerunning_clock=DEFAULT_ALVEO_FREERUNNING_CLOCK,
             limits=limits,
             avg_constraints=avg_constraints,
         )
