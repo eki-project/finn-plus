@@ -8,8 +8,11 @@ from typing import TYPE_CHECKING
 
 from finn.builder.build_dataflow_config import MFVerbosity, MultiFPGAConfiguration
 from finn.transformation.fpgadataflow.multifpga.backend import get_backend
+from finn.transformation.fpgadataflow.multifpga.utils import (
+    ensure_device_id_set,
+    ensure_only_sdp_nodes,
+)
 from finn.util.basic import make_build_dir
-from finn.util.exception import FINNMultiFPGAError
 from finn.util.fpgadataflow import get_device_id
 from finn.util.logging import log
 
@@ -58,18 +61,12 @@ class CreateNetworkMetadata(Transformation):
         model.set_metadata_prop("network_metadata", str(metadata_path))
         return metadata_path
 
+    @ensure_only_sdp_nodes
+    @ensure_device_id_set
     def create_metadata(self, model: ModelWrapper) -> None:
         """Walk the graph. Any time a change in devices between SDP nodes is recognized,
         this connection is added to the metadata object.
         """
-        for node in model.graph.node:
-            if node.op_type != "StreamingDataflowPartition":
-                raise FINNMultiFPGAError(
-                    f"Cannot create metadata for model: node {node.name} is "
-                    f"not a StreamingDataflowPartition. Make sure to "
-                    f"run CreateMultiFPGAStreamingDataflowPartition first."
-                )
-
         # Loop all nodes
         for node in model.graph.node:
             for out_tensor_index, output_tensor in enumerate(node.output):
@@ -87,7 +84,12 @@ class CreateNetworkMetadata(Transformation):
                                     f"[{d1}] ----> {successor.name}:{in_tensor_index} [{d2}]"
                                 )
                             self.metadata.add_connection(
-                                d1, node.name, out_tensor_index, d2, successor.name, in_tensor_index
+                                d1,
+                                node.name,
+                                out_tensor_index,  # type: ignore
+                                d2,
+                                successor.name,
+                                in_tensor_index,  # type: ignore
                             )
                             break
 

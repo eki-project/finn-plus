@@ -4,7 +4,7 @@ from math import ceil
 from pathlib import Path, PurePath
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
@@ -12,6 +12,10 @@ from finn.builder.build_dataflow_config import (
     MultiFPGAConfiguration,
 )
 from finn.transformation.fpgadataflow.multifpga.backend import get_backend
+from finn.transformation.fpgadataflow.multifpga.utils import (
+    ensure_board_set,
+    ensure_multifpga_config,
+)
 from finn.util.exception import (
     FINNMultiFPGAConfigError,
     FINNMultiFPGAUnsolvableError,
@@ -100,17 +104,17 @@ class FindMultiFPGADeviceMapping(Transformation):
     in the report directory, next to the partitioning report.
     """
 
+    @ensure_multifpga_config
+    @ensure_board_set
     def __init__(self, cfg: DataflowBuildConfig, automatic_solution_attempts: int = 3) -> None:
         """Partition the model. `automatic_solution_attempts` is ignored,
         unless automatic partitioning is enabled.
         """
         self.auto_solution_attempts = automatic_solution_attempts
         self.cfg = cfg
-        if self.cfg.multifpga_configuration is None:
-            raise FINNMultiFPGAConfigError(
-                "MultiFPGA configuration is not set, but 'FindMultiFPGADeviceMapping' was called."
-            )
-        self.mfcfg: MultiFPGAConfiguration = cfg.multifpga_configuration  # type: ignore
+        self.mfcfg: MultiFPGAConfiguration = cast(
+            "MultiFPGAConfiguration", cfg.multifpga_configuration
+        )
         self.verbosity = self.mfcfg.verbosity
 
         # Select the partitioner based on the communication kernel
@@ -124,19 +128,17 @@ class FindMultiFPGADeviceMapping(Transformation):
         """Generate a list of device counts to try. If the number is set
         in the config, only this number is returned. Otherwise the estimates are used
         to judge the number of devices needed."""
-        if self.cfg.multifpga_configuration is None or self.cfg.board is None:
-            raise FINNMultiFPGAConfigError("No Multi-FPGA partitioning config or board given.")
-        device_counts = [self.cfg.multifpga_configuration.num_fpgas]
-        if self.cfg.multifpga_configuration.num_fpgas <= 0:
+        device_counts = [self.mfcfg.num_fpgas]
+        if self.mfcfg.num_fpgas <= 0:
             # Calculate all factors and use the biggest one. Since 2.4x is not a valid device
             # count, ceil to the next value. This will be the lower bound for the number of
             # devices to try out.
             factors = get_model_device_resource_factors(
                 model,
-                self.cfg.board,
+                self.cfg.board,  # type: ignore
                 self.cfg._resolve_fpga_part(),  # noqa
-                self.cfg.multifpga_configuration.considered_resources,
-                self.cfg.multifpga_configuration.max_utilization,
+                self.mfcfg.considered_resources,
+                self.mfcfg.max_utilization,
             )
             if factors is None:
                 raise FINNMultiFPGAUserError(

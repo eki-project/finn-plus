@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, override
 
 from finn.transformation.fpgadataflow.multifpga.partitioner import Partitioner as BasePartitioner
+from finn.transformation.fpgadataflow.multifpga.utils import ensure_multifpga_config
 from finn.util.basic import make_build_dir
 from finn.util.exception import (
     FINNMultiFPGAError,
@@ -58,6 +59,7 @@ class MILPPartitioner(BasePartitioner):
     RETRY_DELAY = 5.0  # seconds before the 2nd attempt, doubled after each further one
     RETRY_DELAY_MAX = 60.0  # seconds
 
+    @ensure_multifpga_config
     def __init__(self, model: ModelWrapper, cfg: DataflowBuildConfig) -> None:
         """Initialize the partitioner. The MILP model itself is only created by `solve()`."""
         super().__init__(model, cfg)

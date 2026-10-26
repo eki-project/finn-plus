@@ -9,6 +9,10 @@ from qonnx.transformation.base import Transformation
 from typing import cast
 
 from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
+from finn.transformation.fpgadataflow.multifpga.utils import (
+    ensure_device_id_set,
+    ensure_only_sdp_nodes,
+)
 from finn.transformation.fpgadataflow.vitis_linking_configuration import VitisLinkConfiguration
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -94,6 +98,8 @@ class AddAuroraToLinkConfig(Transformation):
         self.tx_dummy = tx_dummy
         return self.rx_dummy, self.tx_dummy
 
+    @ensure_only_sdp_nodes
+    @ensure_device_id_set
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Modify the link config."""
         metadata = AuroraNetworkMetadata.load_from_model(model)

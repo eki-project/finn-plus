@@ -7,8 +7,10 @@ from collections import Counter
 from functools import cached_property
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
+from typing import cast
 
-from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.builder.build_dataflow_config import DataflowBuildConfig, MultiFPGAConfiguration
+from finn.transformation.fpgadataflow.multifpga.utils import ensure_multifpga_config
 from finn.util.basic import log
 from finn.util.exception import FINNMissingMappingError
 from finn.util.resources import (
@@ -23,13 +25,13 @@ class Partitioner(ABC):
     to other parts of FINN. Partitioners should inherit and implement their necessary machinery.
     """
 
+    @ensure_multifpga_config
     def __init__(self, model: ModelWrapper, cfg: DataflowBuildConfig) -> None:
         """Initialize a partitioner by providing it with ModelWrapper and DataflowBuildConfig."""
-        assert cfg.multifpga_configuration is not None
         assert cfg.board is not None
         self.modelwrapper = model
         self.cfg = cfg
-        self.mfcfg = cfg.multifpga_configuration
+        self.mfcfg = cast("MultiFPGAConfiguration", cfg.multifpga_configuration)
         self.board = cfg.board
         self.mapping: dict[str, int] | None = None
         self.solve_seconds: float | None = None

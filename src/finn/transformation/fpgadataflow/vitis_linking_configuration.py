@@ -17,9 +17,10 @@ from typing import TYPE_CHECKING, Any, cast
 
 from finn.builder.build_dataflow_config import FpgaMemoryType, VitisOptStrategy
 from finn.templates import get_jinja_environment
+from finn.transformation.fpgadataflow.multifpga.utils import ensure_only_sdp_nodes
 from finn.util.basic import get_metadata_prop_path, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError, FINNVitisLinkConfigError
-from finn.util.fpgadataflow import check_all_sdp_nodes, get_device_id, get_submodel, get_vitis_xo
+from finn.util.fpgadataflow import get_device_id, get_submodel, get_vitis_xo
 from finn.util.logging import log
 
 if TYPE_CHECKING:
@@ -552,6 +553,7 @@ class BuildBasicVitisLinkConfig(Transformation):
         self.vitis_opt_strategy = vitis_opt_strategy
         self.f_mhz = f_mhz
 
+    @ensure_only_sdp_nodes
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build the configuration."""
         configs: dict[int, VitisLinkConfiguration] = {}
@@ -626,7 +628,6 @@ class BuildBasicVitisLinkConfig(Transformation):
         cu_outputs: dict[str, int] = {}
 
         # Loop through all SDPs and add all nodes
-        check_all_sdp_nodes(model)
         total_idmas = 0
         total_odmas = 0
         for node in model.graph.node:
