@@ -70,29 +70,26 @@ class CreateNetworkMetadata(Transformation):
                     f"run CreateMultiFPGAStreamingDataflowPartition first."
                 )
 
+        # Loop all nodes
         for node in model.graph.node:
-            suc = model.find_direct_successors(node)
-            if suc is None:
-                continue
-            d1 = get_device_id(node)
-            if d1 is None:
-                raise FINNMultiFPGAError(
-                    f"Node {node.name} has no device ID. "
-                    f"Make sure to partition the model "
-                    f"before creating the metadata."
-                )
-            for s in suc:
-                d2 = get_device_id(s)
-                if d2 is None:
-                    raise FINNMultiFPGAError(
-                        f"Node {s.name} has no device ID. "
-                        f"Make sure to partition the model "
-                        f"before creating the metadata."
-                    )
-                if d1 != d2:
-                    if self.verbosity.value > MFVerbosity.MEDIUM.value:
-                        log.info(f"Adding connection:  {node.name} [{d1}] ----> {s.name} [{d2}]")
-                    self.metadata.add_connection(d1, node.name, d2, s.name)
+            for out_tensor_index, output_tensor in enumerate(node.output):
+                successors = model.find_consumers(output_tensor)
+                for successor in successors:
+                    d1 = get_device_id(node)
+                    d2 = get_device_id(successor)
+                    if d1 == d2:
+                        continue
+                    for in_tensor_index, input_tensor in enumerate(successor.input):
+                        if input_tensor == output_tensor:
+                            if self.verbosity.value > MFVerbosity.MEDIUM.value:
+                                log.info(
+                                    f"Adding connection:  {node.name}:{out_tensor_index} "
+                                    f"[{d1}] ----> {successor.name}:{in_tensor_index} [{d2}]"
+                                )
+                            self.metadata.add_connection(
+                                d1, node.name, out_tensor_index, d2, successor.name, in_tensor_index
+                            )
+                            break
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Create and save the metadata from the given modelwrapper."""

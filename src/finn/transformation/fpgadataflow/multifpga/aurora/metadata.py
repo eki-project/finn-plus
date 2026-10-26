@@ -2,35 +2,39 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import networkx as nx
-import numpy as np
 import shutil
-from collections import defaultdict
 from dataclasses import dataclass, field
 from mashumaro.mixins.yaml import DataClassYAMLMixin
-from matplotlib.figure import Figure
-from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
 # Needs to be outside the type-checking block, so that DataClassYAMLMixin can pick it up
 # for automatic serialization.
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
-from finn.builder.build_dataflow_config import MFTopology
 from finn.transformation.fpgadataflow.multifpga.metadata import DataDirection, NetworkMetadata
 from finn.util.basic import launch_process_helper
-from finn.util.exception import FINNInternalError, FINNMultiFPGAConfigError, FINNUserError
+from finn.util.exception import FINNInternalError, FINNMultiFPGAConfigError
 from finn.util.fpgadataflow import get_device_id
 from finn.util.logging import log
-from finn.util.platforms import platforms
 
 if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
     from typing import Self
 
-    from finn.builder.build_dataflow_config import DataflowBuildConfig, MultiFPGAConfiguration
+    from finn.builder.build_dataflow_config import MultiFPGAConfiguration
+
+
+@dataclass
+class AuroraUnidirectionalConnection:
+    """Dataclass storing the fact that we need to connect
+    <A>:m_axis_<A_index>  to  <B>:s_axis_<B_index>."""
+
+    source_kernel: str
+    source_kernel_port_index: int
+    target_kernel: str
+    target_kernel_port_index: int
 
 
 @dataclass
@@ -52,19 +56,21 @@ class AuroraLinkEndpoint:
     partner_link_index: int | None
     """Index of the QSFP port / link that the other endpoint occupies."""
 
-    connecting_kernels: dict[DataDirection, tuple[str, str] | None]
+    tx: AuroraUnidirectionalConnection | None
+    rx: AuroraUnidirectionalConnection | None
     """Connections with other devices. One entry for RX, one for TX.
     The value can be None, in which case no connection for this direction
-    was established yet, or it can contain a tuple of the names of the kernels
-    to which the Aurora kernels are connected.
+    was established yet, or it contains the sending and receiving kernels and their ports.
 
-    TX: (SDP0, SDP1) would mean that SDP0 (this device) sends to SDP1 (other device)
-    RX: (SDP1, SDP0) would mean that SDP0 (other device) sends to SDP1 (this device)
+    TX: SDP0:m_axis_0 -> SDP1:s_axis_1 would mean that SDP0 (this device) sends to SDP1 (other
+        device)
+    RX: SDP0:m_axis_0 -> SDP1:s_axis_1 would mean that SDP0 (other device) sends to SDP1 (this
+        device)
 
-    The first element is always the kernel matching the communication direction: For TX it's
-    the sender, for RX it's the receiver.
+    I.e.: For TX the source_kernel is on THIS device, for RX the target_kernel is on THIS device.
 
-    A complete connection requires matching pairs of TX and RX data on the two devices.
+    A complete connection requires the same connection as TX on the sending and as RX on the
+    receiving device.
     """
 
 
@@ -126,19 +132,39 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         """Set the specified kernel data."""
         self.data[key] = value
 
+    def _has_free_tx_connection(self, endpoint: AuroraLinkEndpoint, partner: int) -> bool:
+        """Return whether the given kernel has a free spot/kernel
+        in the given direction with the given partner device."""
+        return endpoint.partner_device == partner and endpoint.tx is None
+
+    def _has_free_rx_connection(self, endpoint: AuroraLinkEndpoint, partner: int) -> bool:
+        """Return whether the given kernel has a free spot/kernel
+        in the given direction with the given partner device."""
+        return endpoint.partner_device == partner and endpoint.rx is None
+
     def _has_free_connection(
-        self, kernel: AuroraLinkEndpoint, direction: DataDirection, partner: int
+        self, endpoint: AuroraLinkEndpoint, direction: DataDirection, partner: int
     ) -> bool:
         """Return whether the given kernel has a free spot/kernel
         in the given direction with the given partner device."""
-        return kernel.partner_device == partner and kernel.connecting_kernels[direction] is None
+        match direction:
+            case DataDirection.TX:
+                return self._has_free_tx_connection(endpoint, partner)
+            case DataDirection.RX:
+                return self._has_free_rx_connection(endpoint, partner)
+            case _:
+                raise FINNInternalError(
+                    f"Unknown direction {direction} when searching a free connection."
+                )
 
     def _add_single_connection(
         self,
         on_device: int,
         on_node: str,
+        on_tensor_index: int,
         other_device: int,
         other_node: str,
+        other_tensor_index: int,
         direction: DataDirection,
         create_devices_implicitly: bool = True,
     ) -> int:
@@ -164,16 +190,41 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
                     f"to be created implicitly."
                 )
 
+        # The connection to be added. It always points from the sender to the receiver, so that
+        # both endpoints of a cable store the same connection
+        match direction:
+            case DataDirection.TX:
+                connection = AuroraUnidirectionalConnection(
+                    on_node, on_tensor_index, other_node, other_tensor_index
+                )
+            case DataDirection.RX:
+                connection = AuroraUnidirectionalConnection(
+                    other_node, other_tensor_index, on_node, on_tensor_index
+                )
+            case _:
+                raise FINNInternalError(
+                    "Unknown direction encountered while creating metadata connection."
+                )
+
         # Check if there is a kernel that still has an unused connection in our direction
         for aurora_kernel in self.data[on_device]:
-            if self._has_free_connection(aurora_kernel, direction, other_device):
-                aurora_kernel.connecting_kernels[direction] = (on_node, other_node)
-                if aurora_kernel.link_index is None:
+            if not self._has_free_connection(aurora_kernel, direction, other_device):
+                continue
+            match direction:
+                case DataDirection.TX:
+                    aurora_kernel.tx = connection
+                case DataDirection.RX:
+                    aurora_kernel.rx = connection
+                case _:
                     raise FINNInternalError(
-                        f"Link index of existing connection is not set! ({on_device}) "
-                        f"{on_node} -> ({other_device}) {other_node}"
+                        "Unknown direction encountered while creating metadata connection."
                     )
-                return aurora_kernel.link_index
+            if aurora_kernel.link_index is None:
+                raise FINNInternalError(
+                    f"Link index of existing connection is not set! ({on_device}) "
+                    f"{on_node} -> ({other_device}) {other_node}"
+                )
+            return aurora_kernel.link_index
 
         # Check if we already used all ports on this device. If yes, we cannot map
         # the partitioning.
@@ -194,14 +245,23 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
             AuroraLinkEndpoint(
                 aurora_xo=None,
                 partner_device=other_device,
-                connecting_kernels={DataDirection.TX: None, DataDirection.RX: None},
+                tx=None,
+                rx=None,
                 link_index=utilized_port_count,
                 partner_link_index=None,
             )
         )
 
         # Add the connection
-        self.data[on_device][-1].connecting_kernels[direction] = (on_node, other_node)
+        match direction:
+            case DataDirection.TX:
+                self.data[on_device][-1].tx = connection
+            case DataDirection.RX:
+                self.data[on_device][-1].rx = connection
+            case _:
+                raise FINNInternalError(
+                    "Unknown direction encountered while creating metadata connection."
+                )
 
         # Return which port this connection sits on
         link_index = self.data[on_device][-1].link_index
@@ -212,8 +272,10 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         self,
         sender_device: int,
         sender_node: str,
+        sender_tensor_index: int,
         receiver_device: int,
         receiver_node: str,
+        receiver_tensor_index: int,
     ) -> None:
         """Add a connection to the metadata. This modifies the internal
         representation to add kernels on both devices
@@ -222,28 +284,33 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         utilized before creating a new kernel.
         """
         sender_link = self._add_single_connection(
-            sender_device, sender_node, receiver_device, receiver_node, DataDirection.TX
+            sender_device,
+            sender_node,
+            sender_tensor_index,
+            receiver_device,
+            receiver_node,
+            receiver_tensor_index,
+            DataDirection.TX,
         )
         receiver_link = self._add_single_connection(
-            receiver_device, receiver_node, sender_device, sender_node, DataDirection.RX
+            receiver_device,
+            receiver_node,
+            receiver_tensor_index,
+            sender_device,
+            sender_node,
+            sender_tensor_index,
+            DataDirection.RX,
         )
 
         # Both endpoints sit at the two ends of the same cable, so each one has to point to the
         # link of the other. An endpoint whose other direction is already in use must already
         # point to the same partner link, otherwise the two devices are out of sync.
+        connection = AuroraUnidirectionalConnection(
+            sender_node, sender_tensor_index, receiver_node, receiver_tensor_index
+        )
         for endpoint, partner_link in (
-            (
-                self.get_endpoint(
-                    sender_device, sender_node, receiver_device, receiver_node, DataDirection.TX
-                ),
-                receiver_link,
-            ),
-            (
-                self.get_endpoint(
-                    receiver_device, receiver_node, sender_device, sender_node, DataDirection.RX
-                ),
-                sender_link,
-            ),
+            (self.get_endpoint(sender_device, connection, DataDirection.TX), receiver_link),
+            (self.get_endpoint(receiver_device, connection, DataDirection.RX), sender_link),
         ):
             if endpoint.partner_link_index not in (None, partner_link):
                 raise FINNInternalError(
@@ -257,59 +324,86 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
     def node_is_sender(self, node: str) -> bool:
         """Return whether the given node acts as a sender (TX) on its device."""
         for device in self.data.keys():
-            for i in range(len(self.data[device])):
-                nodes = self.data[device][i].connecting_kernels[DataDirection.TX]
-                if nodes is not None and nodes[0] == node:
+            for endpoint in self.data[device]:
+                if endpoint.tx is not None and endpoint.tx.source_kernel == node:
                     return True
         return False
 
     def node_is_receiver(self, node: str) -> bool:
         """Return whether the given node acts as a receiver (RX) on its device."""
         for device in self.data.keys():
-            for i in range(len(self.data[device])):
-                nodes = self.data[device][i].connecting_kernels[DataDirection.RX]
-                if nodes is not None and nodes[0] == node:
+            for endpoint in self.data[device]:
+                if endpoint.rx is not None and endpoint.rx.target_kernel == node:
                     return True
         return False
 
-    def get_partner_node(self, node: str, direction: DataDirection) -> str | None:
+    def get_partner_node(
+        self, node: str, port_index: int, direction: DataDirection
+    ) -> tuple[int, str, int] | None:
         """Search through all nodes and return the one that acts as a communication partner
-        in the given direction. If A <-> B, then get_partner_node(A, TX) returns B and
-        get_partner_node(B, RX) returns A. (get_partner_node(A, RX) would return None,
-        since A is not a receiving from any node.)
-        """  # noqa
+        of the given port of `node` in the given direction, as (partner device, partner node,
+        partner port index). For TX, `port_index` is the index of the `m_axis` port of `node`,
+        for RX the index of its `s_axis` port. If A:m_axis_0 (device 0) -> B:s_axis_1 (device 1),
+        then get_partner_node(A, 0, TX) returns (1, B, 1) and get_partner_node(B, 1, RX) returns
+        (0, A, 0). If nothing is connected to the port in the given direction, None is returned.
+        """
         for device_data in self.data.values():
-            for i in range(len(device_data)):
-                node_tuple = device_data[i].connecting_kernels[direction]
-                if node_tuple is not None and node_tuple[0] == node:
-                    return node_tuple[1]
+            for endpoint in device_data:
+                match direction:
+                    case DataDirection.TX:
+                        if (
+                            endpoint.tx is not None
+                            and endpoint.tx.source_kernel == node
+                            and endpoint.tx.source_kernel_port_index == port_index
+                        ):
+                            return (
+                                endpoint.partner_device,
+                                endpoint.tx.target_kernel,
+                                endpoint.tx.target_kernel_port_index,
+                            )
+                    case DataDirection.RX:
+                        if (
+                            endpoint.rx is not None
+                            and endpoint.rx.target_kernel == node
+                            and endpoint.rx.target_kernel_port_index == port_index
+                        ):
+                            return (
+                                endpoint.partner_device,
+                                endpoint.rx.source_kernel,
+                                endpoint.rx.source_kernel_port_index,
+                            )
+                    case _:
+                        raise FINNInternalError(
+                            f"Unknown direction {direction} when searching the partner node."
+                        )
         return None
 
     def get_endpoint(
         self,
         device: int,
-        node: str,
-        partner_device: int,
-        partner_node: str,
+        connection: AuroraUnidirectionalConnection,
         direction: DataDirection,
     ) -> AuroraLinkEndpoint:
-        """Return the endpoint on `device` that connects `node` with `partner_node` on
-        `partner_device` in the given direction. The node order follows `connecting_kernels`:
-        for TX, `node` sends to `partner_node`, for RX, `node` receives from `partner_node`.
-        The endpoint is searched by its content, not by its position in the list of
-        endpoints of the device.
+        """Return the endpoint on `device` that carries `connection` in the given direction.
+        For TX, `device` is the device of the sending kernel, for RX the device of the
+        receiving kernel. The endpoint is searched by its content, not by its position in the
+        list of endpoints of the device.
         """
-        matches = [
-            endpoint
-            for endpoint in self[device]
-            if endpoint.partner_device == partner_device
-            and endpoint.connecting_kernels[direction] == (node, partner_node)
-        ]
+        match direction:
+            case DataDirection.TX:
+                matches = [endpoint for endpoint in self[device] if endpoint.tx == connection]
+            case DataDirection.RX:
+                matches = [endpoint for endpoint in self[device] if endpoint.rx == connection]
+            case _:
+                raise FINNInternalError(
+                    f"Unknown direction {direction} when searching the endpoint."
+                )
         if len(matches) != 1:
             raise FINNInternalError(
                 f"Expected exactly one AuroraFlow endpoint on device {device} for the "
-                f"{direction.name} connection {node} [{device}] <-> {partner_node} "
-                f"[{partner_device}], but found {len(matches)}."
+                f"{direction.name} connection {connection.source_kernel}:m_axis_"
+                f"{connection.source_kernel_port_index} -> {connection.target_kernel}:s_axis_"
+                f"{connection.target_kernel_port_index}, but found {len(matches)}."
             )
         return matches[0]
 
@@ -331,7 +425,7 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         g = nx.Graph()
         for device, endpoints in self.data.items():
             for endpoint in endpoints:
-                if endpoint.connecting_kernels[DataDirection.TX] is not None:
+                if endpoint.tx is not None:
                     g.add_edge(
                         (device, endpoint.link_index),
                         (endpoint.partner_device, endpoint.partner_link_index),
@@ -343,394 +437,6 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
     def short_node_name(node: str) -> str:
         """Shorten the default SDP node names for diagrams."""
         return node.replace("StreamingDataflowPartition", "SDP")
-
-    def plot(
-        self,
-        path: Path,
-        model: ModelWrapper | None = None,
-        cfg: DataflowBuildConfig | None = None,
-    ) -> None:
-        """Draw the cabling of the AuroraFlow network. The image format is given by the suffix
-        of `path` (e.g. `.svg` or `.png`).
-
-        Every FPGA is a box and every used QSFP port a square `Q<link index>` on its edge. A cable
-        is a thick line between two ports, with one arrow per used direction, labelled with the
-        sending and receiving SDP. If `model` is given, arrows inside the boxes show how the data
-        passes through the SDPs of each FPGA, from the port (or host) it arrives at to the port
-        (or host) it leaves through. If `cfg` is given, the platform interfaces of the ports are
-        listed.
-        """
-        if not self.data:
-            log.warning("Cannot plot the Multi-FPGA network: the metadata contains no devices.")
-            return
-        devices = sorted(self.data)
-        short = self.short_node_name
-        box = np.array([5.2, 3.2])  # Width and height of an FPGA box
-        pitch = box[0] + 3.8  # Distance between the centers of neighbouring boxes
-        port_size, lane = 0.56, 0.14  # Side of a port square, offset of the TX/RX arrows
-        colors = {
-            "background": "#0b0f19",
-            "fpga": "#111827",
-            "fpga_edge": "#3b82f6",
-            "port": "#1d4ed8",
-            "port_edge": "#93c5fd",
-            "cable": "#1e3a8a",
-            "data": "#38bdf8",
-            "compute": "#818cf8",
-            "compute_fill": "#1e1b4b",
-            "host": "#64748b",
-            "text": "#e5e7eb",
-            "muted": "#94a3b8",
-        }
-
-        # 1. Place the FPGAs (their box centers) according to the topology
-        match self.topology:
-            case MFTopology.SIMPLEX_CHAIN | MFTopology.DUPLEX_CHAIN:
-                # Chains pass the devices in the order of their IDs, so a row from left to right
-                # follows the data. The way back of a duplex chain uses the same cables and shows
-                # up as a second arrow on each of them, so it needs no other arrangement.
-                centers = {d: np.array([i * pitch, 0.0]) for i, d in enumerate(devices)}
-            case MFTopology.RING:
-                # Clockwise on a circle, starting on the left. The radius keeps neighbouring
-                # boxes `pitch` apart, so the cable closing the ring is as long as the others.
-                radius = pitch / (2 * np.sin(np.pi / len(devices))) if len(devices) > 1 else 0
-                angles = np.pi - 2 * np.pi * np.arange(len(devices)) / len(devices)
-                centers = {
-                    d: radius * np.array([np.cos(a), np.sin(a)])
-                    for d, a in zip(devices, angles, strict=True)
-                }
-            case _:
-                log.error(
-                    f"Cannot plot the Multi-FPGA network: no layout algorithm is implemented for "
-                    f"the topology '{self.topology.value}' yet."
-                )
-                return
-
-        # 2. Collect the cables, each as the sorted pair of the (device, link) ports it connects
-        cables = sorted(
-            {
-                tuple(sorted([(d, e.link_index), (e.partner_device, e.partner_link_index)]))
-                for d in devices
-                for e in self[d]
-            }
-        )
-        cable_number = {port: i for i, cable in enumerate(cables) for port in cable}
-
-        # 3. Put every port on the side of its box that faces the partner device. A side is
-        # given by its outward normal, e.g. (1, 0) for the right side.
-        endpoints_per_side: dict[
-            tuple[int, tuple[int, int]], list[AuroraLinkEndpoint]
-        ] = defaultdict(list)
-        for device in devices:
-            for e in self[device]:
-                dx, dy = centers[e.partner_device] - centers[device]
-                normal = (int(np.sign(dx)), 0) if abs(dx) >= abs(dy) else (0, int(np.sign(dy)))
-                endpoints_per_side[(device, normal)].append(e)
-        ports = {}
-        for (device, normal), endpoints in endpoints_per_side.items():
-            along = np.array([-normal[1], normal[0]])  # Direction along the side
-            # Order the ports by the position of their partner along the side, so that cables do
-            # not cross. Several cables to the same device are ordered by their number, mirrored
-            # on the two devices (`along` points the other way there), so that they run parallel.
-            endpoints.sort(
-                key=lambda e, device=device, along=along: (
-                    centers[e.partner_device] @ along,
-                    cable_number[(device, e.link_index)] * along.sum(),
-                )
-            )
-            # Spread the ports evenly along the side
-            for i, e in enumerate(endpoints):
-                offset = (i + 1) / (len(endpoints) + 1) - 0.5
-                ports[(device, e.link_index)] = (
-                    centers[device] + (np.array(normal) / 2 + along * offset) * box
-                )
-
-        def pin(device: int, e: AuroraLinkEndpoint, direction: DataDirection) -> np.ndarray:
-            """Return where the arrow of one direction of a cable meets the port of `e`. The
-            two directions use parallel lanes, each shifted to the left of its data direction.
-            """
-            p, q = ports[(device, e.link_index)], ports[(e.partner_device, e.partner_link_index)]
-            left = np.array([p[1] - q[1], q[0] - p[0]]) / np.linalg.norm(q - p)
-            return p + left * (lane if direction == DataDirection.TX else -lane)
-
-        # 4. Set up a dark figure. Its size follows the extent of the layout, with room for the
-        # title above and for the host connections and notes below.
-        corners = np.array([c + s * box / 2 for c in centers.values() for s in (-1, 1)])
-        low = corners.min(axis=0) - [1.5, 3.4]
-        high = corners.max(axis=0) + np.array([1.5, 1.4])
-        fig = Figure(figsize=tuple((high - low) * 0.45), facecolor=colors["background"])
-        ax = fig.add_axes((0, 0, 1, 1))
-        ax.set_xlim(low[0], high[0])
-        ax.set_ylim(low[1], high[1])
-        ax.set_axis_off()
-
-        def arrow(start: np.ndarray, end: np.ndarray, color: str, **kwargs: Any) -> None:
-            """Draw an arrow. `patchA` and `patchB` cut it off at the outline of these shapes."""
-            ax.add_patch(
-                FancyArrowPatch(
-                    tuple(start),
-                    tuple(end),
-                    arrowstyle="-|>",
-                    mutation_scale=11,
-                    linewidth=1.5,
-                    color=color,
-                    zorder=3,
-                    **kwargs,
-                )
-            )
-
-        # 5. Draw the FPGAs and their ports
-        for device, center in centers.items():
-            ax.add_patch(
-                FancyBboxPatch(
-                    tuple(center - box / 2),
-                    *box,
-                    boxstyle="round,pad=0,rounding_size=0.35",
-                    facecolor=colors["fpga"],
-                    edgecolor=colors["fpga_edge"],
-                    linewidth=1.6,
-                    zorder=1,
-                )
-            )
-            # Title in the top left corner, out of the way of ports in the middle of the top side
-            ax.text(
-                *(center + np.array([-box[0] / 2 + 0.35, box[1] / 2 - 0.45])),
-                f"FPGA {device}",
-                color=colors["text"],
-                fontsize=11,
-                fontweight="bold",
-                ha="left",
-                va="center",
-            )
-        port_patches = {}
-        for (device, link), point in ports.items():
-            port_patches[(device, link)] = ax.add_patch(
-                FancyBboxPatch(
-                    tuple(point - port_size / 2),
-                    port_size,
-                    port_size,
-                    boxstyle="round,pad=0,rounding_size=0.08",
-                    facecolor=colors["port"],
-                    edgecolor=colors["port_edge"],
-                    linewidth=1.2,
-                    zorder=4,
-                )
-            )
-            ax.text(
-                *point,
-                f"Q{link}",
-                color="white",
-                fontsize=7,
-                fontweight="bold",
-                ha="center",
-                va="center",
-                zorder=5,
-            )
-
-        # 6. Draw the cables: a thick line per cable, and an arrow per used direction from the
-        # sending to the receiving port, labelled with the SDPs on both sides
-        for a, b in cables:
-            ax.plot(
-                *np.array([ports[a], ports[b]]).T,
-                color=colors["cable"],
-                linewidth=10,
-                solid_capstyle="round",
-                zorder=2,
-            )
-        for device in devices:
-            for e in self[device]:
-                nodes = e.connecting_kernels[DataDirection.TX]
-                if nodes is None:
-                    continue
-                partner = self.get_endpoint(
-                    e.partner_device, nodes[1], device, nodes[0], DataDirection.RX
-                )
-                start = pin(device, e, DataDirection.TX)
-                end = pin(e.partner_device, partner, DataDirection.RX)
-                arrow(
-                    start,
-                    end,
-                    colors["data"],
-                    patchA=port_patches[(device, e.link_index)],
-                    patchB=port_patches[(e.partner_device, partner.link_index)],
-                )
-                # Put the label on the outer side of the lane. If it would be upside down, turn
-                # it, and then also reverse the text, so that its arrow still follows the data.
-                dx, dy = end - start
-                angle = np.degrees(np.arctan2(dy, dx))
-                label = f"{short(nodes[0])} → {short(nodes[1])}"
-                if not -90 < angle <= 90:
-                    angle -= 180 * np.sign(angle)
-                    label = f"{short(nodes[1])} ← {short(nodes[0])}"
-                outward = (start - ports[(device, e.link_index)]) / lane
-                ax.text(
-                    *((start + end) / 2 + outward * 0.3),
-                    label,
-                    color=colors["data"],
-                    fontsize=7,
-                    rotation=angle,
-                    rotation_mode="anchor",
-                    ha="center",
-                    va="center",
-                )
-
-        # 7. With the model: follow the data through the SDPs of each FPGA, from where it enters
-        # the FPGA (a port or the host) to where it leaves it, and draw every such path as two
-        # arrows through a compute block that names the first and the last SDP on the path
-        if model is not None:
-            # Where data enters an FPGA: (device, first SDP, point, port square or None)
-            entries: list[tuple[int, str, np.ndarray, FancyBboxPatch | None]] = []
-            # Where data leaves an FPGA, per SDP: (point, port square or None)
-            exits: dict[str, list[tuple[np.ndarray, FancyBboxPatch | None]]] = defaultdict(list)
-            for device in devices:
-                for e in self[device]:
-                    port_patch = port_patches[(device, e.link_index)]
-                    if (rx := e.connecting_kernels[DataDirection.RX]) is not None:
-                        entries.append(
-                            (device, rx[0], pin(device, e, DataDirection.RX), port_patch)
-                        )
-                    if (tx := e.connecting_kernels[DataDirection.TX]) is not None:
-                        exits[tx[0]].append((pin(device, e, DataDirection.TX), port_patch))
-
-            # The host is connected to the bottom of the FPGAs with the model inputs and outputs
-            host_x = box[0] / 2 - 0.5
-            for tensor in model.graph.input:
-                for node in model.find_consumers(tensor.name) or []:
-                    device = cast("int", get_device_id(node))
-                    point = centers[device] + np.array([-host_x, -box[1] / 2])
-                    arrow(point - [0, 1.0], point, colors["host"])
-                    ax.text(
-                        *(point - [0, 1.3]),
-                        "host in",
-                        color=colors["muted"],
-                        fontsize=7,
-                        ha="center",
-                        va="center",
-                    )
-                    entries.append((device, node.name, point, None))
-            for tensor in model.graph.output:
-                node = model.find_producer(tensor.name)
-                device = cast("int", get_device_id(node))
-                point = centers[device] + np.array([host_x, -box[1] / 2])
-                arrow(point, point - [0, 1.0], colors["host"])
-                ax.text(
-                    *(point - [0, 1.3]),
-                    "host out",
-                    color=colors["muted"],
-                    fontsize=7,
-                    ha="center",
-                    va="center",
-                )
-                exits[node.name].append((point, None))
-
-            # Search forward from every entry through the SDPs on the same FPGA. Every exit on
-            # the way gives a path: (start, start port, end, end port, label of the block).
-            paths: dict[int, list[tuple]] = defaultdict(list)
-            for device, first, start, start_patch in entries:
-                todo, seen = [first], set()
-                while todo:
-                    name = todo.pop()
-                    if name in seen:
-                        continue
-                    seen.add(name)
-                    label = short(first) if name == first else f"{short(first)} … {short(name)}"
-                    paths[device] += [
-                        (start, start_patch, end, end_patch, label)
-                        for end, end_patch in exits[name]
-                    ]
-                    successors = model.find_direct_successors(model.get_node_from_name(name))
-                    todo += [s.name for s in successors or [] if get_device_id(s) == device]
-
-            for device, device_paths in paths.items():
-                # Stack the blocks of an FPGA, ordered by the height of the ports they connect,
-                # so that the arrows of different paths do not cross
-                device_paths.sort(key=lambda path: -(path[0][1] + path[2][1]))
-                step = min(0.85, (box[1] - 1.3) / len(device_paths))
-                for i, (start, start_patch, end, end_patch, label) in enumerate(device_paths):
-                    height = -0.25 + ((len(device_paths) - 1) / 2 - i) * step
-                    center = centers[device] + np.array([0, height])
-                    ax.add_patch(
-                        FancyBboxPatch(
-                            tuple(center - [1.3, 0.3]),
-                            2.6,
-                            0.6,
-                            boxstyle="round,pad=0,rounding_size=0.15",
-                            facecolor=colors["compute_fill"],
-                            edgecolor=colors["compute"],
-                            linewidth=1.2,
-                            zorder=4,
-                        )
-                    )
-                    ax.text(
-                        *center,
-                        f"⚙ {label}",
-                        color=colors["text"],
-                        fontsize=7,
-                        ha="center",
-                        va="center",
-                        zorder=5,
-                    )
-                    # The data enters the block slightly above its middle, on the side facing
-                    # where it comes from, and leaves it slightly below, on the side facing where
-                    # it goes. This keeps a path that returns through the same port readable.
-                    side_in = np.sign(start[0] - center[0]) or -1
-                    side_out = np.sign(end[0] - center[0]) or 1
-                    block_in = center + np.array([side_in * 1.3, 0.12])
-                    block_out = center + np.array([side_out * 1.3, -0.12])
-                    arrow(
-                        start,
-                        block_in,
-                        colors["compute"],
-                        patchA=start_patch,
-                        connectionstyle="arc3,rad=0.1",
-                    )
-                    arrow(
-                        block_out,
-                        end,
-                        colors["compute"],
-                        patchB=end_patch,
-                        connectionstyle="arc3,rad=0.1",
-                    )
-
-        # 8. Title, and notes on how to read the diagram
-        ax.text(
-            low[0] + 0.6,
-            high[1] - 0.7,
-            f"AuroraFlow network: {len(devices)} FPGAs, {self.topology.value.replace('_', ' ')}",
-            color=colors["text"],
-            fontsize=13,
-            fontweight="bold",
-            va="center",
-        )
-        notes = [
-            "Thick lines: cables between the QSFP ports Q<link index>. "
-            "Arrows: data, from the sending to the receiving SDP."
-        ]
-        if model is not None:
-            notes.append("⚙: SDPs the data passes on an FPGA (first … last).")
-        if cfg is not None and cfg.board in platforms:
-            # Platforms without known QSFP interface names raise, they are left out then
-            with contextlib.suppress(FINNUserError):
-                platform = platforms[cfg.board]()
-                notes.append(
-                    f"Board {cfg.board}: "
-                    + ", ".join(
-                        f"Q{link} = {platform.get_qsfp_gt_interface(link)}"
-                        for link in sorted({link for _, link in ports})
-                    )
-                )
-        ax.text(
-            low[0] + 0.6,
-            low[1] + 0.5,
-            "\n".join(notes),
-            color=colors["muted"],
-            fontsize=8,
-            va="bottom",
-            linespacing=1.6,
-        )
-
-        fig.savefig(path, facecolor=fig.get_facecolor())
-        log.info(f"Saved a diagram of the Multi-FPGA network to {path}")
 
     def plot_dot(self, path: Path, model: ModelWrapper | None = None) -> None:
         """Write the AuroraFlow network as a Graphviz DOT graph to `path`. If Graphviz' `dot` is
@@ -782,18 +488,21 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         # model also from the sending SDP to its port, and from the port to the receiving SDP.
         for device in sorted(self.data):
             for e in self[device]:
-                if (tx := e.connecting_kernels[DataDirection.TX]) is not None:
-                    label = f"{short(tx[0])} → {short(tx[1])}"
+                if e.tx is not None:
+                    label = f"{short(e.tx.source_kernel)} → {short(e.tx.target_kernel)}"
                     lines.append(
                         f"    {port(device, e.link_index)} -> "
                         f"{port(e.partner_device, e.partner_link_index)} "
                         f"[label={quote(label)}, penwidth=2];"
                     )
                     if model is not None:
-                        lines.append(f"    {quote(tx[0])} -> {port(device, e.link_index)};")
-                rx = e.connecting_kernels[DataDirection.RX]
-                if model is not None and rx is not None:
-                    lines.append(f"    {port(device, e.link_index)} -> {quote(rx[0])};")
+                        lines.append(
+                            f"    {quote(e.tx.source_kernel)} -> {port(device, e.link_index)};"
+                        )
+                if model is not None and e.rx is not None:
+                    lines.append(
+                        f"    {port(device, e.link_index)} -> {quote(e.rx.target_kernel)};"
+                    )
 
         # With the model: the data between the SDPs of the same FPGA, and from and to the host
         if model is not None:

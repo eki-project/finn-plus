@@ -9,7 +9,6 @@ from qonnx.transformation.base import Transformation
 from typing import cast
 
 from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
-from finn.transformation.fpgadataflow.multifpga.metadata import DataDirection
 from finn.transformation.fpgadataflow.vitis_linking_configuration import VitisLinkConfiguration
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -133,19 +132,17 @@ class AddAuroraToLinkConfig(Transformation):
                         f"is incomplete: missing XO path for kernel {index}!"
                     )
 
-                # Check that the metadata is complete with regard to the name of the
-                # sending and receiving kernels
-                tx_kernel_pair = aurora_data.connecting_kernels[DataDirection.TX]
-                rx_kernel_pair = aurora_data.connecting_kernels[DataDirection.RX]
+                # Whether this SDP sends or receives through this Aurora kernel
+                tx = aurora_data.tx
+                rx = aurora_data.rx
+                is_sender = tx is not None and tx.source_kernel == node.name
+                is_receiver = rx is not None and rx.target_kernel == node.name
 
                 # Name for the current CU
                 aurora_cu = f"aurora_flow_{index}"
 
-                # These have to be done regardless of direction, but only once per kernel
-                if (device, index) not in instantiated_kernels and (
-                    (tx_kernel_pair is not None and tx_kernel_pair[0] == node.name)
-                    or (rx_kernel_pair is not None and rx_kernel_pair[0] == node.name)
-                ):
+                # Check if the SDP node is a sender or receiver (or neither)
+                if (device, index) not in instantiated_kernels and (is_sender or is_receiver):
                     instantiated_kernels.add((device, index))
                     if self.platform.qsfp_slr is None:
                         raise FINNUserError(
@@ -178,28 +175,22 @@ class AddAuroraToLinkConfig(Transformation):
                     )
 
                 # SDP -> Aurora -> Network
-                if tx_kernel_pair is not None and tx_kernel_pair[0] == node.name:
+                if is_sender:
                     log.info(
                         f"Adding AuroraFlow kernel to device {device}, "
                         f"index {index} connected to {node.name} (TX)."
                     )
-                    # TODO: Support SDPs with more than one output stream. The output port of the
-                    # SDP is currently always assumed to be m_axis_0.
-                    # TODO: This requires adding support for a "port" field to the
-                    # metadata as well.
-                    sdp_output = node.name + ".m_axis_0"
+                    sdp_output = f"{node.name}.m_axis_{tx.source_kernel_port_index}"
                     if configs[device].is_stream_port_connected(sdp_output):
                         raise FINNInternalError(
                             f"Cannot connect AuroraFlow kernel {index} on device {device} to "
                             f"{sdp_output}, since this port is already connected to another "
-                            f"kernel. The SDP {node.name} has more than one outgoing stream "
-                            f"(e.g. to several devices, or to a kernel on the same and on "
-                            f"another device), which is not yet implemented for AuroraFlow."
+                            f"kernel."
                         )
                     configs[device].add_sc(sdp_output, f"{aurora_cu}.tx_axis")
 
                     # Check if we need a dummy kernel for the unused RX direction
-                    if rx_kernel_pair is None:
+                    if rx is None:
                         configs[device].add_xo(rx_dummy)
                         dummy_cu = f"vdk_{dummy_per_device[device]}"
                         configs[device].add_cu("rx_dummy_kernel", dummy_cu)
@@ -207,28 +198,22 @@ class AddAuroraToLinkConfig(Transformation):
                         dummy_per_device[device] += 1
 
                 # Network -> Aurora -> SDP
-                if rx_kernel_pair is not None and rx_kernel_pair[0] == node.name:
+                if is_receiver:
                     log.info(
                         f"Adding AuroraFlow kernel to device {device}, "
                         f"index {index} connected to {node.name} (RX)."
                     )
-                    # TODO: Support SDPs with more than one input stream. The input port of the
-                    # SDP is currently always assumed to be s_axis_0
-                    # TODO: This requires adding support for a "port" field to the
-                    # metadata as well.
-                    sdp_input = node.name + ".s_axis_0"
+                    sdp_input = f"{node.name}.s_axis_{rx.target_kernel_port_index}"
                     if configs[device].is_stream_port_connected(sdp_input):
                         raise FINNInternalError(
                             f"Cannot connect AuroraFlow kernel {index} on device {device} to "
                             f"{sdp_input}, since this port is already connected to another "
-                            f"kernel. The SDP {node.name} has more than one incoming stream "
-                            f"(e.g. from several devices, or from a kernel on the same and on "
-                            f"another device), which is not yet implemented for AuroraFlow."
+                            f"kernel."
                         )
                     configs[device].add_sc(f"{aurora_cu}.rx_axis", sdp_input)
 
                     # Check if we need a dummy kernel for the unused TX direction
-                    if tx_kernel_pair is None:
+                    if tx is None:
                         configs[device].add_xo(tx_dummy)
                         dummy_cu = f"vdk_{dummy_per_device[device]}"
                         configs[device].add_cu("tx_dummy_kernel", dummy_cu)

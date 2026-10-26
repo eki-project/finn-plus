@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
     from typing import Self
 
-    from finn.builder.build_dataflow_config import DataflowBuildConfig, MultiFPGAConfiguration
+    from finn.builder.build_dataflow_config import MultiFPGAConfiguration
 
 
 class DataDirection(str, Enum):
@@ -79,8 +79,10 @@ class NetworkMetadata(ABC):
         self,
         sender_device: int,
         sender_node: str,
+        sender_tensor_index: int,
         receiver_device: int,
         receiver_node: str,
+        receiver_tensor_index: int,
     ) -> None:
         """Add a connection to the metadata."""
         pass  # noqa
@@ -105,24 +107,16 @@ class NetworkMetadata(ABC):
         """Return whether the given node acts as a receiver (RX) on its device."""
 
     @abstractmethod
-    def get_partner_node(self, node: str, direction: DataDirection) -> str | None:
+    def get_partner_node(
+        self, node: str, port_index: int, direction: DataDirection
+    ) -> tuple[int, str, int] | None:
         """Search through all nodes and return the one that acts as a communication partner
-        in the given direction. If A <-> B, then get_partner_node(A, TX) returns B and
-        get_partner_node(B, RX) returns A. (get_partner_node(A, RX) would return None,
-        since A is not a receiving from any node.)
-        """  # noqa
-
-    def plot(
-        self,
-        path: Path,  # noqa: ARG002
-        model: ModelWrapper | None = None,  # noqa: ARG002
-        cfg: DataflowBuildConfig | None = None,  # noqa: ARG002
-    ) -> None:
-        """Plot the metadata in an image at the given path. If the model (with SDPs and their
-        device IDs) is given, the connections between the ports inside each device can be drawn
-        as well, and with the build configuration board specific details.
-        Overwrite this method if possible."""
-        log.warning("Cannot plot metadata for the chosen backend!")
+        of the given port of `node` in the given direction, as (partner device, partner node,
+        partner port index). For TX, `port_index` is the index of the `m_axis` port of `node`,
+        for RX the index of its `s_axis` port. If A:m_axis_0 (device 0) -> B:s_axis_1 (device 1),
+        then get_partner_node(A, 0, TX) returns (1, B, 1) and get_partner_node(B, 1, RX) returns
+        (0, A, 0). If nothing is connected to the port in the given direction, None is returned.
+        """
 
     def plot_dot(
         self,
