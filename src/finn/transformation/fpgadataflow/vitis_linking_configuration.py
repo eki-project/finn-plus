@@ -22,7 +22,6 @@ from finn.util.contracts import (
     ensure_device_id_set,
     ensure_has_xo,
     ensure_only_sdp_nodes,
-    ensure_unambiguous_stream_ports,
     ensure_unique_node_names,
 )
 from finn.util.exception import FINNInternalError, FINNUserError, FINNVitisLinkConfigError
@@ -628,7 +627,6 @@ class BuildBasicVitisLinkConfig(Transformation):
     @ensure_only_sdp_nodes
     @ensure_device_id_set
     @ensure_unique_node_names
-    @ensure_unambiguous_stream_ports
     @ensure_has_xo
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build the configuration."""

@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, RemoveUnusedTensors
@@ -45,12 +46,15 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.qonnx.give_unique_node_names_recursive import GiveUniqueNodeNamesRecursive
 from finn.util.basic import launch_process_helper
+from finn.util.contracts import ensure_only_sdp_nodes
 from finn.util.exception import FINNInternalError, FINNUserError
-from finn.util.fpgadataflow import check_all_sdp_nodes, get_submodel
+from finn.util.fpgadataflow import get_submodel
 from finn.util.logging import log
+from finn.util.settings import get_settings
 from finn.util.vivado import check_vitis_envvars
 
 if TYPE_CHECKING:
+    from onnx import NodeProto
     from qonnx.core.modelwrapper import ModelWrapper
 
 
@@ -180,48 +184,65 @@ class BuildAllXOs(Transformation):
     successors or predecessors.
     """
 
-    def __init__(self, fpga_part: str, synth_clk_period_ns: float) -> None:
-        """Build all XOs."""
+    def __init__(
+        self, fpga_part: str, synth_clk_period_ns: float, threaded_parallel: bool = True
+    ) -> None:
+        """Build all XOs. With threaded_parallel, the SDPs are built concurrently in a thread
+        pool, otherwise one after another.
+        """
         super().__init__()
         self.fpga_part = fpga_part
         self.synth_clk_period_ns = synth_clk_period_ns
+        self.threaded_parallel = threaded_parallel
 
+    def build_xo(self, sdp_node: NodeProto, i: int, num_nodes: int) -> None:
+        """Run all necessary steps on a single SDP and build its XO."""
+        log.info(f"Creating XO for SDP: {sdp_node.name} ({i}/{num_nodes})")
+        submodel_transforms = [
+            InsertDWC(),
+            GiveUniqueNodeNamesRecursive(),
+            GiveReadableTensorNames(),
+            SpecializeLayers(self.fpga_part),
+            GiveUniqueNodeNamesRecursive(),
+            GiveReadableTensorNames(),
+            InsertFIFO(),
+            SpecializeLayers(self.fpga_part),
+            RemoveUnusedTensors(),
+            GiveUniqueNodeNamesRecursive(prefix=sdp_node.name),
+            PrepareIP(self.fpga_part, self.synth_clk_period_ns),
+            HLSSynthIP(),
+            CreateStitchedIP(
+                self.fpga_part,
+                self.synth_clk_period_ns,
+                sdp_node.name,
+                run_synth=True,
+            ),
+            CreateVitisXO(sdp_node.name),
+        ]
+        submodel, submodel_path = get_submodel(sdp_node)
+        for transform in submodel_transforms:
+            submodel = submodel.transform(transform)
+        submodel.set_metadata_prop("platform", "alveo")
+        submodel.save(submodel_path)
+
+    @ensure_only_sdp_nodes
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build all XOs."""
         check_vitis_envvars()
 
-        # Confirm that the graph is only a line with (multiple) input and output nodes.
-        # Every other graph at this point is invalid.
-        # Every node must be an SDP node at this point.
-        check_all_sdp_nodes(model)
-
-        # Do all other necessary steps on all SDPs
-        for i, sdp_node in enumerate(model.graph.node):
-            log.info(f"Creating XO for SDP: {sdp_node.name} ({i}/{len(model.graph.node)})")
-            submodel_transforms = [
-                InsertDWC(),
-                GiveUniqueNodeNamesRecursive(),
-                GiveReadableTensorNames(),
-                SpecializeLayers(self.fpga_part),
-                GiveUniqueNodeNamesRecursive(),
-                GiveReadableTensorNames(),
-                InsertFIFO(),
-                SpecializeLayers(self.fpga_part),
-                RemoveUnusedTensors(),
-                GiveUniqueNodeNamesRecursive(prefix=sdp_node.name),
-                PrepareIP(self.fpga_part, self.synth_clk_period_ns),
-                HLSSynthIP(),
-                CreateStitchedIP(
-                    self.fpga_part,
-                    self.synth_clk_period_ns,
-                    sdp_node.name,
-                    run_synth=True,
-                ),
-                CreateVitisXO(sdp_node.name),
-            ]
-            submodel, submodel_path = get_submodel(sdp_node)
-            for transform in submodel_transforms:
-                submodel = submodel.transform(transform)
-            submodel.set_metadata_prop("platform", "alveo")
-            submodel.save(submodel_path)
+        # Do all other necessary steps on all SDPs. Each SDP has its own submodel file, so they
+        # can be built concurrently.
+        num_nodes = len(model.graph.node)
+        if self.threaded_parallel:
+            with ThreadPoolExecutor(max_workers=get_settings().num_default_workers) as tpe:
+                futures = [
+                    tpe.submit(self.build_xo, sdp_node, i, num_nodes)
+                    for i, sdp_node in enumerate(model.graph.node)
+                ]
+            # Re-raise errors from the workers
+            for future in futures:
+                future.result()
+        else:
+            for i, sdp_node in enumerate(model.graph.node):
+                self.build_xo(sdp_node, i, num_nodes)
         return model, False

@@ -7,12 +7,7 @@ from typing import Any, ParamSpec, TypeVar
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.util.exception import FINNInternalError
-from finn.util.fpgadataflow import (
-    get_connecting_tensor_indices,
-    get_device_id,
-    get_submodel,
-    get_vitis_xo,
-)
+from finn.util.fpgadataflow import get_device_id, get_vitis_xo
 
 rT = TypeVar("rT")  # return type  # noqa: N816
 pT = ParamSpec("pT")  # parameters type  # noqa: N816
@@ -160,46 +155,6 @@ def ensure_has_xo(func: Callable[pT, rT]) -> Callable[pT, rT]:
         model = _find_argument(name, args, kwargs, ModelWrapper)
         for node in model.graph.node:
             get_vitis_xo(node)  # Raises if no XO was found for the node
-        return func(*args, **kwargs)
-
-    return wrapped
-
-
-def ensure_unambiguous_stream_ports(func: Callable[pT, rT]) -> Callable[pT, rT]:
-    """Make sure that the passed function:
-    1) Takes a ModelWrapper as an argument
-    2) Every node is an SDP whose inputs and outputs are in the same order as the graph inputs
-        and outputs of its submodel. CreateStitchedIP numbers the stream ports of an SDP in the
-        order of its submodel's graph inputs and outputs, so the n-th input of an SDP is then
-        its s_axis_<n> port and the n-th output its m_axis_<n> port.
-    3) Every connection between two nodes is made by exactly one tensor, which is used at
-        exactly one input of the receiving node (see `get_connecting_tensor_indices`).
-    """
-    # Not every callable is a function with a __qualname__ (e.g. functools.partial)
-    name = getattr(func, "__qualname__", repr(func))
-
-    @functools.wraps(func)
-    def wrapped(*args: pT.args, **kwargs: pT.kwargs) -> rT:
-        """Check that the stream ports of all SDPs are unambiguous and call the original
-        function.
-        """
-        model = _find_argument(name, args, kwargs, ModelWrapper)
-        for node in model.graph.node:
-            submodel, _ = get_submodel(node)  # Raises if the node is no SDP
-            submodel_inputs = [tensor.name for tensor in submodel.graph.input]
-            submodel_outputs = [tensor.name for tensor in submodel.graph.output]
-            if list(node.input) != submodel_inputs or list(node.output) != submodel_outputs:
-                raise FINNInternalError(
-                    f"Function {name} requires the inputs and outputs of every SDP to match "
-                    f"the graph inputs and outputs of its submodel in order. Node {node.name} "
-                    f"has inputs {list(node.input)} and outputs {list(node.output)}, but its "
-                    f"submodel has inputs {submodel_inputs} and outputs {submodel_outputs}."
-                )
-            successors = model.find_direct_successors(node)
-            if successors is None:
-                continue
-            for successor in successors:
-                get_connecting_tensor_indices(node, successor)  # Raises if ambiguous
         return func(*args, **kwargs)
 
     return wrapped
