@@ -2068,11 +2068,6 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                 backend = get_backend(mfcfg.network_backend)
                 metadata = backend.metadata_type.load_from_model(model)
                 try:
-                    metadata.plot(cfg.get_report_directory() / "network_cabling.svg", model, cfg)
-                except Exception as e:
-                    # The diagram is only informational, so it must not abort the build
-                    log.warning(f"Could not plot the Multi-FPGA network, skipping the diagram: {e}")
-                try:
                     metadata.plot_dot(cfg.get_report_directory() / "network_graph.dot", model)
                 except Exception as e:
                     # Like the diagram, the graph is only informational

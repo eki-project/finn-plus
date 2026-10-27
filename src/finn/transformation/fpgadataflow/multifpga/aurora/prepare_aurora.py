@@ -15,6 +15,7 @@ from finn.transformation.fpgadataflow.multifpga.aurora.metadata import (
     AuroraNetworkMetadata,
 )
 from finn.util.basic import get_vivado_version, make_build_dir
+from finn.util.contracts import ensure_metadata_prop
 from finn.util.exception import (
     FINNInternalError,
     FINNMultiFPGAConfigError,
@@ -195,6 +196,7 @@ class PrepareAuroraFlow(Transformation):
         for endpoint, future in zip(endpoints, futures, strict=True):
             endpoint.aurora_xo = future.result()
 
+    @ensure_metadata_prop("network_metadata")
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Package all aurora kernels required by the model in parallel.
         Sets the "aurora_storage" metadata prop to the path where the xo files

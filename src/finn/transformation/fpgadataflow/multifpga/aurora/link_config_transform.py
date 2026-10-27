@@ -9,12 +9,14 @@ from qonnx.transformation.base import Transformation
 from typing import cast
 
 from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
-from finn.transformation.fpgadataflow.multifpga.utils import (
-    ensure_device_id_set,
-    ensure_only_sdp_nodes,
-)
 from finn.transformation.fpgadataflow.vitis_linking_configuration import VitisLinkConfiguration
 from finn.util.basic import make_build_dir
+from finn.util.contracts import (
+    ensure_device_id_set,
+    ensure_metadata_prop,
+    ensure_only_sdp_nodes,
+    ensure_unique_node_names,
+)
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.fpgadataflow import get_device_id
 from finn.util.logging import log
@@ -100,6 +102,9 @@ class AddAuroraToLinkConfig(Transformation):
 
     @ensure_only_sdp_nodes
     @ensure_device_id_set
+    @ensure_unique_node_names
+    @ensure_metadata_prop("network_metadata")
+    @ensure_metadata_prop("vitis_link_configs")
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Modify the link config."""
         metadata = AuroraNetworkMetadata.load_from_model(model)
@@ -123,7 +128,7 @@ class AddAuroraToLinkConfig(Transformation):
             for aurora_data in metadata[device]:
                 if aurora_data is None:
                     raise FINNInternalError(
-                        f"Aurora metadata for device " f"{device} is completely missing."
+                        f"Aurora metadata for device {device} is completely missing."
                     )
                 # The QSFP port of the endpoint. Its position in the metadata list may differ.
                 index = aurora_data.link_index
@@ -186,7 +191,7 @@ class AddAuroraToLinkConfig(Transformation):
                         f"Adding AuroraFlow kernel to device {device}, "
                         f"index {index} connected to {node.name} (TX)."
                     )
-                    sdp_output = f"{node.name}.m_axis_{tx.source_kernel_port_index}"
+                    sdp_output = f"{node.name}.m_axis_{tx.source_kernel_port_index}"  # type: ignore
                     if configs[device].is_stream_port_connected(sdp_output):
                         raise FINNInternalError(
                             f"Cannot connect AuroraFlow kernel {index} on device {device} to "
@@ -209,7 +214,7 @@ class AddAuroraToLinkConfig(Transformation):
                         f"Adding AuroraFlow kernel to device {device}, "
                         f"index {index} connected to {node.name} (RX)."
                     )
-                    sdp_input = f"{node.name}.s_axis_{rx.target_kernel_port_index}"
+                    sdp_input = f"{node.name}.s_axis_{rx.target_kernel_port_index}"  # type: ignore
                     if configs[device].is_stream_port_connected(sdp_input):
                         raise FINNInternalError(
                             f"Cannot connect AuroraFlow kernel {index} on device {device} to "

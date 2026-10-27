@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, override
 
 from finn.transformation.fpgadataflow.multifpga.partitioner import Partitioner as BasePartitioner
-from finn.transformation.fpgadataflow.multifpga.utils import ensure_multifpga_config
 from finn.util.basic import make_build_dir
+from finn.util.contracts import ensure_multifpga_config
 from finn.util.exception import (
     FINNMultiFPGAError,
     FINNMultiFPGAUnsolvableError,

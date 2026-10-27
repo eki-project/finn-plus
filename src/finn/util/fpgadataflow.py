@@ -136,6 +136,30 @@ def get_output_nodes(model: ModelWrapper) -> list[tuple[NodeProto, int]]:
     return res
 
 
+def get_connecting_tensor_indices(source: NodeProto, target: NodeProto) -> tuple[int, int]:
+    """Return the index of the connecting tensor in `source.output` and in `target.input`.
+    (1, 2) means that output 1 of `source` is input 2 of `target`. For SDP nodes these are also
+    the stream port indices (`m_axis_1` -> `s_axis_2`). Raise a FINNInternalError if the nodes are
+    not connected, or if the result is ambiguous: several tensors between the two nodes, or the
+    same tensor at several inputs of `target`.
+    """
+    connections = [
+        (out_index, in_index)
+        for out_index, out_tensor in enumerate(source.output)
+        for in_index, in_tensor in enumerate(target.input)
+        # An empty name marks an omitted optional input / output in ONNX, not a tensor
+        if out_tensor == in_tensor and out_tensor != ""
+    ]
+    if len(connections) == 0:
+        raise FINNInternalError(f"Node {source.name} is not connected to node {target.name}.")
+    if len(connections) > 1:
+        raise FINNInternalError(
+            f"Node {source.name} is connected to node {target.name} by more than one "
+            f"(output, input) pair: {connections}. Cannot pick one."
+        )
+    return connections[0]
+
+
 def check_all_sdp_nodes(model: ModelWrapper) -> None:
     """Verify that all nodes are SDP nodes."""
     for node in model.graph.node:

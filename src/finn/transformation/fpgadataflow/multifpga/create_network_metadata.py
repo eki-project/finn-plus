@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING
 
 from finn.builder.build_dataflow_config import MFVerbosity, MultiFPGAConfiguration
 from finn.transformation.fpgadataflow.multifpga.backend import get_backend
-from finn.transformation.fpgadataflow.multifpga.utils import (
+from finn.util.basic import make_build_dir
+from finn.util.contracts import (
     ensure_device_id_set,
     ensure_only_sdp_nodes,
+    ensure_unique_node_names,
 )
-from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import get_device_id
 from finn.util.logging import log
 
@@ -63,6 +64,7 @@ class CreateNetworkMetadata(Transformation):
 
     @ensure_only_sdp_nodes
     @ensure_device_id_set
+    @ensure_unique_node_names
     def create_metadata(self, model: ModelWrapper) -> None:
         """Walk the graph. Any time a change in devices between SDP nodes is recognized,
         this connection is added to the metadata object.
@@ -84,10 +86,10 @@ class CreateNetworkMetadata(Transformation):
                                     f"[{d1}] ----> {successor.name}:{in_tensor_index} [{d2}]"
                                 )
                             self.metadata.add_connection(
-                                d1,
+                                d1,  # type: ignore
                                 node.name,
                                 out_tensor_index,  # type: ignore
-                                d2,
+                                d2,  # type: ignore
                                 successor.name,
                                 in_tensor_index,  # type: ignore
                             )

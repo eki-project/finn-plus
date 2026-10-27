@@ -529,7 +529,6 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
 
         dot = shutil.which("dot")
         if dot is None:
-            log.info("Graphviz 'dot' was not found, so the DOT graph is not rendered.")
             return
         svg = path.with_suffix(".svg")
         launch_process_helper([dot, "-Tsvg", path, "-o", svg], print_stdout=False)

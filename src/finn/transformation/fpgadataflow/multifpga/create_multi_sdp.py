@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 from finn.builder.build_dataflow_config import MFVerbosity
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.externalize_params import ExternalizeParams
+from finn.util.contracts import ensure_device_id_set
 from finn.util.exception import FINNInternalError
 from finn.util.fpgadataflow import get_device_id, get_submodel, set_device_id
 from finn.util.logging import log
@@ -256,6 +257,7 @@ class CreateMultiFPGAStreamingDataflowPartition(Transformation):
         self.separate_iodmas = separate_iodmas
         self.cdfp_dir = dataflow_partition_directory
 
+    @ensure_device_id_set
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Create a MultiFPGA SDP."""
         # See "create_dataflow_partition.py". Should not modify the model if

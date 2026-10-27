@@ -12,10 +12,7 @@ from finn.builder.build_dataflow_config import (
     MultiFPGAConfiguration,
 )
 from finn.transformation.fpgadataflow.multifpga.backend import get_backend
-from finn.transformation.fpgadataflow.multifpga.utils import (
-    ensure_board_set,
-    ensure_multifpga_config,
-)
+from finn.util.contracts import ensure_board_set, ensure_multifpga_config, ensure_unique_node_names
 from finn.util.exception import (
     FINNMultiFPGAConfigError,
     FINNMultiFPGAUnsolvableError,
@@ -70,6 +67,7 @@ class ApplyDeviceMapping(Transformation):
                 f"Cannot read partitioning config of type {type(mapping)}."
             )
 
+    @ensure_unique_node_names
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Assign the device ids to the nodes."""
         # Validate the complete mapping before assigning anything, so that an invalid mapping
