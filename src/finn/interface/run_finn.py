@@ -719,7 +719,7 @@ def _build(
 
     # Can import from finn now, since all deps are installed
     # and all environment variables are set correctly
-    from finn.builder.build_dataflow import build_dataflow_cfg
+    from finn.builder.build_dataflow import build_dataflow_cfg, get_logfile_path
     from finn.builder.build_dataflow_config import DataflowBuildConfig
 
     status("Creating dataflow build config...")
@@ -810,7 +810,9 @@ def _build(
             f"{settings.num_default_workers}"
         )
         ort.capi._pybind_state.get_default_session_options = get_modified_session_options  # type: ignore # noqa
-    build_dataflow_cfg(str(model), dfbc)
+    if build_dataflow_cfg(str(model), dfbc) != 0:
+        error(f"FINN build failed. See the build log at {get_logfile_path(dfbc)}")
+        sys.exit(1)
 
 
 @click.command(help="Build a hardware design")
@@ -984,7 +986,7 @@ def flow_wizard() -> None:
 
 
 def _settings_wizard_wrapper() -> None:
-    """Use both by 'finn wizard config' and 'finn config create'."""
+    """Use both by 'finn wizard settings' and 'finn settings create'."""
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
@@ -1262,7 +1264,7 @@ def config_edit() -> None:
     edit_file(settings.get_path().absolute())
 
 
-@click.command("create", help="Create a configuration. Same as 'finn wizard config'.")
+@click.command("create", help="Create a settings file. Same as 'finn wizard settings'.")
 def config_create() -> None:
     """Run the configuration wizard."""
     _settings_wizard_wrapper()
