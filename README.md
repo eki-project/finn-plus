@@ -81,6 +81,31 @@ finn build build_config.yaml model.onnx   # Run a FINN+ build defined in a YAML 
 
 For more detailed instructions, like installation for development use, please refer to our [**Wiki**](https://github.com/eki-project/finn-plus/wiki)!
 
+### Command-line interface
+
+All functionality is available through the `finn` command (`finn <command> --help` lists all options):
+
+```
+finn build cfg.yaml [model.onnx]      # Run a build flow defined in a YAML (or JSON) configuration
+finn build cfg.yaml --start <step> --stop <step>   # Run only part of the flow, e.g. to resume a build
+finn wizard flow                      # Interactively create a minimal build configuration
+finn settings show | edit | create    # Inspect or change the FINN+ settings
+finn deps update | show | edit        # Install/update, list or edit the external dependencies
+finn check                            # Check that the FINN+ environment starts up correctly
+finn test                             # Run the test suite of a repository checkout
+```
+
+- The build configuration holds the fields of `DataflowBuildConfig` (see `src/finn/builder/build_dataflow_config.py`); unknown keys are rejected.
+  The model can be omitted on the command line if the configuration sets `model_path`.
+  The output directory (`output_dir`, default `finn_build_output`) and the folding, specialize-layers and layouts configuration files are resolved relative to the configuration file.
+- `--start`/`--stop` only take effect if the configuration does not set `start_step`/`stop_step`.
+  Resuming loads the intermediate model of the preceding step from `<output_dir>/intermediate_models`.
+- `finn build` exits with a non-zero code if the build fails. The build log is written to `<output_dir>/build_dataflow.log`.
+- The settings (temporary build directory, dependency location, number of workers, automatic dependency updates) are read from `$FINN_SETTINGS`, from `settings.yaml` in the FINN+ installation root, or from `~/.finn/settings.yaml`, in this order.
+  If no settings file exists, the first start runs a setup wizard; pass `--accept-defaults` (or `--batch` for non-interactive use) to use the defaults instead.
+  Command-line options such as `--build-path` and environment variables such as `FINN_BUILD_DIR` override the settings file.
+- The Xilinx tools are found through the environment, so source the `settings64.sh` of Vivado/Vitis before running `finn`.
+
 > [!NOTE]
 > Please note, that `finn deps update` (and most other commands) will automatically download and update dependencies required for FINN to work (mostly the same as the original FINN repository).
 > This is done to provide a better user experience and to not require the user to manage a dozen dependencies on their own.
