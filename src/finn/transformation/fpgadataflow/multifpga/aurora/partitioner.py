@@ -573,8 +573,10 @@ class PointToPointBidirectionalFixedPartitioner(MILPPartitioner):
 
             case MFTopology.ARBITRARY_OPEN:
                 log.warning(
-                    f"Topology {self.mfcfg.topology.name} chosen. No "
-                    f"constraints for inner connections will be set."
+                    f"Topology {self.mfcfg.topology.name} chosen. Only the ends are fixed: the "
+                    f"input nodes are placed on device 0 and the output nodes on device "
+                    f"{self.mfcfg.num_fpgas - 1}. The devices in between can be connected in "
+                    f"any order and are not constrained to a chain."
                 )
                 if self.mfcfg.single_stream_network:
                     log.warning(
@@ -588,8 +590,9 @@ class PointToPointBidirectionalFixedPartitioner(MILPPartitioner):
 
             case MFTopology.ARBITRARY_CLOSED:
                 log.warning(
-                    f"Topology {self.mfcfg.topology.name} chosen. No "
-                    f"constraints for inner connections will be set."
+                    f"Topology {self.mfcfg.topology.name} chosen. Only the ends are fixed: the "
+                    f"input and output nodes are both placed on device 0. The other devices can "
+                    f"be connected in any order and are not constrained to a ring."
                 )
                 if self.mfcfg.single_stream_network:
                     log.warning(

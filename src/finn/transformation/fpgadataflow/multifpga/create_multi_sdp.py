@@ -281,7 +281,7 @@ class CreateMultiFPGAStreamingDataflowPartition(Transformation):
                     current_max = max(all_ids)
                     getCustomOp(node).set_nodeattr("partition_id", current_max + 1)
                     all_ids.append(current_max + 1)
-        if self.verbosity.value > MFVerbosity.MEDIUM.value:
+        if self.verbosity.value >= MFVerbosity.HIGH.value:
             log.info(
                 f"Clustered the graph into {len(set(all_ids))} partitions according to device ID."
             )

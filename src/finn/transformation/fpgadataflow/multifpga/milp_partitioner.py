@@ -13,6 +13,7 @@ from mip.exceptions import InterfacingError
 from pathlib import Path
 from typing import TYPE_CHECKING, override
 
+from finn.builder.build_dataflow_config import MFVerbosity
 from finn.transformation.fpgadataflow.multifpga.partitioner import Partitioner as BasePartitioner
 from finn.util.basic import make_build_dir
 from finn.util.contracts import ensure_multifpga_config
@@ -139,6 +140,8 @@ class MILPPartitioner(BasePartitioner):
                     delay = min(delay * 2, self.RETRY_DELAY_MAX) * random.uniform(0.75, 1.25)
         finally:
             locale.setlocale(locale.LC_CTYPE, current_locale)
+        if self.mfcfg.verbosity.value >= MFVerbosity.MEDIUM.value:
+            log.info(f"Using the MILP solver {self.model.solver_name}.")
 
         try:
             self.model.emphasis = self.mfcfg.partition_solver_emphasis

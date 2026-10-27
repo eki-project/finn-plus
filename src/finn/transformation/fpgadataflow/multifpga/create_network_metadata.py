@@ -80,10 +80,11 @@ class CreateNetworkMetadata(Transformation):
                         continue
                     for in_tensor_index, input_tensor in enumerate(successor.input):
                         if input_tensor == output_tensor:
-                            if self.verbosity.value > MFVerbosity.MEDIUM.value:
+                            if self.verbosity.value >= MFVerbosity.HIGH.value:
                                 log.info(
                                     f"Adding connection:  {node.name}:{out_tensor_index} "
-                                    f"[{d1}] ----> {successor.name}:{in_tensor_index} [{d2}]"
+                                    f"[device {d1}] ----> {successor.name}:{in_tensor_index} "
+                                    f"[device {d2}]"
                                 )
                             self.metadata.add_connection(
                                 d1,  # type: ignore

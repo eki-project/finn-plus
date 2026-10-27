@@ -124,15 +124,13 @@ class PrepareAuroraFlow(Transformation):
                 f"(index {index}), since the configuration/device "
                 f"has only {self.ports} networking ports."
             )
-        if self.verbosity.value >= MFVerbosity.HIGH.value:
-            log.info(f"Packaging AuroraFlow core (Device: {device}, Index: {index})")
 
         # Copy the AuroraFlow project into a build directory
         build_dir = self.aurora_storage / f"auroraflow_build_dev{device}_ind{index}"
         shutil.copytree(self.aurora_path, build_dir, dirs_exist_ok=True)
 
         # Create the aurora kernel xo file
-        if self.make_args != "" and self.verbosity.value > MFVerbosity.LOW.value:
+        if self.make_args != "" and self.verbosity.value >= MFVerbosity.MEDIUM.value:
             log.info(
                 f"Packaging AuroraFlow kernel with additional make arguments: {self.make_args}"
             )
@@ -164,7 +162,7 @@ class PrepareAuroraFlow(Transformation):
         """Package all AuroraFlow kernels required by the metadata. If a path is missing or
         doesn't point to a valid object, it is generated and filled out.
         """
-        if self.verbosity == MFVerbosity.HIGH:
+        if self.verbosity.value >= MFVerbosity.HIGH.value:
             log.info(f"Packaging kernels with PART={self.part} and PLATFORM={self.platform}")
 
         # Package all Aurora kernels concurrently. The kernel is specific to the QSFP port, so it
@@ -179,7 +177,7 @@ class PrepareAuroraFlow(Transformation):
                         f"Cannot package AuroraFlow kernel on device {device} connected to device "
                         f"{endpoint.partner_device}: the link index of the endpoint is missing."
                     )
-                if self.verbosity.value > MFVerbosity.LOW.value:
+                if self.verbosity.value >= MFVerbosity.MEDIUM.value:
                     log.info(f"Packaging AuroraFlow core number {index} for device {device}.")
                 futures.append(
                     tpe.submit(

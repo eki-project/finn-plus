@@ -13,11 +13,7 @@ from finn.builder.build_dataflow_config import (
 )
 from finn.transformation.fpgadataflow.multifpga.backend import get_backend
 from finn.util.contracts import ensure_board_set, ensure_multifpga_config, ensure_unique_node_names
-from finn.util.exception import (
-    FINNMultiFPGAConfigError,
-    FINNMultiFPGAUnsolvableError,
-    FINNMultiFPGAUserError,
-)
+from finn.util.exception import FINNMultiFPGAUnsolvableError, FINNMultiFPGAUserError
 from finn.util.fpgadataflow import set_device_id
 from finn.util.logging import log
 from finn.util.resources import get_model_device_resource_factors
@@ -159,8 +155,11 @@ class FindMultiFPGADeviceMapping(Transformation):
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Partition the model."""
-        if self.cfg.multifpga_configuration is None or self.cfg.board is None:
-            raise FINNMultiFPGAConfigError("No Multi-FPGA partitioning config or board given.")
+        if self.verbosity.value >= MFVerbosity.MEDIUM.value:
+            log.info(
+                f"Multi-FPGA flow: backend {self.mfcfg.network_backend.name}, topology "
+                f"{self.mfcfg.topology.name}, separate IODMAs: {self.mfcfg.separate_iodmas}"
+            )
 
         # Try solving with all different device counts
         device_counts = self.generate_device_counts(model)
@@ -170,7 +169,7 @@ class FindMultiFPGADeviceMapping(Transformation):
                 f"Trying to partition model... ({device_count} devices) "
                 f"[Attempt {i+1}/{len(device_counts)}]"
             )
-            self.cfg.multifpga_configuration.num_fpgas = device_count
+            self.mfcfg.num_fpgas = device_count
             # Reset first, so that the report below is not made from a previous attempt if
             # creating the partitioner fails
             self.partitioner = None
@@ -192,7 +191,7 @@ class FindMultiFPGADeviceMapping(Transformation):
 
         # Write the report regardless of fail. If high verbosity also directly print it
         report = self.partitioner.write_report()
-        if self.verbosity.value == MFVerbosity.EXTRA_HIGH.value:
+        if self.verbosity.value >= MFVerbosity.EXTRA_HIGH.value:
             log.info(
                 "\n" + self.partitioner.generate_partitioning_report(),
                 extra={"highlighter": None, "markup": False},
@@ -206,7 +205,7 @@ class FindMultiFPGADeviceMapping(Transformation):
         self.partitioner.write_mapping()
 
         # Log time required for solving the model
-        if self.verbosity.value > MFVerbosity.LOW.value:
+        if self.verbosity.value >= MFVerbosity.MEDIUM.value:
             log.info(f"Solver done. Took {self.partitioner.solve_seconds:.3f} seconds.")
 
         # Apply results back to the model
