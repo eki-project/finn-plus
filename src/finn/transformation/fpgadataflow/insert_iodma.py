@@ -49,12 +49,20 @@ class InsertIODMA(Transformation):
         insert_input=True,
         insert_output=True,
         insert_extmemw=True,
+        replicas: int = 1,
+        ctrl_mode: str = "register",
     ):
-        """Initialize the transformation with insertion options."""
+        """Initialize the transformation with insertion options.
+
+        replicas and ctrl_mode set numReplicas and ctrlMode of the input and output DMAs (see
+        IODMA_hls); weight DMAs always serve one pipeline with register control.
+        """
         super().__init__()
         self.insert_input = insert_input
         self.insert_output = insert_output
         self.insert_extmemw = insert_extmemw
+        self.replicas = replicas
+        self.ctrl_mode = ctrl_mode
         assert 2 ** math.log2(max_intfwidth) == max_intfwidth, "max_intfwidth must be a power of 2"
         self.max_intfwidth = max_intfwidth
 
@@ -148,6 +156,8 @@ class InsertIODMA(Transformation):
                     intfWidth=intfwidth,
                     streamWidth=padded_instream_width,
                     direction="in",
+                    numReplicas=self.replicas,
+                    ctrlMode=self.ctrl_mode,
                     domain="finn.custom_op.fpgadataflow.hls",
                     backend="fpgadataflow",
                     device_id=iodma_device,
@@ -197,6 +207,8 @@ class InsertIODMA(Transformation):
                     intfWidth=intfwidth,
                     streamWidth=padded_outstream_width,
                     direction="out",
+                    numReplicas=self.replicas,
+                    ctrlMode=self.ctrl_mode,
                     domain="finn.custom_op.fpgadataflow.hls",
                     backend="fpgadataflow",
                     device_id=iodma_device,

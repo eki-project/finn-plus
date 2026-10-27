@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, RemoveUnusedTensors
 from subprocess import CalledProcessError
@@ -101,6 +102,13 @@ class CreateVitisXO(Transformation):
                 f"xo because more than 1 AXI Lite interface was found. "
                 f"Found: {len(interfaces['axilite'])} interfaces."
             )
+        # A free-running ring DMA (see IODMA_hls) has no ap_ctrl_hs block and no numReps argument;
+        # its pointer argument is still declared, for the memory connectivity (sp=) of the link
+        ring_dma = any(
+            getCustomOp(n).get_nodeattr("ctrlMode") == "ring"
+            for n in model.get_nodes_by_op_type("IODMA_hls")
+        )
+
         # Prepare
         args_string = []
         arg_id = 0
@@ -117,10 +125,13 @@ class CreateVitisXO(Transformation):
                     f":0x8:0x10:ap_uint&lt;{interfaces['aximm'][0][1]}>*:0}}"
                 )
 
-                # NumReps argument
                 arg_id += 1
-                args_string.append(f"{{numReps:0:{arg_id}:{axilite_intf_name}:0x4:0x1C:uint:0}}")
-                arg_id += 1
+                if not ring_dma:
+                    # NumReps argument
+                    args_string.append(
+                        f"{{numReps:0:{arg_id}:{axilite_intf_name}:0x4:0x1C:uint:0}}"
+                    )
+                    arg_id += 1
             else:
                 # NumReps argument
                 args_string.append(f"{{numReps:0:{arg_id}:{axilite_intf_name}:0x4:0x10:uint:0}}")
@@ -144,6 +155,7 @@ class CreateVitisXO(Transformation):
         package_xo_string = (
             f"package_xo -force -xo_path {xo_path} -kernel_name "
             f"{self.ip_name} -ip_directory {stitched_ip_dir} "
+            + ("-ctrl_protocol ap_ctrl_none " if ring_dma else "")
             + " ".join([f" -kernel_xml_args {arg}" for arg in args_string])
         )
 

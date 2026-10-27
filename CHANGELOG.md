@@ -9,6 +9,8 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 
 ### Added
+- Replicated compute pipelines on Alveo (`"Replicas": N` at the top level of the folding configuration, default 1): the dataflow partition is linked N times behind one input and one output DMA, which hand out and collect the frames round-robin, so the ONNX model and both drivers still see a single accelerator. Not yet supported: Zynq, Multi-FPGA, several inputs or outputs, external or streamed weights, automatic folding (the throughput target folds one replica) and per-replica SLR placement
+- Free-running input and output DMAs for builds with the C++ driver only: the C++ driver posts buffers to a descriptor ring in the DMAs' register space instead of starting and polling each DMA, so several batches are in flight, the output DMA accepts results whenever they arrive, and a buffer counts as done when its data has been read (input) or written and acknowledged by the memory (output). Builds that include the PYNQ driver keep the register-driven DMAs
 - Reset pipeline for the Alveo and Zynq hardware kernels (`reset_pipeline_stages`, default 2): every dataflow node takes its reset from a `reset_pipe` cell of its own, fed by one kernel-level stage replicated per 16 loads, instead of one register driving every node across the device
 - Optional AXI-stream register slices in front of every node input another node drives (`stream_register_slices`): Vivado's auto-pipelined slice, which the placer pipelines as far as each stream's length needs; on mobilenetv1 (U55C) 3-8 % higher clock frequency than a fully registered slice for 8 % more LUTs and registers
 - `vitis_opt_strategy` PERFORMANCE and PERFORMANCE_BEST also set the Vivado implementation directives of the link and synthesise the kernels with retiming
@@ -20,6 +22,8 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - The CIFAR validation of the PYNQ driver normalizes the images for every accelerator with a float input, not only for CIFAR-100 (override with the `normalize` kwarg of `validate`) (eki-project#290)
 
 ### Fixed
+- Alveo builds connected each DMA to a memory bank of its own (e.g. HBM[0] and HBM[1]), which the PYNQ driver cannot handle (it refused to allocate its buffers, "Multiple memories active in design"). Builds that include the PYNQ driver now connect all DMAs of a device to its first bank, and host-memory builds connect every DMA to HOST[0], the only host memory segment of the platforms, instead of HOST[1], HOST[2], ...
+- Alveo builds no longer recorded the compute-unit names of their DMAs (`instance_name`), so the PYNQ driver settings listed empty DMA names and the driver failed on start-up ("Could not find IP or hierarchy  in overlay"); the C++ driver config only picked the right kernels because an empty name matches every kernel. The link configuration sets the names again
 - Alveo links with Vivado 2023.1, 2023.2 and 2024.2 placed and routed the kernel clock at 100 MHz whatever `synth_clk_period_ns` asked for (the clock-wizard solver v++ uses finds no solution there); the link now re-creates the kernel clock at the requested frequency before `opt_design`
 - The XDC of the Vitis kernels was silently dropped at link time (`Designutils 20-1275`); it is now written relative to the kernel's block design and scoped to it
 - Kernels pinned to an SLR took the kernel reset of SLR0 across the SLR boundary; each now takes the reset of its own SLR, and `opt_design` replicates wide control nets per hierarchy

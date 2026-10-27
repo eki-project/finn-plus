@@ -188,7 +188,7 @@ from finn.transformation.fpgadataflow.transpose_decomposition import (
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild
 from finn.transformation.fpgadataflow.vitis_linking_configuration import kernel_synth_options
 from finn.transformation.fpgadataflow.vivado_power_estimation import VivadoPowerEstimation
-from finn.transformation.general import ApplyConfig
+from finn.transformation.general import REPLICAS_KEY, ApplyConfig
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.multi_dnn.multi_dnn_steps import (
     step_apply_multi_dnn,
@@ -1494,9 +1494,14 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
             "depth_trigger_uram",
             "depth_trigger_bram",
         ]
-        extract_model_config_to_json(
-            model, cfg.get_report_directory() / "applied_folding_config.json", hw_attrs
-        )
+        applied = cfg.get_report_directory() / "applied_folding_config.json"
+        extract_model_config_to_json(model, applied, hw_attrs)
+        replicas = cfg._resolve_replicas()
+        if replicas != 1:
+            # network-level key, applied by step_prepare_synthesis
+            applied_config = json.loads(applied.read_text())
+            applied_config[REPLICAS_KEY] = replicas
+            applied.write_text(json.dumps(applied_config, indent=2))
     else:
         log.info("No folding config json provided, skipping step_apply_folding_config.")
 
@@ -1590,7 +1595,11 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
             est_fps = n_clock_cycles_per_sec / cast(
                 "int", estimate_network_performance["max_cycles"]
             )
-            estimate_network_performance["estimated_throughput_fps"] = est_fps
+            # replicated pipelines (REPLICAS_KEY) multiply the throughput; the layer estimates above
+            # are per pipeline
+            replicas = cfg._resolve_replicas()
+            estimate_network_performance["replicas"] = replicas
+            estimate_network_performance["estimated_throughput_fps"] = est_fps * replicas
             est_latency_ns = (
                 cast("int", estimate_network_performance["critical_path_cycles"])
                 * cfg.synth_clk_period_ns
@@ -1979,6 +1988,54 @@ def step_out_of_context_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig)
     return model
 
 
+def _check_replication(model: ModelWrapper, cfg: DataflowBuildConfig, replicas: int) -> None:
+    """Reject replicated pipelines in the configurations the IODMAs cannot serve yet.
+
+    TODO: Zynq builds, Multi-FPGA, networks with several inputs or outputs, and external or
+    streamed weights (external mem_mode, MLO) with replication.
+    """
+    if replicas == 1:
+        return
+    unsupported = None
+    if cfg.shell_flow_type != ShellFlowType.VITIS_ALVEO:
+        unsupported = "Zynq (vivado_zynq) builds"
+    elif cfg.partitioning_configuration is not None:
+        unsupported = "Multi-FPGA builds"
+    elif len(model.graph.input) != 1 or len(model.graph.output) != 1:
+        unsupported = "networks with more than one input or output"
+    elif cfg.mlo or model.get_nodes_by_op_type("FINNLoop"):
+        unsupported = "MLO (streamed weights)"
+    elif any(
+        n.op_type.startswith(("MVAU", "VVAU"))
+        and getCustomOp(n).get_nodeattr("mem_mode") == "external"
+        for n in model.graph.node
+    ):
+        unsupported = "external weights"
+    if unsupported is not None:
+        raise FINNUserError(
+            f"{REPLICAS_KEY} = {replicas} in {cfg.folding_config_file}: replicated pipelines are "
+            f"not supported for {unsupported} yet; set it to 1."
+        )
+
+
+def _warn_iodma_bandwidth(model: ModelWrapper, replicas: int) -> None:
+    """Warn when the memory word of an input/output DMA cannot keep all pipelines busy."""
+    if replicas == 1:
+        return
+    for node in model.get_nodes_by_op_type("IODMA_hls"):
+        inst = getCustomOp(node)
+        if inst.get_nodeattr("burstMode") == "wrap":
+            continue
+        intfw = cast("int", inst.get_nodeattr("intfWidth"))
+        streamw = cast("int", inst.get_nodeattr("streamWidth"))
+        if intfw < replicas * streamw:
+            log.warning(
+                f"{node.name} moves {intfw} bits per cycle but its {replicas} pipelines take "
+                f"{replicas * streamw}: the DMA limits the throughput (raise "
+                f"vitis_iodma_intf_max_width, or the frame size limits the memory word)."
+            )
+
+
 @register_build_dataflow_step()
 def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Prepare synthesis. For Zynq this currently does nothing.
@@ -2009,12 +2066,24 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
         cfg._resolve_vitis_platform() if cfg.shell_flow_type is ShellFlowType.VITIS_ALVEO else None
     )
     clk_ns = cfg.synth_clk_period_ns
+    replicas = cfg._resolve_replicas()
+    _check_replication(model, cfg, replicas)
 
     # Differentiate preparation by flow type
     match cfg.shell_flow_type:
         case ShellFlowType.VITIS_ALVEO:
-            # Insert IODMAs
-            model = model.transform(InsertIODMA(max_intfwidth=cfg.vitis_iodma_intf_max_width))
+            # Insert IODMAs: one input and one output DMA, serving all replicated pipelines,
+            # controlled the way the selected driver expects
+            ctrl_mode = cfg._resolve_iodma_ctrl_mode()
+            log.info(f"IODMAs: {ctrl_mode} control, {replicas} pipeline(s)")
+            model = model.transform(
+                InsertIODMA(
+                    max_intfwidth=cfg.vitis_iodma_intf_max_width,
+                    replicas=replicas,
+                    ctrl_mode=ctrl_mode,
+                )
+            )
+            _warn_iodma_bandwidth(model, replicas)
             model = model.transform(GiveUniqueNodeNamesRecursive())
             model = model.transform(GiveReadableTensorNames())
             model = model.transform(InsertDWC())

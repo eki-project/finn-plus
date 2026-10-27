@@ -52,6 +52,7 @@ import logging
 import mashumaro.config
 import mip
 import numpy as np
+import yaml
 from dataclasses import dataclass, field
 from enum import Enum
 from mashumaro.mixins.json import DataClassJSONMixin
@@ -59,6 +60,7 @@ from mashumaro.mixins.yaml import DataClassYAMLMixin
 from pathlib import Path, PosixPath, PurePath
 from typing import Any, Literal, Optional, cast
 
+from finn.transformation.general import REPLICAS_KEY
 from finn.util.basic import alveo_default_platform, hbm_boards, part_map
 from finn.util.exception import FINNConfigurationError
 
@@ -577,6 +579,8 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: this will override the automatically generated parallelization
     #: attributes inferred from target_fps (if any)
     #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
+    #: The top-level key "Replicas" (REPLICAS_KEY) sets the number of copies of the
+    #: compute pipeline that the input/output DMAs serve (Alveo, default 1).
     folding_config_file: Path | None = None
 
     #: (Optional) Path to configuration YAML file listing layout assumptions and
@@ -968,6 +972,41 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         raise FINNConfigurationError(
             "Couldn't resolve driver platform for " + str(self.shell_flow_type)
         )
+
+    def _resolve_replicas(self) -> int:
+        """Return the number of replicated compute pipelines behind the IODMAs: the top-level
+        REPLICAS_KEY of the folding config, 1 without it. Read here rather than by ApplyConfig,
+        because it configures the IODMAs, which only exist from step_prepare_synthesis on.
+
+        TODO: integrate with the automatic folding (target_fps): it folds a single pipeline and
+        neither picks the number of replicas nor divides the target by it.
+        """
+        if self.folding_config_file is None:
+            return 1
+        # JSON is a subset of YAML, so this reads both folding config formats
+        with Path(self.folding_config_file).open() as f:
+            folding = yaml.safe_load(f) or {}
+        replicas = folding.get(REPLICAS_KEY, 1)
+        if not isinstance(replicas, int) or isinstance(replicas, bool) or replicas < 1:
+            raise FINNConfigurationError(
+                f"{REPLICAS_KEY} in {self.folding_config_file} must be a positive integer, "
+                f"got {replicas!r}"
+            )
+        return replicas
+
+    def _resolve_iodma_ctrl_mode(self) -> Literal["register", "ring"]:
+        """Return the IODMA control mode for the selected driver(s): free-running ring DMAs when
+        only the C++ driver is generated for an Alveo board, otherwise register DMAs, which the
+        PYNQ driver (and the C++ driver) can drive.
+        """
+        outputs = cast("list[DataflowOutputType]", self.generate_outputs)
+        if (
+            self.shell_flow_type == ShellFlowType.VITIS_ALVEO
+            and DataflowOutputType.CPP_DRIVER in outputs
+            and DataflowOutputType.PYNQ_DRIVER not in outputs
+        ):
+            return "ring"
+        return "register"
 
     def _resolve_mem_type(self) -> str:
         """Resolve the memory type used to stream weights from the memories

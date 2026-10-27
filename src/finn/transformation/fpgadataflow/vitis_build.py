@@ -38,7 +38,11 @@ from pathlib import Path
 from qonnx.transformation.base import Transformation
 from typing import TYPE_CHECKING, cast
 
-from finn.builder.build_dataflow_config import DataflowBuildConfig, MFCommunicationKernel
+from finn.builder.build_dataflow_config import (
+    DataflowBuildConfig,
+    DataflowOutputType,
+    MFCommunicationKernel,
+)
 from finn.transformation.fpgadataflow.multifpga.aurora.link_config_transform import (
     AddAuroraToLinkConfig,
 )
@@ -170,6 +174,7 @@ class VitisBuild(Transformation):
                 vitis_opt_strategy=self.cfg.vitis_opt_strategy,
                 optimization_level=self.cfg.vitis_opt_strategy.value,
                 f_mhz=round(1000.0 / self.cfg.synth_clk_period_ns),
+                shared_dma_bank=DataflowOutputType.PYNQ_DRIVER in self.cfg.generate_outputs,
             )
         )
 

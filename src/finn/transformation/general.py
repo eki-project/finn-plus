@@ -27,6 +27,15 @@ from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
 
+#: Folding config key for the number of replicated compute pipelines behind the IODMAs. It
+#: configures the network rather than a node, so ApplyConfig leaves it to the build
+#: (DataflowBuildConfig._resolve_replicas).
+REPLICAS_KEY = "Replicas"
+
+#: Top-level config keys that do not name nodes
+NETWORK_CONFIG_KEYS = ("Defaults", REPLICAS_KEY)
+
+
 class ApplyConfig(Transformation):
     """Applies node properties (attributes) from either a config dict or its JSON
     representation given as a filename.
@@ -175,7 +184,7 @@ class ApplyConfig(Transformation):
             for x in model_config
             if x not in self.used_configurations
             and x not in ignored_configurations
-            and x != "Defaults"
+            and x not in NETWORK_CONFIG_KEYS
         ]
         if len(unused_configs) > 0:
             log.warning("\nUnused HW configurations: " + ", ".join(unused_configs))

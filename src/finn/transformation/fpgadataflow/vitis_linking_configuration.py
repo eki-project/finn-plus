@@ -632,8 +632,12 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
         # Template rendering
         env = get_jinja_environment()
         template = env.get_template("vitis_link/link_config.txt.jinja")
+        # v++ takes all compute units of a kernel in one nk line: nk=<kernel>:<count>:<cu1>.<cu2>
+        cus_per_kernel: dict[str, list[str]] = {}
+        for kernel, cu in self.nk:
+            cus_per_kernel.setdefault(kernel, []).append(cu)
         rendered = template.render(
-            nk=self.nk,
+            nk=list(cus_per_kernel.items()),
             sc=self.sc,
             sp=self.sp,
             slr=self.slr,
@@ -703,6 +707,7 @@ class BuildBasicVitisLinkConfig(Transformation):
         vitis_opt_strategy: VitisOptStrategy,
         optimization_level: str,
         f_mhz: int,
+        shared_dma_bank: bool = False,
     ) -> None:
         """Build a basic linking configuration and store it. Afterwards, the
         model can be linked, or the config can be modified further.
@@ -714,6 +719,9 @@ class BuildBasicVitisLinkConfig(Transformation):
             vitis_opt_strategy: Vitis optimization strategy.
             optimization_level: v++ optimization level.
             f_mhz: Target kernel clock in MHz.
+            shared_dma_bank: Connect all DMAs of a device to its first memory bank instead
+                of one bank per DMA. The PYNQ driver needs this: it allocates every buffer in
+                the device's only active memory and refuses designs that use several.
         """
         super().__init__()
         self.platform = platform
@@ -722,6 +730,7 @@ class BuildBasicVitisLinkConfig(Transformation):
         self.optimization_level = optimization_level
         self.vitis_opt_strategy = vitis_opt_strategy
         self.f_mhz = f_mhz
+        self.shared_dma_bank = shared_dma_bank
 
     def _configure_kernel_clock(self, config: VitisLinkConfiguration) -> None:
         """Make implementation time the kernel clock at the requested frequency.
@@ -768,6 +777,22 @@ class BuildBasicVitisLinkConfig(Transformation):
             f"{{-hier_fanout_limit {OPT_HIER_FANOUT_LIMIT}}}"
         )
         log.info(f"Per-SLR kernel resets for {', '.join(sorted(pinned))} via {script}")
+
+    @staticmethod
+    def _replicas(model: ModelWrapper) -> int:
+        """Return the number of replicated pipelines, as configured on the IODMAs."""
+        replicas = {
+            cast("int", getCustomOp(dma).get_nodeattr("numReplicas"))
+            for sdp in model.graph.node
+            for dma in get_submodel(sdp)[0].get_nodes_by_op_type("IODMA_hls")
+        }
+        if len(replicas) > 1:
+            raise FINNInternalError(f"IODMAs disagree on the number of replicas: {replicas}")
+        n = replicas.pop() if replicas else 1
+        devices = {get_device_id(sdp) for sdp in model.graph.node}
+        if n > 1 and len(devices) > 1:
+            raise FINNUserError("Replicated pipelines are not supported for Multi-FPGA builds")
+        return n
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build the configuration."""
@@ -836,8 +861,14 @@ class BuildBasicVitisLinkConfig(Transformation):
         cu_inputs: dict[str, int] = {}
         cu_outputs: dict[str, int] = {}
 
+        # Compute units per SDP and replica: with N replicated pipelines (numReplicas of the
+        # IODMAs), every compute SDP is instantiated N times and replica r is wired to stream
+        # port r of the (single) input and output DMA
+        replica_cus: dict[str, list[str]] = {}
+
         # Loop through all SDPs and add all nodes
         check_all_sdp_nodes(model)
+        replicas = self._replicas(model)
         total_idmas = 0
         total_odmas = 0
         for node in model.graph.node:
@@ -870,9 +901,18 @@ class BuildBasicVitisLinkConfig(Transformation):
                     cu_names[node.name] = odma
                     dma_on_device[node.name] = dmas[current_device]
                     dmas[current_device] += 1
+                replica_cus[node.name] = [cu_names[node.name]] * replicas
             else:
-                configs[current_device].add_cu(node.name, node.name)
-                cu_names[node.name] = node.name
+                names = (
+                    [node.name] if replicas == 1 else [f"{node.name}_r{r}" for r in range(replicas)]
+                )
+                for cu in names:
+                    configs[current_device].add_cu(node.name, cu)
+                cu_names[node.name] = names[0]
+                replica_cus[node.name] = names
+
+            # The drivers find the DMAs by these names (PYNQ: overlay attribute, C++: kernel name)
+            getCustomOp(node).set_nodeattr("instance_name", cu_names[node.name])
 
             # Initialize IO count for every node
             cu_inputs[node.name] = 0
@@ -895,10 +935,16 @@ class BuildBasicVitisLinkConfig(Transformation):
             if successors is not None:
                 for successor in successors:
                     if get_device_id(node) == get_device_id(successor):
-                        configs[current_device].add_sc(
-                            f"{cu_names[node.name]}.m_axis_{cu_outputs[node.name]}",
-                            f"{cu_names[successor.name]}.s_axis_{cu_inputs[successor.name]}",
-                        )
+                        for r in range(replicas):
+                            # a DMA serves replica r on its stream port r
+                            out_port = r if node.name in dma_nodes else cu_outputs[node.name]
+                            in_port = (
+                                r if successor.name in dma_nodes else cu_inputs[successor.name]
+                            )
+                            configs[current_device].add_sc(
+                                f"{replica_cus[node.name][r]}.m_axis_{out_port}",
+                                f"{replica_cus[successor.name][r]}.s_axis_{in_port}",
+                            )
                         cu_outputs[node.name] += 1
                         cu_inputs[successor.name] += 1
 
@@ -907,7 +953,13 @@ class BuildBasicVitisLinkConfig(Transformation):
             # chose -- including in builds that supplied a `vitis_floorplan_file`,
             # whose SLR assignment therefore did not reach placement at all. Logged
             # rather than silent, because it changes where such a build puts its kernels.
-            if node_slr != -1:
+            if node_slr != -1 and replicas > 1 and node.name not in dma_nodes:
+                # TODO: place the replicas of a pipeline on different SLRs
+                log.warning(
+                    f"Not pinning the {replicas} replicas of {node.name} to SLR{node_slr}; "
+                    f"Vitis places them."
+                )
+            elif node_slr != -1:
                 configs[current_device].add_slr(cu_names[node.name], f"SLR{node_slr}")
                 log.info(f"Pinning kernel {cu_names[node.name]} to SLR{node_slr}")
 
@@ -930,7 +982,11 @@ class BuildBasicVitisLinkConfig(Transformation):
                             f"Cannot do system-port placement for unknown board {self.board}"
                         )
             if node.name in dma_nodes:
-                if mem_idx != 0:
+                if self.fpga_memory_type == FpgaMemoryType.HOST_MEM or self.shared_dma_bank:
+                    # one bank for all DMAs: the platforms have a single host memory segment
+                    # (HOST[0]), and the PYNQ driver allocates in a single memory
+                    mem_idx = 0
+                elif mem_idx != 0:
                     log.warning(
                         f"Overwriting expected mem_idx {dma_on_device[node.name]} "
                         f"with specified Node SLR mem_idx: {mem_idx}"

@@ -42,11 +42,14 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name, roundup_to_integer_multiple
 from string import Template
+from typing import cast
 
 from finn.builder.build_dataflow_config import FpgaMemoryType
+from finn.custom_op.fpgadataflow.hls.iodma_hls import IODMA_hls
 from finn.util.basic import get_driver_shapes, make_build_dir
 from finn.util.data_packing import to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
+from finn.util.fpgadataflow import get_submodel
 from finn.util.logging import log
 from finn.util.rtlsim import dat_file_to_numpy_array
 from finn.util.settings import get_settings
@@ -156,6 +159,30 @@ class MakeCPPDriver(Transformation):
             self.host_memory = True
         else:
             self.host_memory = False
+
+    @staticmethod
+    def ring_dma_configs(model: ModelWrapper) -> dict[str, dict[str, dict]]:
+        """Return the "ring" config entry of every ring DMA, keyed by its SDP instance name.
+
+        The entry holds the descriptor ring size and the AXI-lite byte offsets of its registers
+        (see IODMA_hls.get_ring_register_offsets); register DMAs have no entry.
+        """
+        res: dict[str, dict[str, dict]] = {}
+        for sdp in model.graph.node:
+            submodel, _ = get_submodel(sdp)
+            if [n.op_type for n in submodel.graph.node] != ["IODMA_hls"]:
+                continue
+            dma = getCustomOp(submodel.graph.node[0])
+            if not isinstance(dma, IODMA_hls) or dma.get_nodeattr("ctrlMode") != "ring":
+                continue
+            name = cast("str", getCustomOp(sdp).get_nodeattr("instance_name"))
+            res[name] = {
+                "ring": {
+                    "slots": dma.get_nodeattr("ringSlots"),
+                    "registers": dma.get_ring_register_offsets(),
+                }
+            }
+        return res
 
     def format_kernel_name(self, kname: str) -> str:
         """Format kernel name into Vitis-compatible format.
@@ -409,6 +436,9 @@ class MakeCPPDriver(Transformation):
                 Required to read kernel names for driver config!"
             )
 
+        # Free-running ring DMAs (IODMA_hls ctrlMode "ring") get their register map in the config
+        ring_dmas = self.ring_dma_configs(model)
+
         # Gather info from all FPGAs / XCLBINs
         for device, xclbin_path in xclbin_paths.items():
             xclbin_path = Path(xclbin_path)
@@ -458,6 +488,7 @@ class MakeCPPDriver(Transformation):
                             "normalShape": driver_shapes["ishape_normal"][i],
                             "foldedShape": driver_shapes["ishape_folded"][i],
                             "packedShape": driver_shapes["ishape_packed"][i],
+                            **ring_dmas.get(driver_shapes["idma_names"][i], {}),
                         }
                     )
 
@@ -477,6 +508,7 @@ class MakeCPPDriver(Transformation):
                             "normalShape": driver_shapes["oshape_normal"][i],
                             "foldedShape": driver_shapes["oshape_folded"][i],
                             "packedShape": driver_shapes["oshape_packed"][i],
+                            **ring_dmas.get(driver_shapes["odma_names"][i], {}),
                         }
                     )
 

@@ -556,10 +556,11 @@ class CreateStitchedIP(Transformation):
 
         # make output axis external
         for i in range(len(output_intf_names)):
+            # FINNLoop and (replicated) IODMAs expose several streams for one tensor
             if (
                 idx is not None
                 and idx != i
-                and node.op_type != "FINNLoop"
+                and node.op_type not in ("FINNLoop", "IODMA_hls")
                 and not self.nodecontainer
             ):
                 continue
@@ -599,10 +600,11 @@ class CreateStitchedIP(Transformation):
 
         # make input axis external
         for i in range(len(input_intf_names)):
+            # FINNLoop and (replicated) IODMAs expose several streams for one tensor
             if (
                 idx is not None
                 and idx != i
-                and node.op_type != "FINNLoop"
+                and node.op_type not in ("FINNLoop", "IODMA_hls")
                 and not self.nodecontainer
             ):
                 continue
