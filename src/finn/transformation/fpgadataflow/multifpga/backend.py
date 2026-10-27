@@ -8,7 +8,7 @@ instead of dispatching on the communication kernel themselves.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
@@ -23,6 +23,7 @@ from finn.transformation.fpgadataflow.multifpga.aurora.partitioner import (
     PointToPointBidirectionalFixedPartitioner,
 )
 from finn.transformation.fpgadataflow.multifpga.aurora.prepare_aurora import PrepareAuroraFlow
+from finn.util.contracts import ensure_board_set, ensure_multifpga_config
 from finn.util.exception import FINNInternalError, FINNMultiFPGAConfigError
 
 if TYPE_CHECKING:
@@ -94,20 +95,16 @@ def get_backend(backend_type: MFNetworkBackendType) -> NetworkBackend:
         ) from e
 
 
+@ensure_multifpga_config
 def _get_multifpga_configuration(cfg: DataflowBuildConfig) -> MultiFPGAConfiguration:
     """Return the Multi-FPGA configuration, which must be set when using a backend."""
-    if cfg.multifpga_configuration is None:
-        raise FINNInternalError(
-            "A Multi-FPGA backend was used, but no Multi-FPGA configuration is set."
-        )
-    return cfg.multifpga_configuration
+    return cast("MultiFPGAConfiguration", cfg.multifpga_configuration)
 
 
+@ensure_board_set
 def _get_board(cfg: DataflowBuildConfig) -> str:
     """Return the board, which must be set for Multi-FPGA builds."""
-    if cfg.board is None:
-        raise FINNMultiFPGAConfigError("Cannot do Multi-FPGA without 'board' being specified.")
-    return cfg.board
+    return cast("str", cfg.board)
 
 
 # AuroraFlow

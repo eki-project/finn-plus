@@ -8,6 +8,9 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ## Unreleased
 
+### Added
+- `BuildAllXOs` builds the XOs of all SDPs in parallel threads; `threaded_parallel=False` builds them one after another (eki-project#289)
+
 ### Changed
 - `finn test --variant custom` selects tests via the repeatable `--test` option (test files, directories or node IDs) instead of `--args`, and forwards `-q`/`--quiet` and `--collect-only` to pytest. `--args` is removed, `--variant doctest` always runs all doctests (eki-project#289)
 - `PartitioningConfiguration` and the build config field `partitioning_configuration` are renamed to `MultiFPGAConfiguration` and `multifpga_configuration`; configs that still use the old field name are rejected with an error that points to the new name (eki-project#289)
@@ -16,10 +19,13 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - Reworked Multi-FPGA partitioner infrastructure (`FindMultiFPGADeviceMapping`, `ApplyDeviceMapping`, MILP base class) (eki-project#289)
 - QSFP interface names are defined per platform in `platforms.py` instead of being hard-coded (eki-project#289)
 - The `finn` CLI prints user errors (`FINNUserError`) without a stack trace, set `FINN_DEBUG=1` to show it. Unknown keys and invalid values in the build config, including nested configs such as `multifpga_configuration`, raise a `FINNConfigurationError` that names the config class and the field (eki-project#289)
+- Vitis link configs name the compute units of SDPs that only contain an I/O DMA `idma_<name>` / `odma_<name>` (eki-project#289)
 
 ### Fixed
 - `fifo_config_file` is resolved relative to the build config, like the other config files (eki-project#289)
 - Unknown keys in `multifpga_configuration` (e.g. the removed `ideal_utilization`) were silently ignored instead of being rejected (eki-project#289)
+- SDP ports during Vitis Linking again consider the port index so that Multi-IO-SDPs are correctly linked (eki-project#289)
+- Multi-FPGA verbosity `EXTRA_HIGH` hid some messages shown at `HIGH` (eki-project#289)
 - The cycle estimate of the RTL sliding window generator in 1D depthwise mode ignored that the buffered window is replayed once per channel fold and that the next frame cannot enter the buffer meanwhile, so a global pooling window over a whole sequence was estimated at half its real period (963 instead of 1971 cycles for the RadioML transformer); `SetFolding` additionally kept the window generator at the parallelism of the pooling layer it feeds without checking the generator's own cycles, which left it as the unnoticed throughput bottleneck. The estimate now matches XSI within 1 % for overlapping, non-overlapping and full-map windows, and the folding raises the shared parallelism of window generator and pooling/depthwise layer until both meet the target (eki-project#280)
 
 ## 1.6.0 - 28.09.2026
