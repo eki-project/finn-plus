@@ -273,16 +273,16 @@ def test_aurora_metadata_path_serialization() -> None:
     ],
     ids=["simplex_chain", "duplex_chain"],
 )
-def test_aurora_metadata_partner_links(connections: list[tuple[int, str, int, str]]) -> None:
-    """Test that both endpoints of a cable point to each other's link. In both chains the
-    middle device connects to device 0 on link 0 and to device 2 on link 1, so the cabling
+def test_aurora_metadata_partner_ports(connections: list[tuple[int, str, int, str]]) -> None:
+    """Test that both endpoints of a cable point to each other's QSFP port. In both chains the
+    middle device connects to device 0 on port 0 and to device 2 on port 1, so the cabling
     is not symmetric.
     """
     meta = AuroraNetworkMetadata(links_per_device=2)
     for connection in connections:
         meta.add_connection(*connection)
     cabling = {
-        (device, endpoint.link_index): (endpoint.partner_device, endpoint.partner_link_index)
+        (device, endpoint.port_index): (endpoint.partner_device, endpoint.partner_port_index)
         for device, endpoints in meta.data.items()
         for endpoint in endpoints
     }
@@ -296,8 +296,8 @@ def test_aurora_metadata_partner_links(connections: list[tuple[int, str, int, st
         rx = meta.get_endpoint(
             receiver_device, receiver_node, sender_device, sender_node, DataDirection.RX
         )
-        assert tx.partner_link_index == rx.link_index
-        assert rx.partner_link_index == tx.link_index
+        assert tx.partner_port_index == rx.port_index
+        assert rx.partner_port_index == tx.port_index
 
 
 @pytest.mark.multifpga
@@ -313,16 +313,16 @@ def test_aurora_metadata_get_endpoint_missing() -> None:
 
 @pytest.mark.multifpga
 @pytest.mark.auroraflow
-def test_aurora_metadata_partner_link_mismatch() -> None:
-    """Test that a connection is rejected if it reuses an endpoint whose partner link does not
-    match the link used on the other device.
+def test_aurora_metadata_partner_port_mismatch() -> None:
+    """Test that a connection is rejected if it reuses an endpoint whose partner port does not
+    match the QSFP port used on the other device.
     """
     meta = AuroraNetworkMetadata(links_per_device=2)
     meta.add_connection(0, "n0", 1, "n1")
-    # Simulate devices that are out of sync: the reverse connection reuses link 0 on both
-    # devices, but the endpoint on device 1 claims to be cabled to link 1 of device 0
-    meta.data[1][0].partner_link_index = 1
-    with pytest.raises(FINNInternalError, match="already cabled to link 1 of device 0"):
+    # Simulate devices that are out of sync: the reverse connection reuses port 0 on both
+    # devices, but the endpoint on device 1 claims to be cabled to port 1 of device 0
+    meta.data[1][0].partner_port_index = 1
+    with pytest.raises(FINNInternalError, match="already cabled to port 1 of device 0"):
         meta.add_connection(1, "n1", 0, "n2")
 
 
@@ -406,28 +406,28 @@ def test_aurora_metadata_plot_dot(with_model: bool) -> None:
 @pytest.mark.auroraflow
 def test_aurora_metadata_export() -> None:
     """Test that the exported node-link JSON contains exactly one undirected edge without
-    attributes per cable between the (device, link) ports, regardless of whether the cable is
-    used in one or both directions. The ports must follow the link indices, not the order of
+    attributes per cable between the (device, QSFP port) pairs, regardless of whether the cable
+    is used in one or both directions. The ports must follow the port indices, not the order of
     the endpoints in the metadata.
     """
 
     def endpoint(
-        link: int,
+        port: int,
         partner: int,
-        partner_link: int,
+        partner_port: int,
         tx: tuple[str, str] | None,
         rx: tuple[str, str] | None,
     ) -> AuroraLinkEndpoint:
         return AuroraLinkEndpoint(
             aurora_xo=None,
             partner_device=partner,
-            link_index=link,
-            partner_link_index=partner_link,
+            port_index=port,
+            partner_port_index=partner_port,
             connecting_kernels={DataDirection.TX: tx, DataDirection.RX: rx},
         )
 
     # 0 -> 1 -> 2 -> 1 -> 0 -> 1: the cable between 0 and 1 carries data in both directions, the
-    # cable between 1 and 2 only from 1 to 2. The link indices do not match the positions of the
+    # cable between 1 and 2 only from 1 to 2. The port indices do not match the positions of the
     # endpoints in the lists.
     meta = AuroraNetworkMetadata(
         data={

@@ -19,7 +19,6 @@ from finn.util.contracts import (
 )
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.fpgadataflow import get_device_id
-from finn.util.logging import log
 from finn.util.platforms import Platform, platforms
 
 
@@ -37,6 +36,25 @@ class AddAuroraToLinkConfig(Transformation):
         self.part = fpga_part
         self.rx_dummy = None
         self.tx_dummy = None
+        if self.platform.qsfp_slr is None:
+            raise FINNUserError(
+                f"Cannot place AuroraFlow kernels on device with platform"
+                f"{type(self.platform).__name__} because expected SLR placement "
+                f"of the kernel is not known. This means that the selected "
+                f"platform either does not have any QSFP ports, or that their location "
+                f"on the platforms SLRs is missing from the platform definitions "
+                f"(check platforms.py)."
+            )
+        if self.platform.freerunning_clock is None:
+            raise FINNUserError(
+                f"Cannot connect AuroraFlow kernels on device with platform "
+                f"{type(self.platform).__name__} because the name of its "
+                f"free-running clock is not known. It is missing from the platform "
+                f"definitions (check platforms.py)."
+            )
+
+        self.qsfp_slr: str = self.platform.qsfp_slr
+        self.freerunning_clock: str = self.platform.freerunning_clock
 
     def package_dummy_kernels(self) -> tuple[Path, Path]:
         """Prepare dummy kernels that might be needed when a kernel is in duplex mode
@@ -100,6 +118,19 @@ class AddAuroraToLinkConfig(Transformation):
         self.tx_dummy = tx_dummy
         return self.rx_dummy, self.tx_dummy
 
+    @ensure_device_id_set
+    def check_valid_metadata(self, model: ModelWrapper, metadata: AuroraNetworkMetadata) -> None:
+        """Check if the given metadata is valid and can be used for linking."""
+        for node in model.graph.node:
+            device = cast("int", get_device_id(node))
+            for endpoint in metadata[device]:
+                if endpoint.aurora_xo is None:
+                    raise FINNInternalError(
+                        f"Aurora metadata for device {device} "
+                        f"is incomplete: missing XO path for the kernel at QSFP port "
+                        f"{endpoint.port_index}!"
+                    )
+
     @ensure_only_sdp_nodes
     @ensure_device_id_set
     @ensure_unique_node_names
@@ -109,128 +140,74 @@ class AddAuroraToLinkConfig(Transformation):
         """Modify the link config."""
         metadata = AuroraNetworkMetadata.load_from_model(model)
         configs = VitisLinkConfiguration.load_from_model(model)
+        self.check_valid_metadata(model, metadata)
 
         # Packaging dummy kernels
         rx_dummy, tx_dummy = self.package_dummy_kernels()
         dummy_per_device: dict[int, int] = {}
 
-        # An Aurora kernel can be shared by two SDPs on the same device (one using TX, the other
-        # RX), so track which (device, index) kernels were already instantiated
-        instantiated_kernels: set[tuple[int, int]] = set()
-
-        # Loop through SDPs to determine which are connected to Aurora kernels
-        for node in model.graph.node:
-            device = cast("int", get_device_id(node))
-            if device not in dummy_per_device.keys():
+        # Insert AuroraFlow kernels
+        for device, endpoints in metadata.data.items():
+            if device not in dummy_per_device:
                 dummy_per_device[device] = 0
+            for endpoint in endpoints:
+                assert endpoint.aurora_xo is not None  # type checker
+                aurora_cu = f"aurora_flow_{endpoint.port_index}"
 
-            # Loop through all auroras
-            for aurora_data in metadata[device]:
-                if aurora_data is None:
-                    raise FINNInternalError(
-                        f"Aurora metadata for device {device} is completely missing."
-                    )
-                # The QSFP port of the endpoint. Its position in the metadata list may differ.
-                index = aurora_data.link_index
-                if index is None:
-                    raise FINNInternalError(
-                        f"Aurora metadata for device {device} is incomplete: missing link index "
-                        f"of the endpoint connected to device {aurora_data.partner_device}!"
-                    )
-                if aurora_data.aurora_xo is None:
-                    raise FINNInternalError(
-                        f"Aurora metadata for device {device} "
-                        f"is incomplete: missing XO path for kernel {index}!"
-                    )
+                # Add the core
+                configs[device].add_xo(endpoint.aurora_xo)
+                configs[device].add_cu(aurora_cu, aurora_cu)
+                configs[device].add_slr(aurora_cu, self.qsfp_slr)
+                configs[device].add_connect(
+                    self.platform.get_qsfp_refclk_interface(endpoint.port_index),
+                    f"{aurora_cu}/gt_refclk_{endpoint.port_index}",
+                )
+                configs[device].add_connect(
+                    f"{aurora_cu}/gt_port", self.platform.get_qsfp_gt_interface(endpoint.port_index)
+                )
+                configs[device].add_connect(f"{aurora_cu}/init_clk", self.freerunning_clock)
 
-                # Whether this SDP sends or receives through this Aurora kernel
-                tx = aurora_data.tx
-                rx = aurora_data.rx
-                is_sender = tx is not None and tx.source_kernel == node.name
-                is_receiver = rx is not None and rx.target_kernel == node.name
-
-                # Name for the current CU
-                aurora_cu = f"aurora_flow_{index}"
-
-                # Check if the SDP node is a sender or receiver (or neither)
-                if (device, index) not in instantiated_kernels and (is_sender or is_receiver):
-                    instantiated_kernels.add((device, index))
-                    if self.platform.qsfp_slr is None:
-                        raise FINNUserError(
-                            f"Cannot place AuroraFlow kernels on device with platform"
-                            f"{type(self.platform).__name__} because expected SLR placement "
-                            f"of the kernel is not known. This means that the selected "
-                            f"platform either does not have any QSFP ports, or that their location "
-                            f"on the platforms SLRs is missing from the platform definitions "
-                            f"(check platforms.py)."
-                        )
-                    if self.platform.freerunning_clock is None:
-                        raise FINNUserError(
-                            f"Cannot connect AuroraFlow kernels on device with platform "
-                            f"{type(self.platform).__name__} because the name of its "
-                            f"free-running clock is not known. It is missing from the platform "
-                            f"definitions (check platforms.py)."
-                        )
-                    configs[device].add_xo(aurora_data.aurora_xo)
-                    configs[device].add_cu(aurora_cu, aurora_cu)
-                    configs[device].add_slr(aurora_cu, self.platform.qsfp_slr)
-                    configs[device].add_connect(
-                        self.platform.get_qsfp_refclk_interface(index),
-                        f"{aurora_cu}/gt_refclk_{index}",
+                # Connect to kernels (dummy or SDP)
+                # TX
+                if endpoint.tx is None:
+                    configs[device].add_xo(tx_dummy)
+                    dummy_cu = f"vdk_{dummy_per_device[device]}"
+                    configs[device].add_cu("tx_dummy_kernel", dummy_cu)
+                    configs[device].add_sc(dummy_cu + ".A", aurora_cu + ".tx_axis")
+                    dummy_per_device[device] += 1
+                else:
+                    sdp_output = (
+                        f"{endpoint.tx.source_kernel}"
+                        f".m_axis_{endpoint.tx.source_kernel_stream_index}"
                     )
-                    configs[device].add_connect(
-                        f"{aurora_cu}/gt_port", self.platform.get_qsfp_gt_interface(index)
-                    )
-                    configs[device].add_connect(
-                        f"{aurora_cu}/init_clk", self.platform.freerunning_clock
-                    )
-
-                # SDP -> Aurora -> Network
-                if is_sender:
-                    log.info(
-                        f"Adding AuroraFlow kernel to device {device}, "
-                        f"index {index} connected to {node.name} (TX)."
-                    )
-                    sdp_output = f"{node.name}.m_axis_{tx.source_kernel_port_index}"  # type: ignore
                     if configs[device].is_stream_port_connected(sdp_output):
                         raise FINNInternalError(
-                            f"Cannot connect AuroraFlow kernel {index} on device {device} to "
-                            f"{sdp_output}, since this port is already connected to another "
-                            f"kernel."
+                            f"Cannot connect the AuroraFlow kernel at QSFP port "
+                            f"{endpoint.port_index} on device {device} to {sdp_output}, since this "
+                            f"stream is already connected to another kernel."
                         )
                     configs[device].add_sc(sdp_output, f"{aurora_cu}.tx_axis")
-
-                    # Check if we need a dummy kernel for the unused RX direction
-                    if rx is None:
-                        configs[device].add_xo(rx_dummy)
-                        dummy_cu = f"vdk_{dummy_per_device[device]}"
-                        configs[device].add_cu("rx_dummy_kernel", dummy_cu)
-                        configs[device].add_sc(aurora_cu + ".rx_axis", dummy_cu + ".A")
-                        dummy_per_device[device] += 1
-
-                # Network -> Aurora -> SDP
-                if is_receiver:
-                    log.info(
-                        f"Adding AuroraFlow kernel to device {device}, "
-                        f"index {index} connected to {node.name} (RX)."
+                # RX
+                if endpoint.rx is None:
+                    configs[device].add_xo(rx_dummy)
+                    dummy_cu = f"vdk_{dummy_per_device[device]}"
+                    configs[device].add_cu("rx_dummy_kernel", dummy_cu)
+                    configs[device].add_sc(aurora_cu + ".rx_axis", dummy_cu + ".A")
+                    dummy_per_device[device] += 1
+                else:
+                    sdp_input = (
+                        f"{endpoint.rx.target_kernel}."
+                        f"s_axis_{endpoint.rx.target_kernel_stream_index}"
                     )
-                    sdp_input = f"{node.name}.s_axis_{rx.target_kernel_port_index}"  # type: ignore
                     if configs[device].is_stream_port_connected(sdp_input):
                         raise FINNInternalError(
-                            f"Cannot connect AuroraFlow kernel {index} on device {device} to "
-                            f"{sdp_input}, since this port is already connected to another "
-                            f"kernel."
+                            f"Cannot connect the AuroraFlow kernel at QSFP port "
+                            f"{endpoint.port_index} on device {device} to {sdp_input}, since this "
+                            f"stream is already connected to another kernel."
                         )
                     configs[device].add_sc(f"{aurora_cu}.rx_axis", sdp_input)
 
-                    # Check if we need a dummy kernel for the unused TX direction
-                    if tx is None:
-                        configs[device].add_xo(tx_dummy)
-                        dummy_cu = f"vdk_{dummy_per_device[device]}"
-                        configs[device].add_cu("tx_dummy_kernel", dummy_cu)
-                        configs[device].add_sc(dummy_cu + ".A", aurora_cu + ".tx_axis")
-                        dummy_per_device[device] += 1
-
+        # Rewrite the new config and scripts
         for config in configs.values():
             config.generate_config()
             config.generate_run_script()

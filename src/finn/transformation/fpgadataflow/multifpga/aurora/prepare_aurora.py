@@ -98,11 +98,11 @@ class PrepareAuroraFlow(Transformation):
         if self.aurora_version == "":
             raise FINNInternalError("Aurora IP Core Version undetermined!")
 
-    def package_single(self, args: str, device: int, index: int) -> Path:
-        """Package a single AuroraFlow kernel. Stored in a subdirectory of the
-        aurora_storage directory,
+    def package_single(self, args: str, device: int, port_index: int) -> Path:
+        """Package a single AuroraFlow kernel for the QSFP port `port_index` of `device`. Stored
+        in a subdirectory of the aurora_storage directory,
         which is saved in the metadata prop of the model.
-        The directory is named 'aurora_device_<device>_index_<index>'.
+        The directory is named 'auroraflow_build_dev<device>_ind<port_index>'.
         Inside are the packaged xo files.
 
         >>> from finn.builder.build_dataflow_config import MFNetworkBackendType
@@ -110,7 +110,7 @@ class PrepareAuroraFlow(Transformation):
         ...     num_fpgas=2, links_per_device=2, network_backend=MFNetworkBackendType.AURORAFLOW
         ... )
         >>> t = PrepareAuroraFlow("xilinx_u55c_gen3x16_xdma_3_202210_1", "xcu55c-fsvh2892-2L-e", p)
-        >>> xo = t.package_single("", device=0, index=0)
+        >>> xo = t.package_single("", device=0, port_index=0)
         >>> xo.exists()
         True
         >>> xo.name
@@ -118,15 +118,14 @@ class PrepareAuroraFlow(Transformation):
         >>> xo.parent.parent.name
         'auroraflow_build_dev0_ind0'
         """
-        if index >= self.ports:
+        if port_index >= self.ports:
             raise FINNMultiFPGAConfigError(
-                f"Cannot create aurora kernel number {index+1} "
-                f"(index {index}), since the configuration/device "
-                f"has only {self.ports} networking ports."
+                f"Cannot create an AuroraFlow kernel for QSFP port {port_index}, since the "
+                f"configuration/device has only {self.ports} networking ports."
             )
 
         # Copy the AuroraFlow project into a build directory
-        build_dir = self.aurora_storage / f"auroraflow_build_dev{device}_ind{index}"
+        build_dir = self.aurora_storage / f"auroraflow_build_dev{device}_ind{port_index}"
         shutil.copytree(self.aurora_path, build_dir, dirs_exist_ok=True)
 
         # Create the aurora kernel xo file
@@ -150,7 +149,7 @@ class PrepareAuroraFlow(Transformation):
                 f"kernels. Check build directory at: "
                 f"{build_dir.absolute()}\nSTDERR:\n{result.stderr}"
             )
-        xo_path = build_dir / "build" / f"aurora_flow_hw_{index}.xo"
+        xo_path = build_dir / "build" / f"aurora_flow_hw_{port_index}.xo"
         if not xo_path.exists():
             raise FINNMultiFPGAError(
                 f"Packaging AuroraFlow failed. Expected "
@@ -166,25 +165,22 @@ class PrepareAuroraFlow(Transformation):
             log.info(f"Packaging kernels with PART={self.part} and PLATFORM={self.platform}")
 
         # Package all Aurora kernels concurrently. The kernel is specific to the QSFP port, so it
-        # is packaged for the link index of the endpoint, not for its position in the metadata.
+        # is packaged for the port index of the endpoint, not for its position in the metadata.
         futures: list[Future] = []
         endpoints: list[AuroraLinkEndpoint] = []
         with ThreadPoolExecutor(max_workers=get_settings().num_default_workers) as tpe:
             for device, endpoint in metadata.get_unprepared_aurora_kernels():
-                index = endpoint.link_index
-                if index is None:
-                    raise FINNInternalError(
-                        f"Cannot package AuroraFlow kernel on device {device} connected to device "
-                        f"{endpoint.partner_device}: the link index of the endpoint is missing."
-                    )
                 if self.verbosity.value >= MFVerbosity.MEDIUM.value:
-                    log.info(f"Packaging AuroraFlow core number {index} for device {device}.")
+                    log.info(
+                        f"Packaging AuroraFlow core for QSFP port {endpoint.port_index} of "
+                        f"device {device}."
+                    )
                 futures.append(
                     tpe.submit(
                         self.package_single,
                         "",
                         device,
-                        index,
+                        endpoint.port_index,
                     )
                 )
                 endpoints.append(endpoint)

@@ -111,14 +111,14 @@ def test_link_config_rejects_multiple_streams_per_sdp(monkeypatch: pytest.Monkey
 
 @pytest.mark.multifpga
 @pytest.mark.auroraflow
-def test_link_config_uses_link_index(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that the Aurora kernels are connected to the QSFP port given by the link index of
+def test_link_config_uses_port_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that the Aurora kernels are connected to the QSFP port given by the port index of
     their endpoint, not by the position of the endpoint in the metadata.
     """
     build_dir = Path(make_build_dir("test_aurora_link_config_"))
 
-    # Chain n0 (device 0) -> n1 (device 1) -> n2 (device 2). Device 1 receives on link 0 and
-    # sends on link 1.
+    # Chain n0 (device 0) -> n1 (device 1) -> n2 (device 2). Device 1 receives on QSFP port 0
+    # and sends on QSFP port 1.
     tensors = [oh.make_tensor_value_info(f"t_{i}", TensorProto.FLOAT, [1, 1]) for i in range(4)]
     nodes = [
         oh.make_node(
@@ -139,14 +139,14 @@ def test_link_config_uses_link_index(monkeypatch: pytest.MonkeyPatch) -> None:
     configs = _add_aurora_to_link_config(model, build_dir, monkeypatch, reverse_endpoints=True)
 
     platform = platforms["U280"]()
-    for link in (0, 1):
-        assert configs[1].cu.count(f"aurora_flow_{link}") == 1
-        assert (f"aurora_flow_{link}/gt_port", platform.get_qsfp_gt_interface(link)) in configs[
+    for port in (0, 1):
+        assert configs[1].cu.count(f"aurora_flow_{port}") == 1
+        assert (f"aurora_flow_{port}/gt_port", platform.get_qsfp_gt_interface(port)) in configs[
             1
         ].connects
         assert (
-            platform.get_qsfp_refclk_interface(link),
-            f"aurora_flow_{link}/gt_refclk_{link}",
+            platform.get_qsfp_refclk_interface(port),
+            f"aurora_flow_{port}/gt_refclk_{port}",
         ) in configs[1].connects
     assert configs[1].sc["aurora_flow_0.rx_axis"] == "n1.s_axis_0"
     assert configs[1].sc["n1.m_axis_0"] == "aurora_flow_1.tx_axis"
@@ -161,7 +161,7 @@ def _add_aurora_to_link_config(
     """Create the metadata and basic link configs for the given SDP model, run
     AddAuroraToLinkConfig and return the resulting link configs. With `reverse_endpoints`, the
     endpoints of each device are stored in reverse order, so that their positions in the metadata
-    differ from their link indices.
+    differ from their QSFP port indices.
     """
     mfcfg = MultiFPGAConfiguration(
         network_backend=MFNetworkBackendType.AURORAFLOW, verbosity=MFVerbosity.NONE

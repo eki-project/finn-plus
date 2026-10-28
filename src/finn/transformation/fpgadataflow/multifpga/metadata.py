@@ -108,14 +108,15 @@ class NetworkMetadata(ABC):
 
     @abstractmethod
     def get_partner_node(
-        self, node: str, port_index: int, direction: DataDirection
+        self, node: str, stream_index: int, direction: DataDirection
     ) -> tuple[int, str, int] | None:
         """Search through all nodes and return the one that acts as a communication partner
-        of the given port of `node` in the given direction, as (partner device, partner node,
-        partner port index). For TX, `port_index` is the index of the `m_axis` port of `node`,
-        for RX the index of its `s_axis` port. If A:m_axis_0 (device 0) -> B:s_axis_1 (device 1),
-        then get_partner_node(A, 0, TX) returns (1, B, 1) and get_partner_node(B, 1, RX) returns
-        (0, A, 0). If nothing is connected to the port in the given direction, None is returned.
+        of the given stream of `node` in the given direction, as (partner device, partner node,
+        partner stream index). For TX, `stream_index` is the index of the `m_axis` stream of
+        `node`, for RX the index of its `s_axis` stream. If A:m_axis_0 (device 0) -> B:s_axis_1
+        (device 1), then get_partner_node(A, 0, TX) returns (1, B, 1) and
+        get_partner_node(B, 1, RX) returns (0, A, 0). If nothing is connected to the stream in the
+        given direction, None is returned.
         """
 
     def plot_dot(

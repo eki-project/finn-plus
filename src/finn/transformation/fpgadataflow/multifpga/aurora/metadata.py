@@ -32,17 +32,19 @@ class AuroraUnidirectionalConnection:
     <A>:m_axis_<A_index>  to  <B>:s_axis_<B_index>."""
 
     source_kernel: str
-    source_kernel_port_index: int
+    source_kernel_stream_index: int
     target_kernel: str
-    target_kernel_port_index: int
+    target_kernel_stream_index: int
 
 
 @dataclass
 class AuroraLinkEndpoint:
     """Dataclass to keep track of a connection between two devices, considering one
     of the two endpoints. It tracks the AuroraFlow kernel XO file used for this endpoint,
-    which device it connects to, which link/port-index this endpoint and the other connected
-    endpoint use, as well as which kernels communicate in each direction."""
+    which device it connects to, which QSFP port index this endpoint and the other connected
+    endpoint use, as well as which kernels communicate in each direction. The QSFP port index is
+    not the index of an SDP stream (`m_axis_<i>` / `s_axis_<j>`), which the connections store as
+    stream index."""
 
     aurora_xo: Path | None
     """Path to the kernel XO file. If it has not been set yet, this is left as None."""
@@ -50,17 +52,18 @@ class AuroraLinkEndpoint:
     partner_device: int
     """ID of the partner device."""
 
-    link_index: int | None
-    """Index of the QSFP port / link of the FPGA that this endpoint sits at."""
+    port_index: int
+    """Index of the QSFP port of the FPGA that this endpoint sits at. Always known when the
+    endpoint is created."""
 
-    partner_link_index: int | None
-    """Index of the QSFP port / link that the other endpoint occupies."""
+    partner_port_index: int | None
+    """Index of the QSFP port that the other endpoint occupies."""
 
     tx: AuroraUnidirectionalConnection | None
     rx: AuroraUnidirectionalConnection | None
     """Connections with other devices. One entry for RX, one for TX.
     The value can be None, in which case no connection for this direction
-    was established yet, or it contains the sending and receiving kernels and their ports.
+    was established yet, or it contains the sending and receiving kernels and their stream indices.
 
     TX: SDP0:m_axis_0 -> SDP1:s_axis_1 would mean that SDP0 (this device) sends to SDP1 (other
         device)
@@ -169,7 +172,7 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         create_devices_implicitly: bool = True,
     ) -> int:
         """Add a single connection to the table (unidirectional).
-        Returns the QSFP port / link that was used for this connection."""
+        Returns the index of the QSFP port that was used for this connection."""
         # First check that the devices exist or create them if necessary
         if on_device not in self.data.keys():
             if create_devices_implicitly:
@@ -219,12 +222,7 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
                     raise FINNInternalError(
                         "Unknown direction encountered while creating metadata connection."
                     )
-            if aurora_kernel.link_index is None:
-                raise FINNInternalError(
-                    f"Link index of existing connection is not set! ({on_device}) "
-                    f"{on_node} -> ({other_device}) {other_node}"
-                )
-            return aurora_kernel.link_index
+            return aurora_kernel.port_index
 
         # Check if we already used all ports on this device. If yes, we cannot map
         # the partitioning.
@@ -247,8 +245,8 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
                 partner_device=other_device,
                 tx=None,
                 rx=None,
-                link_index=utilized_port_count,
-                partner_link_index=None,
+                port_index=utilized_port_count,
+                partner_port_index=None,
             )
         )
 
@@ -264,9 +262,7 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
                 )
 
         # Return which port this connection sits on
-        link_index = self.data[on_device][-1].link_index
-        assert link_index is not None
-        return link_index
+        return self.data[on_device][-1].port_index
 
     def add_connection(
         self,
@@ -283,7 +279,7 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         If a kernel has an unused channel, it is
         utilized before creating a new kernel.
         """
-        sender_link = self._add_single_connection(
+        sender_port = self._add_single_connection(
             sender_device,
             sender_node,
             sender_tensor_index,
@@ -292,7 +288,7 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
             receiver_tensor_index,
             DataDirection.TX,
         )
-        receiver_link = self._add_single_connection(
+        receiver_port = self._add_single_connection(
             receiver_device,
             receiver_node,
             receiver_tensor_index,
@@ -303,23 +299,23 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         )
 
         # Both endpoints sit at the two ends of the same cable, so each one has to point to the
-        # link of the other. An endpoint whose other direction is already in use must already
-        # point to the same partner link, otherwise the two devices are out of sync.
+        # QSFP port of the other. An endpoint whose other direction is already in use must already
+        # point to the same partner port, otherwise the two devices are out of sync.
         connection = AuroraUnidirectionalConnection(
             sender_node, sender_tensor_index, receiver_node, receiver_tensor_index
         )
-        for endpoint, partner_link in (
-            (self.get_endpoint(sender_device, connection, DataDirection.TX), receiver_link),
-            (self.get_endpoint(receiver_device, connection, DataDirection.RX), sender_link),
+        for endpoint, partner_port in (
+            (self.get_endpoint(sender_device, connection, DataDirection.TX), receiver_port),
+            (self.get_endpoint(receiver_device, connection, DataDirection.RX), sender_port),
         ):
-            if endpoint.partner_link_index not in (None, partner_link):
+            if endpoint.partner_port_index not in (None, partner_port):
                 raise FINNInternalError(
-                    f"Cannot connect {sender_node} [{sender_device}, link {sender_link}] -> "
-                    f"{receiver_node} [{receiver_device}, link {receiver_link}]: the endpoint at "
-                    f"link {endpoint.link_index} is already cabled to link "
-                    f"{endpoint.partner_link_index} of device {endpoint.partner_device}."
+                    f"Cannot connect {sender_node} [{sender_device}, port {sender_port}] -> "
+                    f"{receiver_node} [{receiver_device}, port {receiver_port}]: the endpoint at "
+                    f"port {endpoint.port_index} is already cabled to port "
+                    f"{endpoint.partner_port_index} of device {endpoint.partner_device}."
                 )
-            endpoint.partner_link_index = partner_link
+            endpoint.partner_port_index = partner_port
 
     def node_is_sender(self, node: str) -> bool:
         """Return whether the given node acts as a sender (TX) on its device."""
@@ -338,14 +334,15 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         return False
 
     def get_partner_node(
-        self, node: str, port_index: int, direction: DataDirection
+        self, node: str, stream_index: int, direction: DataDirection
     ) -> tuple[int, str, int] | None:
         """Search through all nodes and return the one that acts as a communication partner
-        of the given port of `node` in the given direction, as (partner device, partner node,
-        partner port index). For TX, `port_index` is the index of the `m_axis` port of `node`,
-        for RX the index of its `s_axis` port. If A:m_axis_0 (device 0) -> B:s_axis_1 (device 1),
+        of the given stream of `node` in the given direction, as (partner device, partner node,
+        partner stream index). For TX, `stream_index` is the index of the `m_axis` stream of
+        `node`, for RX the index of its `s_axis` stream.
+        If A:m_axis_0 (device 0) -> B:s_axis_1 (device 1),
         then get_partner_node(A, 0, TX) returns (1, B, 1) and get_partner_node(B, 1, RX) returns
-        (0, A, 0). If nothing is connected to the port in the given direction, None is returned.
+        (0, A, 0). If nothing is connected to the stream in the given direction, None is returned.
         """
         for device_data in self.data.values():
             for endpoint in device_data:
@@ -354,23 +351,23 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
                         if (
                             endpoint.tx is not None
                             and endpoint.tx.source_kernel == node
-                            and endpoint.tx.source_kernel_port_index == port_index
+                            and endpoint.tx.source_kernel_stream_index == stream_index
                         ):
                             return (
                                 endpoint.partner_device,
                                 endpoint.tx.target_kernel,
-                                endpoint.tx.target_kernel_port_index,
+                                endpoint.tx.target_kernel_stream_index,
                             )
                     case DataDirection.RX:
                         if (
                             endpoint.rx is not None
                             and endpoint.rx.target_kernel == node
-                            and endpoint.rx.target_kernel_port_index == port_index
+                            and endpoint.rx.target_kernel_stream_index == stream_index
                         ):
                             return (
                                 endpoint.partner_device,
                                 endpoint.rx.source_kernel,
-                                endpoint.rx.source_kernel_port_index,
+                                endpoint.rx.source_kernel_stream_index,
                             )
                     case _:
                         raise FINNInternalError(
@@ -402,8 +399,8 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
             raise FINNInternalError(
                 f"Expected exactly one AuroraFlow endpoint on device {device} for the "
                 f"{direction.name} connection {connection.source_kernel}:m_axis_"
-                f"{connection.source_kernel_port_index} -> {connection.target_kernel}:s_axis_"
-                f"{connection.target_kernel_port_index}, but found {len(matches)}."
+                f"{connection.source_kernel_stream_index} -> {connection.target_kernel}:s_axis_"
+                f"{connection.target_kernel_stream_index}, but found {len(matches)}."
             )
         return matches[0]
 
@@ -427,8 +424,8 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
             for endpoint in endpoints:
                 if endpoint.tx is not None:
                     g.add_edge(
-                        (device, endpoint.link_index),
-                        (endpoint.partner_device, endpoint.partner_link_index),
+                        (device, endpoint.port_index),
+                        (endpoint.partner_device, endpoint.partner_port_index),
                     )
         path.write_text(json.dumps(nx.node_link_data(g), indent=4))
         log.info(f"Exported Multi-FPGA node-link data to {path}")
@@ -442,7 +439,7 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
         """Write the AuroraFlow network as a Graphviz DOT graph to `path`. If Graphviz' `dot` is
         found, the graph is also rendered as an SVG with the same name next to it.
 
-        Every FPGA is a cluster with its used QSFP ports `Q<link index>`. Every used direction of
+        Every FPGA is a cluster with its used QSFP ports `Q<port index>`. Every used direction of
         a cable is an edge from the sending to the receiving port, labelled with the sending and
         receiving SDP. If `model` is given, the SDPs are placed in the cluster of their FPGA and
         connected to each other, to the ports they send and receive through, and to the host.
@@ -453,9 +450,9 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
             """Return `name` as a quoted DOT ID."""
             return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
-        def port(device: int, link: int | None) -> str:
+        def port(device: int, port_index: int | None) -> str:
             """Return the DOT ID of a QSFP port."""
-            return quote(f"FPGA{device}_Q{link}")
+            return quote(f"FPGA{device}_Q{port_index}")
 
         title = (
             f"AuroraFlow network: {len(self.data)} FPGAs, "
@@ -472,8 +469,8 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
             lines.append(f"    subgraph cluster_fpga{device} {{")
             lines.append(f'        label="FPGA {device}"; style=rounded;')
             lines += [
-                f"        {port(device, e.link_index)} "
-                f'[label="Q{e.link_index}", shape=square, style=filled, fillcolor=lightblue];'
+                f"        {port(device, e.port_index)} "
+                f'[label="Q{e.port_index}", shape=square, style=filled, fillcolor=lightblue];'
                 for e in self[device]
             ]
             if model is not None:
@@ -491,17 +488,17 @@ class AuroraNetworkMetadata(NetworkMetadata, DataClassYAMLMixin):
                 if e.tx is not None:
                     label = f"{short(e.tx.source_kernel)} → {short(e.tx.target_kernel)}"
                     lines.append(
-                        f"    {port(device, e.link_index)} -> "
-                        f"{port(e.partner_device, e.partner_link_index)} "
+                        f"    {port(device, e.port_index)} -> "
+                        f"{port(e.partner_device, e.partner_port_index)} "
                         f"[label={quote(label)}, penwidth=2];"
                     )
                     if model is not None:
                         lines.append(
-                            f"    {quote(e.tx.source_kernel)} -> {port(device, e.link_index)};"
+                            f"    {quote(e.tx.source_kernel)} -> {port(device, e.port_index)};"
                         )
                 if model is not None and e.rx is not None:
                     lines.append(
-                        f"    {port(device, e.link_index)} -> {quote(e.rx.target_kernel)};"
+                        f"    {port(device, e.port_index)} -> {quote(e.rx.target_kernel)};"
                     )
 
         # With the model: the data between the SDPs of the same FPGA, and from and to the host
