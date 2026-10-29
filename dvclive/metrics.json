@@ -1,0 +1,16 @@
+{
+    "status": "failed",
+    "verification": "success",
+    "time": {
+        "export": 2,
+        "step_qonnx_to_finn": 0,
+        "step_tidy_up": 3,
+        "step_streamline": 14,
+        "step_convert_to_hw": 2,
+        "step_minimize_bit_width_initial": 3,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_set_folding": 0,
+        "total_build_time": 24
+    }
+}
