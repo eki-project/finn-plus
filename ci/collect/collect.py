@@ -1131,10 +1131,10 @@ if __name__ == "__main__":
 
             # power measurement
             experiment_reports_path = str(artifact_reports_dir("measurement", id, args.followup))
-            rails = ["0V85_power", "3V3_power", "total_power"]
-            power = collect_fn.generate_power_report(rails, experiment_reports_path)
+            # rails as recorded (ci/experiments/*.json: 0V85 + 1V2_PL plus their total)
+            power = collect_fn.generate_power_report(None, experiment_reports_path)
             if power:
-                for name, value in collect_fn.power_metrics(power, rails).items():
+                for name, value in collect_fn.power_metrics(power).items():
                     prefix, _, metric = name.rpartition("/")
                     prefix = "measurement/power/" + (prefix + "/" if prefix else "")
                     dvc_logger.log_metric(prefix=prefix, name=metric, value=value)

@@ -213,7 +213,9 @@ double readCurrent(int fdi2c, int rail_id){
         raw_value |= 0xffff0000;
     }
 
-    current = (float)raw_value * 0.001 * sensors[rail_id].current_lsb;
+    // current_lsb is in mA, so this is mA and voltage * current is mW (same unit as the
+    // RFSoC 2x2 driver, whose INA226 current register counts 1 mA per LSB)
+    current = (float)raw_value * sensors[rail_id].current_lsb;
     return current;
 }
 
@@ -223,7 +225,7 @@ double readPower(int fdi2c, int rail_id){
 
     raw_value = readData(fdi2c, sensors[rail_id].address, REG_POWER);
 
-    power = (float)raw_value * (20 * 0.001 * sensors[rail_id].current_lsb); // Power_LSB = 20 * Current_LSB (datasheet)
+    power = (float)raw_value * (20 * sensors[rail_id].current_lsb); // mW: Power_LSB = 20 * Current_LSB (datasheet)
     return power;
 }
 

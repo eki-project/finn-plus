@@ -213,12 +213,17 @@ class bench_mvau(MicrobenchDUT):
             "sf": Divisor("mw", pow2=True),
             "nf": Divisor("mh", pow2=True),
             "m": Fixed(1),
-            "sparsity_type": Choice(
-                ["none", "none", "none", "unstructured", "rows_random", "cols_random"]
-            ),
-            "sparsity_amount": Conditional(
-                "sparsity_type", {"none": Fixed(0)}, Choice([0.25, 0.5, 0.75, 0.9])
-            ),
+            # Weight sparsity is not sampled for now (it should only matter near full
+            # parallelism and would multiply the space by 13); grid configs can still set
+            # it, and the sampled dimensions were:
+            #   "sparsity_type": Choice(
+            #       ["none", "none", "none", "unstructured", "rows_random", "cols_random"]
+            #   ),
+            #   "sparsity_amount": Conditional(
+            #       "sparsity_type", {"none": Fixed(0)}, Choice([0.25, 0.5, 0.75, 0.9])
+            #   ),
+            "sparsity_type": Fixed("none"),
+            "sparsity_amount": Fixed(0),
             "mem_mode": Conditional(
                 "backend",
                 {"rtl": Fixed("internal_decoupled")},

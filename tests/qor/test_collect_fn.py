@@ -106,6 +106,10 @@ def test_power_report_per_experiment(tmp_path):
     }
     assert fn.power_metrics(other, rails)["dyn_0V85_power"] == 250.0
     assert fn.generate_power_report(rails, str(tmp_path / "nope")) is None
+    # rails discovered from the recordings when none are given
+    discovered = fn.generate_power_report(None, str(tmp_path))
+    assert discovered == report
+    assert fn.power_metrics(discovered)["dyn_total_power"] == 250.0
 
 
 def test_sum_extra_hierarchies():

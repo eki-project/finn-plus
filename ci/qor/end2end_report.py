@@ -63,7 +63,8 @@ RESOURCE_REPORTS = [
     "estimate_layer_resources_empirical.json",
     "estimate_power_empirical.json",
 ]
-POWER_RAILS = ["0V85_power", "3V3_power", "total_power"]
+# the load experiment of the measurement flow (collect.py logs the same under the flat names)
+LOAD_EXPERIMENT = "instrumentation_experiment"
 # (report key, aggregation over measurement iterations)
 PERFORMANCE_METRICS = [
     ("frequency_mhz", max),
@@ -143,25 +144,26 @@ def measured_performance(reports_dir: Path) -> dict[str, Any]:
 
 
 def measured_power(reports_dir: Path) -> dict[str, float]:
-    """Average power per rail over all measurement files, mirrors collect.py's power report."""
+    """Average power per recorded rail over the load experiment's measurement files (all
+    experiments if there is no load experiment), mirrors collect.py's flat power metrics."""
     per_file: list[dict[str, float]] = []
-    for experiment_dir in reports_dir.iterdir() if reports_dir.is_dir() else []:
-        if not experiment_dir.is_dir():
-            continue
+    experiment_dirs = (
+        [d for d in reports_dir.iterdir() if d.is_dir()] if reports_dir.is_dir() else []
+    )
+    load_dirs = [d for d in experiment_dirs if d.name == LOAD_EXPERIMENT]
+    for experiment_dir in load_dirs or experiment_dirs:
         for file in experiment_dir.glob(f"{experiment_dir.name}*.json"):
             rails = (read_json(file) or {}).get("rails", [])
             if rails:
+                keys = [k for k in rails[0] if k.endswith("_power")]
                 per_file.append(
-                    {
-                        key: sum(r[key] for r in rails if key in r) / len(rails)
-                        for key in POWER_RAILS
-                    }
+                    {key: sum(r[key] for r in rails if key in r) / len(rails) for key in keys}
                 )
     if not per_file:
         return {}
     result = {}
-    for key in POWER_RAILS:
-        samples = [p[key] for p in per_file]
+    for key in sorted({k for p in per_file for k in p}):
+        samples = [p[key] for p in per_file if key in p]
         result[f"avg_{key}"] = sum(samples) / len(samples)
         result[f"min_{key}"] = min(samples)
         result[f"max_{key}"] = max(samples)

@@ -139,15 +139,17 @@ LOAD_EXPERIMENT = "instrumentation_experiment"
 def generate_power_report(rails_names, experiment_reports_path):
     """Average the power recordings of every experiment directory of a run.
 
-    Returns ``{experiment: {avg_<rail>, min_<rail>, max_<rail>}}`` (avg/min/max over the
-    experiment's run files, each file averaged over its samples), None if the directory
-    does not exist. Previously the first file of the first listed directory was returned,
-    so the logged value was the idle or the load experiment depending on the directory
-    order of the filesystem.
+    ``rails_names`` are the recorded columns (``<rail>_power``, ``total_power``); None
+    takes whatever the recordings contain. Returns ``{experiment: {avg_<rail>, min_<rail>,
+    max_<rail>}}`` (avg/min/max over the experiment's run files, each file averaged over
+    its samples), None if the directory does not exist. Previously the first file of the
+    first listed directory was returned, so the logged value was the idle or the load
+    experiment depending on the directory order of the filesystem.
     """
     if not os.path.isdir(experiment_reports_path):
         return None
     result = {}
+    explicit_rails = rails_names
     for experiment in sorted(os.listdir(experiment_reports_path)):
         exp_dir = os.path.join(experiment_reports_path, experiment)
         if not os.path.isdir(exp_dir):
@@ -162,6 +164,11 @@ def generate_power_report(rails_names, experiment_reports_path):
             rails = report.get("rails", [])
             if not rails:
                 continue
+            rails_names = explicit_rails or sorted(
+                k
+                for k in rails[0]
+                if k.endswith("_power") and isinstance(rails[0][k], (int, float))
+            )
             per_file_averages.append(
                 {key: sum(r[key] for r in rails if key in r) / len(rails) for key in rails_names}
             )
@@ -178,7 +185,7 @@ def generate_power_report(rails_names, experiment_reports_path):
     return result
 
 
-def power_metrics(per_experiment, rails_names):
+def power_metrics(per_experiment, rails_names=None):
     """Flatten :func:`generate_power_report` output into metric names.
 
     ``measurement/power/<experiment>/avg_<rail>`` per experiment, the load experiment
@@ -199,6 +206,11 @@ def power_metrics(per_experiment, rails_names):
         metrics.update(per_experiment[load])
         if IDLE_EXPERIMENT in per_experiment:
             idle = per_experiment[IDLE_EXPERIMENT]
+            if rails_names is None:
+                rails_names = [
+                    k[len("avg_") :] for k in per_experiment[load] if k.startswith("avg_")
+                ]
             for key in rails_names:
-                metrics["dyn_" + key] = per_experiment[load]["avg_" + key] - idle["avg_" + key]
+                if "avg_" + key in idle:
+                    metrics["dyn_" + key] = per_experiment[load]["avg_" + key] - idle["avg_" + key]
     return metrics

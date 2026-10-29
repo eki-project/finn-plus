@@ -6,7 +6,7 @@
       "PAF": {
         "rails": [
           "0V85",
-          "3V3"
+          "1V2_PL"
         ],
         "sensors": []
       }
