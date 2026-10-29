@@ -6,7 +6,7 @@ git_deps:
         install_editable: False
     attention-hlslib:
         url: "https://github.com/iksnagreb/attention-hlslib.git"
-        commit: "a1b8876d9b52c319435906a2d1be9f29211f2785"
+        commit: "9fe2db3dca4b0afed6a8dcbd62a3c469986939ef"
         pip_install: False
         install_editable: False
     AuroraFlow:
