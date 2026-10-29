@@ -17,6 +17,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - The CIFAR validation of the PYNQ driver normalizes the images for every accelerator with a float input, not only for CIFAR-100 (override with the `normalize` kwarg of `validate`) (eki-project#290)
 
 ### Fixed
+- The HLS attention operator (`ScaledDotProductAttention_hls`) deadlocked in hardware and in RTL simulation when it processed more than four keys in parallel (`KVLen / SeqFold > 4`), e.g. in the RadioML transformer: HLS silently implemented the softmax as a stalling instead of a flushable pipeline, which blocks on its own internal buffer. attention-hlslib is pinned to a version with the fix (eki-project#281)
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
 - (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)
 - RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate at the cost of a slightly larger buffer (eki-project#290)

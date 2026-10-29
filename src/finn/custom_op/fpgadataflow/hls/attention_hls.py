@@ -388,8 +388,8 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         # operations
         mac_resource = self.get_nodeattr("mac_resource")
 
-        # Mapping of memory resource attributes to the corresponding C++ tag
-        # types
+        # Mapping of memory resource attributes to the corresponding C++
+        # enumerators of the attention-hlslib Resource enum
         mem_resources = {
             "auto": "Resource::AUTO",
             "block": "Resource::BRAM",
@@ -435,9 +435,10 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
                 "OutAVMatMul",
                 "AccASoftmax"
             ),
-            # Type alias definitions for the resource type selection tags
+            # Type alias for the compute resource selection tag and constant for
+            # the memory resource selection
             f"using MacResource = {compute_resources[mac_resource]};",
-            f"using MemResource = {mem_resources[ram_style]};",
+            f"constexpr Resource MemResource = {mem_resources[ram_style]};",
             # Include the activation function type definitions and parameters
             #   Note: The typedefs in this header require the typedefs above,
             #   thus adding this to the global includes is not possible.
