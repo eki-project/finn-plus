@@ -233,10 +233,30 @@ class PartitioningStrategy(str, Enum):
     If a resource cannot be reduced anymore, anything below its relative usage
     in terms of other resource types stays unabalanced."""
 
+    BALANCE_RESOURCE_MIN_CONNECTIONS = "balance_resource_min_connections"
+    """Same as BALANCE_RESOURCE but with a penalty term that tries to reduce
+    the number of connections in the network. Only differs from BALANCE_RESOURCE with the
+    ARBITRARY* topologies, since the other topologies fix the number of connections."""
+
+    BALANCE_RESOURCE_WEIGHTED_MIN_CONNECTIONS = "balance_resource_weighted_min_connections"
+    """Same as BALANCE_RESOURCE_WEIGHTED but with a penalty term that tries to reduce
+    the number of connections in the network. Only differs from BALANCE_RESOURCE_WEIGHTED with
+    the ARBITRARY* topologies, since the other topologies fix the number of connections."""
+
+    MINIMIZE_MAX_RESOURCE_MIN_CONNECTIONS = "minimize_max_resource_min_connections"
+    """Same as MINIMIZE_MAX_RESOURCE but with a penalty term that tries to reduce
+    the number of connections in the network. Only differs from MINIMIZE_MAX_RESOURCE with the
+    ARBITRARY* topologies, since the other topologies fix the number of connections."""
+
     LAYER_COUNT = "layer_count"
     """Partition based on the number of layers per device.
     Very naive strategy, but usable if no/bad estimates are available
     and the model is regular in shape from start to end."""
+
+    LAYER_COUNT_MIN_CONNECTIONS = "layer_count_min_connections"
+    """Same as LAYER_COUNT but with a penalty term that tries to reduce
+    the number of connections in the network. Only differs from LAYER_COUNT with the
+    ARBITRARY* topologies, since the other topologies fix the number of connections."""
 
 
 class MFNetworkBackendType(str, Enum):
@@ -336,7 +356,7 @@ class MultiFPGAConfiguration:
     max_utilization: float = 0.80
 
     # The list of resource types that the partitioner should consider.
-    # Only relevant for the resource based strategies (BALANCE_RESOURCE*, MINIMIZE_MAX_RESOURCE)
+    # Only relevant for the resource based strategies (BALANCE_RESOURCE*, MINIMIZE_MAX_RESOURCE*)
     # TODO: Add HBM / DDR
     considered_resources: list[str] = field(default_factory=lambda: PLATFORM_RESOURCE_TYPES)
 

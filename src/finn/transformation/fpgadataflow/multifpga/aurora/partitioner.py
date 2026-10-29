@@ -6,7 +6,7 @@ from math import ceil
 from mip import xsum
 from onnx import NodeProto
 from qonnx.core.modelwrapper import ModelWrapper
-from typing import TYPE_CHECKING, cast, override
+from typing import TYPE_CHECKING, Final, cast, override
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, MFTopology, PartitioningStrategy
 from finn.transformation.fpgadataflow.multifpga.graph import get_inseparable_nodes
@@ -119,6 +119,9 @@ class PointToPointBidirectionalFixedPartitioner(MILPPartitioner):
             PartitioningStrategy.BALANCE_RESOURCE,
             PartitioningStrategy.BALANCE_RESOURCE_WEIGHTED,
             PartitioningStrategy.MINIMIZE_MAX_RESOURCE,
+            PartitioningStrategy.BALANCE_RESOURCE_MIN_CONNECTIONS,
+            PartitioningStrategy.BALANCE_RESOURCE_WEIGHTED_MIN_CONNECTIONS,
+            PartitioningStrategy.MINIMIZE_MAX_RESOURCE_MIN_CONNECTIONS,
         ]:
             if self.mfcfg.max_utilization > 1.0:
                 raise FINNMultiFPGAPartitionerError(
@@ -609,8 +612,52 @@ class PointToPointBidirectionalFixedPartitioner(MILPPartitioner):
                     f"Invalid communication scheme for Aurora partitioner: {self.mfcfg.topology}"
                 )
 
+        # Penalty for connections to minimize them.
+        # Each connection adds: P = (0.5 * max_utilization)/num_edges.
+        # This way, a graph where every node
+        # has its own device the penalty is exactly max_utilization:
+        # 2 * num_edges connections (every connection is on both devices)
+        # so 2 * num_edges * P = (2 * num_edges * max_utilization * 0.5) / num_edges
+        # = max_utilization
+        # In case that only one crossing is seen, this causes the overall penalty to be
+        # 2*P = max_utilization / num_edges.
+        #
+        # Only the ARBITRARY* topologies leave the number of connections open. The other
+        # topologies fix connections_per_device exactly, so the penalty would only add a constant
+        # there and is left out.
+        num_edges = 0
+        for node in self.modelwrapper.graph.node:
+            suc = self.modelwrapper.find_direct_successors(node)
+            if suc is not None:
+                num_edges += len(suc)
+        self.connection_penalty = self.model.add_var("connection_penalty", var_type=mip.CONTINUOUS)
+        match self.mfcfg.topology:
+            case MFTopology.ARBITRARY | MFTopology.ARBITRARY_OPEN | MFTopology.ARBITRARY_CLOSED:
+                if num_edges == 0:
+                    # A model without edges has no connections to penalize
+                    self.model += self.connection_penalty == 0
+                else:
+                    penalty_factor = (0.5 * self.mfcfg.max_utilization) / num_edges
+                    self.model += self.connection_penalty == (
+                        penalty_factor
+                        * xsum(
+                            self.connections_per_device[device]
+                            for device in range(self.mfcfg.num_fpgas)
+                        )
+                    )
+            case MFTopology.SIMPLEX_CHAIN | MFTopology.DUPLEX_CHAIN | MFTopology.RING:
+                self.model += self.connection_penalty == 0
+            case _:
+                raise FINNInternalError(
+                    f"Connection penalty for topology {self.mfcfg.topology.name} is not "
+                    f"implemented!"
+                )
+
         # Objective Function
-        if self.mfcfg.partition_strategy == PartitioningStrategy.LAYER_COUNT:
+        if self.mfcfg.partition_strategy in [
+            PartitioningStrategy.LAYER_COUNT,
+            PartitioningStrategy.LAYER_COUNT_MIN_CONNECTIONS,
+        ]:
             # Calculate the difference to the "ideal" load
             # (All devices have the same number of layers)
             avg_diff = [
@@ -627,13 +674,23 @@ class PointToPointBidirectionalFixedPartitioner(MILPPartitioner):
                 self.model += max_diff >= avg_diff[device]
 
             # Try to minimize the max difference to ideal
-            self.model.objective = max_diff
+            match self.mfcfg.partition_strategy:
+                case PartitioningStrategy.LAYER_COUNT:
+                    self.model.objective = max_diff
+                case PartitioningStrategy.LAYER_COUNT_MIN_CONNECTIONS:
+                    # Relative to the ideal load, to be comparable to the connection penalty
+                    self.model.objective = (max_diff / avg_ideal_load) + self.connection_penalty
+                case _:
+                    raise FINNInternalError("Unreachable path detected.")
             self.model.sense = mip.MINIMIZE
 
         elif self.mfcfg.partition_strategy in [
             PartitioningStrategy.BALANCE_RESOURCE,
             PartitioningStrategy.BALANCE_RESOURCE_WEIGHTED,
             PartitioningStrategy.MINIMIZE_MAX_RESOURCE,
+            PartitioningStrategy.BALANCE_RESOURCE_MIN_CONNECTIONS,
+            PartitioningStrategy.BALANCE_RESOURCE_WEIGHTED_MIN_CONNECTIONS,
+            PartitioningStrategy.MINIMIZE_MAX_RESOURCE_MIN_CONNECTIONS,
         ]:
             # Collect the resource usage of all nodes on a device
             self.resource_use_int = {}
@@ -725,7 +782,9 @@ class PointToPointBidirectionalFixedPartitioner(MILPPartitioner):
             # to ideal resources would not be balanced anymore. This term causes the objective
             # to be reduced further.
             # 0.1 instead of 1.0 to clearly favor the worst difference as the deciding factor.
-            weight_factor = 0.1 / (self.mfcfg.num_fpgas * len(self.mfcfg.considered_resources))
+            weight_factor: Final[float] = 0.1 / (
+                self.mfcfg.num_fpgas * len(self.mfcfg.considered_resources)
+            )
             self.diff_to_ideal_weighted = self.model.add_var(
                 name="worst_diff_to_ideal_weighted", var_type=mip.CONTINUOUS
             )
@@ -745,15 +804,20 @@ class PointToPointBidirectionalFixedPartitioner(MILPPartitioner):
                     self.model += self.max_util >= self.resource_use_relative[device][resource]
 
             # Objective function
-            # TODO: Connection costs for models that split/join across different devices
             # For detailed explanations refer to their docstrings (build_dataflow_config.py)
             match self.mfcfg.partition_strategy:
                 case PartitioningStrategy.BALANCE_RESOURCE:
                     self.model.objective = self.diff_to_ideal
+                case PartitioningStrategy.BALANCE_RESOURCE_MIN_CONNECTIONS:
+                    self.model.objective = self.diff_to_ideal + self.connection_penalty
                 case PartitioningStrategy.BALANCE_RESOURCE_WEIGHTED:
                     self.model.objective = self.diff_to_ideal_weighted
+                case PartitioningStrategy.BALANCE_RESOURCE_WEIGHTED_MIN_CONNECTIONS:
+                    self.model.objective = self.diff_to_ideal_weighted + self.connection_penalty
                 case PartitioningStrategy.MINIMIZE_MAX_RESOURCE:
                     self.model.objective = self.max_util
+                case PartitioningStrategy.MINIMIZE_MAX_RESOURCE_MIN_CONNECTIONS:
+                    self.model.objective = self.max_util + self.connection_penalty
                 case _:
                     raise FINNInternalError("Unreachable path detected.")
 
