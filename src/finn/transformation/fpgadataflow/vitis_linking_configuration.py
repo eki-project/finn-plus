@@ -542,10 +542,15 @@ def is_iodma(model: ModelWrapper, node: NodeProto) -> bool:
     return (pre is None) != (suc is None)
 
 
-def make_cu_name(model: ModelWrapper, node: NodeProto) -> str:
-    """Return the CU name of the given SDP node: idma_<name> or odma_<name> if the SDP is an
-    I/O-DMA (see `is_iodma`), otherwise the node name.
+def make_cu_name(model: ModelWrapper, node: NodeProto | str) -> str:
+    """Return the CU name of the given SDP node (or node name): idma_<name> or odma_<name> if the
+    SDP is an I/O-DMA (see `is_iodma`), otherwise the node name.
     """
+    if isinstance(node, str):
+        found = model.get_node_from_name(node)
+        if found is None:
+            raise FINNInternalError(f"Could not make CU name for not-existing node: {node}")
+        node = found
     if not is_iodma(model, node):
         return node.name
     if model.find_direct_predecessors(node) is None:

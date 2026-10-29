@@ -9,7 +9,10 @@ from qonnx.transformation.base import Transformation
 from typing import cast
 
 from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
-from finn.transformation.fpgadataflow.vitis_linking_configuration import VitisLinkConfiguration
+from finn.transformation.fpgadataflow.vitis_linking_configuration import (
+    VitisLinkConfiguration,
+    make_cu_name,
+)
 from finn.util.basic import make_build_dir
 from finn.util.contracts import (
     ensure_device_id_set,
@@ -177,7 +180,7 @@ class AddAuroraToLinkConfig(Transformation):
                     dummy_per_device[device] += 1
                 else:
                     sdp_output = (
-                        f"{endpoint.tx.source_kernel}"
+                        f"{make_cu_name(model, endpoint.tx.source_kernel)}"
                         f".m_axis_{endpoint.tx.source_kernel_stream_index}"
                     )
                     if configs[device].is_stream_port_connected(sdp_output):
@@ -196,7 +199,7 @@ class AddAuroraToLinkConfig(Transformation):
                     dummy_per_device[device] += 1
                 else:
                     sdp_input = (
-                        f"{endpoint.rx.target_kernel}."
+                        f"{make_cu_name(model, endpoint.rx.target_kernel)}."
                         f"s_axis_{endpoint.rx.target_kernel_stream_index}"
                     )
                     if configs[device].is_stream_port_connected(sdp_input):
