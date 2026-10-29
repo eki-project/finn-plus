@@ -21,7 +21,11 @@
 // the memory side can serve the other pipelines while one of them is still consuming its frame.
 //
 // FOREVER = true turns a process into a free-running loop (ring DMAs); otherwise it handles the
-// given amount of data and returns.
+// given amount of data and returns. HLS cannot make an endless loop a flushable pipeline and falls
+// back to style=stp, where an iteration blocked on a read also stops the earlier iterations: their
+// writes would wait for the next input, and the last words of a frame would only leave once the
+// next frame arrives (a batch never completes). The free-running loops therefore read with read_nb
+// and stall only on writes, i.e. on downstream backpressure.
 //
 // The ring DMAs announce a completed descriptor through cons. Nothing ties that register write to the
 // memory port, and HLS left to itself writes it at the start of the descriptor, before the data has
@@ -68,7 +72,39 @@ void convert(hls::stream<ap_uint<IN>> &in, hls::stream<ap_uint<OUT>> &out, unsig
              unsigned numFrames) {
 	static_assert(IN % OUT == 0 || OUT % IN == 0, "use two conversions through lcm(IN, OUT)");
 	const unsigned numIn = port_frames<P, N>(numFrames) * inWordsPerFrame;
-	if (IN == OUT) {
+	if (FOREVER) {
+		// same conversions as below, one input word per successful read_nb
+		constexpr unsigned ratio = IN > OUT ? IN / OUT : OUT / IN;
+		ap_uint<IN> x;
+		ap_uint<IN> e = 0;  // IN > OUT: word being split
+		ap_uint<OUT> a = 0; // IN < OUT: word being assembled
+		unsigned k = 0;     // IN > OUT: output words left in e; IN < OUT: input words in a
+		for (;;) {
+#pragma HLS PIPELINE II=1 style=flp
+			if (IN == OUT) {
+				if (in.read_nb(x)) out.write(x);
+			} else if (IN > OUT) {
+				if (k == 0 && in.read_nb(x)) {
+					e = x;
+					k = ratio;
+				}
+				if (k != 0) {
+					out.write(e(OUT - 1, 0));
+					e >>= OUT;
+					k--;
+				}
+			} else if (in.read_nb(x)) {
+				a = a >> IN;
+				a(OUT - 1, OUT - IN) = x;
+				if (k == ratio - 1) {
+					out.write(a);
+					k = 0;
+				} else {
+					k++;
+				}
+			}
+		}
+	} else if (IN == OUT) {
 		for (unsigned t = 0; FOREVER || t < numIn; t++) {
 #pragma HLS PIPELINE II=1 style=flp
 			out.write(in.read());
@@ -111,7 +147,13 @@ void split(hls::stream<ap_uint<W>> &in, hls::stream<ap_uint<W>> out[N], unsigned
 	unsigned w = 0, p = 0;
 	for (unsigned t = 0; FOREVER || t < numFrames * wordsPerFrame; t++) {
 #pragma HLS PIPELINE II=1 style=flp
-		out[p].write(in.read());
+		ap_uint<W> x;
+		if (FOREVER) {
+			if (!in.read_nb(x)) continue;
+		} else {
+			x = in.read();
+		}
+		out[p].write(x);
 		if (w == wordsPerFrame - 1) {
 			w = 0;
 			p = (p == N - 1) ? 0 : p + 1;
@@ -128,7 +170,13 @@ void gather(hls::stream<ap_uint<W>> in[N], hls::stream<ap_uint<W>> &out, unsigne
 	unsigned w = 0, p = 0;
 	for (unsigned t = 0; FOREVER || t < numFrames * wordsPerFrame; t++) {
 #pragma HLS PIPELINE II=1 style=flp
-		out.write(in[p].read());
+		ap_uint<W> x;
+		if (FOREVER) {
+			if (!in[p].read_nb(x)) continue;
+		} else {
+			x = in[p].read();
+		}
+		out.write(x);
 		if (w == wordsPerFrame - 1) {
 			w = 0;
 			p = (p == N - 1) ? 0 : p + 1;
