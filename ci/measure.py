@@ -51,6 +51,17 @@ if __name__ == "__main__":
     summary_name = "measurement_summary%s.json" % ("_followup" if args.followup else "")
     summary = {}
 
+    # An absent build directory is legitimate only if the pipeline directory itself is there
+    # (every build succeeded or failed before writing artifacts, or a follow-up without
+    # runs). A missing pipeline directory means the share is not visible from the board
+    # (e.g. not mounted after a reboot) and must fail the job instead of passing silently.
+    pipeline_dir = exchange.pipeline_exchange_dir()
+    if pipeline_dir is not None and not (pipeline_dir / exchange.CREATED_MARKER).is_file():
+        print(
+            "ERROR: pipeline directory %s not found on the exchange share (is %s mounted?)"
+            % (pipeline_dir, exchange.exchange_root())
+        )
+        sys.exit(1)
     if not artifacts_in_dir.is_dir():
         print("No build artifacts found in %s, nothing to measure" % artifacts_in_dir)
         with open(summary_name, "w") as f:
