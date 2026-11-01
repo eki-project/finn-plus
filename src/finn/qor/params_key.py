@@ -17,6 +17,8 @@ IRRELEVANT_PARAMS: tuple[str, ...] = (
     "store_results_in_dvc_data",
     # legacy key of old microbenchmark configs that never had an effect
     "dut_duplication",
+    # time limit per tool call of a microbenchmark build (finn.benchmarking.dut.microbench_base)
+    "tool_timeout_s",
 )
 
 

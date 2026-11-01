@@ -375,6 +375,27 @@ class VerboseCalledProcessError(subprocess.CalledProcessError):
         return "\n".join(parts)
 
 
+TOOL_TIMEOUT_ENV_VAR: Final = "FINN_TOOL_TIMEOUT_S"
+
+
+def default_tool_timeout() -> float | None:
+    """Time limit in seconds for external tool calls, from FINN_TOOL_TIMEOUT_S.
+
+    Returns None when the variable is unset, empty, not a number or not positive, i.e.
+    no limit. Used by launch_process_helper for calls without an explicit timeout, so
+    that a single runaway synthesis (hours of Vitis HLS or Vivado) fails the build it
+    belongs to instead of blocking a whole batch of builds."""
+    raw = os.environ.get(TOOL_TIMEOUT_ENV_VAR, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        log.warning(f"Ignoring {TOOL_TIMEOUT_ENV_VAR}={raw!r}: not a number of seconds")
+        return None
+    return value if value > 0 else None
+
+
 def launch_process_helper(
     args: list[str | Path] | list[str] | list[Path],
     proc_env: dict[str, str] | None = None,
@@ -389,8 +410,18 @@ def launch_process_helper(
     stdout/stderr with Python loggers.
     Returns (cmd_out, cmd_err) if successful, raises CalledProcessError otherwise.
     If timeout is set, subprocess.run/communicate may raise TimeoutExpired.
+    Without an explicit timeout, FINN_TOOL_TIMEOUT_S (see default_tool_timeout) applies;
+    a call that exceeds it raises FINNUserError instead. Any time-limited call runs in its
+    own session and its whole process group is terminated when the limit is hit, so the
+    tool's helper processes (e.g. Vitis HLS and Vivado fork several) do not survive it.
     When kill_process_group is True, the whole process group is
     terminated after completion or timeout cleanup."""
+    env_timeout = False
+    if timeout is None:
+        timeout = default_tool_timeout()
+        env_timeout = timeout is not None
+    if timeout is not None:
+        kill_process_group = True
     use_new_session = start_new_session or kill_process_group
     cmd = [str(arg) for arg in args]
     if not use_new_session:
@@ -419,7 +450,7 @@ def launch_process_helper(
         )
         try:
             cmd_out, cmd_err = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             if kill_process_group:
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGTERM)
@@ -432,6 +463,11 @@ def launch_process_helper(
             else:
                 process.kill()
                 cmd_out, cmd_err = process.communicate()
+            if env_timeout:
+                raise FINNUserError(
+                    f"{cmd[0]} exceeded the time limit of {timeout:.0f} s set by "
+                    f"{TOOL_TIMEOUT_ENV_VAR} and was terminated: {' '.join(cmd)}"
+                ) from exc
             raise
         if kill_process_group:
             with contextlib.suppress(ProcessLookupError):

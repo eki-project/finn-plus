@@ -487,6 +487,8 @@ class ExperimentComparator:
         # which reports/artifacts a build writes does not change the implementation (same
         # as finn.qor.params_key.IRRELEVANT_PARAMS)
         "generate_outputs",
+        # time limit per tool call of a microbenchmark build
+        "tool_timeout_s",
     }
 
     # Additional params ignored when matching a live FIFO-sizing run (or its follow-up) against

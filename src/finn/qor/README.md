@@ -105,6 +105,13 @@ Versal-only backends or two-stream elementwise operations.
   into equal subwords), see `output_words_ok`.
 - Frames are limited to `MAX_FRAME_CYCLES` (2^22) expected cycles; resources and power do not
   depend on the loop bound.
+- Every external tool call of a microbenchmark build (Vitis HLS, Vivado) is limited to
+  `TOOL_TIMEOUT_S` (2 h; config parameter `tool_timeout_s`, 0 disables). The usual call takes
+  minutes, but a legal sample can make HLS run for a day (an MVAU_hls with 128 PEs and 255
+  thresholds each did), which would otherwise block its whole Slurm array task and the runs
+  behind it. A run that hits the limit fails like any other build failure and the batch
+  continues. The mechanism is `FINN_TOOL_TIMEOUT_S`, read by `launch_process_helper`, so it
+  can also be set by hand for other builds.
 - Microbenchmarks run no RTL simulation and no Vivado power estimation (both simulated whole
   frames for hours per build): the build steps are codegen, IP generation, stitched IP,
   out-of-context synthesis, bitfile, driver and deployment package.

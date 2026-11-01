@@ -18,6 +18,7 @@ deduplication of the result database would keep spurious duplicates.
 
 import json
 import numpy as np
+import os
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
@@ -27,7 +28,7 @@ import finn.builder.build_dataflow_config as build_cfg
 from finn.benchmarking.bench_base import bench
 from finn.benchmarking.param_space import ParamSpace
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
-from finn.util.basic import MAX_ALLOWED_AP_INT_W, getHWCustomOp, part_map
+from finn.util.basic import MAX_ALLOWED_AP_INT_W, TOOL_TIMEOUT_ENV_VAR, getHWCustomOp, part_map
 from finn.util.exception import FINNInternalError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
@@ -38,6 +39,13 @@ MAX_STREAM_WIDTH = min(1024, MAX_ALLOWED_AP_INT_W)
 #: simulation (neither verification nor rtlsim performance) and no Vivado power estimation:
 #: both simulate whole frames and cost hours per build, while the QoR targets come from the
 #: synthesis reports and the on-board measurement.
+# Time limit for every external tool call (Vitis HLS, Vivado) of a microbenchmark build, in
+# seconds. A legal but pathological sample (e.g. an MVAU_hls with 128 PEs and 255 thresholds
+# each, 16+ h in HLS) otherwise blocks its whole Slurm array task until the task's wall-clock
+# limit, taking the task's remaining runs with it. Overridable per run via the config
+# parameter ``tool_timeout_s`` (0 disables). The usual builds take minutes per tool call.
+TOOL_TIMEOUT_S = 2 * 3600
+
 MICROBENCH_BUILD_STEPS = [
     "step_create_dataflow_partition",
     "step_minimize_bit_width",
@@ -219,7 +227,16 @@ class MicrobenchDUT(bench):
         return None
 
     def _step_build_setup(self):
-        """Build configuration of a microbenchmark: fixed step list, no target fps."""
+        """Build configuration of a microbenchmark: fixed step list, no target fps.
+
+        Also arms the per-tool-call time limit (TOOL_TIMEOUT_S, ``tool_timeout_s`` param)
+        for this process and its tool subprocesses: a call that exceeds it fails the run
+        and the benchmark proceeds with the next one."""
+        timeout = self._params.get("tool_timeout_s", TOOL_TIMEOUT_S)
+        if timeout:
+            os.environ[TOOL_TIMEOUT_ENV_VAR] = str(timeout)
+        else:
+            os.environ.pop(TOOL_TIMEOUT_ENV_VAR, None)
         return build_cfg.DataflowBuildConfig(target_fps=None, steps=self.build_steps(self._params))
 
 
