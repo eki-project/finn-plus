@@ -107,12 +107,14 @@ Measurement:
 # (ci/collect/ imports finn.benchmarking.exchange from src/, which is pure stdlib). They get an
 # isolated venv instead of relying on the runner's system packages, which an OS upgrade can
 # break silently. LOCAL_QOR_PYTHON (project variable) selects the interpreter, see the QoR jobs.
+# The directory name matches the .venv*/ pattern of .gitignore: dvclive saves an experiment per
+# run and would otherwise list every untracked venv file in a warning each time (MBs of log).
 .collect_venv:
   script:
-    - ${LOCAL_QOR_PYTHON:-python3.10} -m venv collect-venv
-    - collect-venv/bin/pip install --quiet 'dvc[webdav]~=3.67.0' 'dvclive[image]~=3.49.0' 'matplotlib~=3.10.9' 'pyyaml~=6.0'
+    - ${LOCAL_QOR_PYTHON:-python3.10} -m venv .venv-collect
+    - .venv-collect/bin/pip install --quiet 'dvc[webdav]~=3.67.0' 'dvclive[image]~=3.49.0' 'matplotlib~=3.10.9' 'pyyaml~=6.0'
     # the dvc CLI calls below must come from the same environment
-    - export PATH=$PWD/collect-venv/bin:$PATH
+    - export PATH=$PWD/.venv-collect/bin:$PATH
 
 Result Collection:
   id_tokens:
@@ -137,7 +139,7 @@ Result Collection:
       push_status=0
 
       export FINN_BENCH_EXCHANGE_DIR=$LOCAL_EXCHANGE_DIR
-      collect-venv/bin/python ci/collect/collect.py || collect_status=$?
+      .venv-collect/bin/python ci/collect/collect.py || collect_status=$?
       # Re-running the push is safe: experiments already on the Git remote are reported as
       # up to date and only cache objects still missing on the DVC remote are uploaded again
       bash ci/retry.sh -n 5 -d 30 -- dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
@@ -281,7 +283,7 @@ Result Collection (Follow-up):
       push_status=0
 
       export FINN_BENCH_EXCHANGE_DIR=$LOCAL_EXCHANGE_DIR
-      collect-venv/bin/python ci/collect/collect.py --followup || collect_status=$?
+      .venv-collect/bin/python ci/collect/collect.py --followup || collect_status=$?
       # Re-running the push is safe: experiments already on the Git remote are reported as
       # up to date and only cache objects still missing on the DVC remote are uploaded again
       bash ci/retry.sh -n 5 -d 30 -- dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
