@@ -116,3 +116,15 @@ def test_sum_extra_hierarchies():
     fn = _load_collect_fn()
     extra = fn.sum_extra_hierarchies(_REPORT, "Thresholding_rtl_0", ["LUT", "DSP"])
     assert extra == {"LUT": 20, "DSP": 0, "num_nodes": 1}
+
+
+def test_collected_pipeline_id():
+    fn = _load_collect_fn()
+    assert fn.collected_pipeline_id({"CI_PIPELINE_ID": "158529"}) == "158529"
+    assert fn.collected_pipeline_id({}) == ""
+    # re-collection of an earlier pipeline's exchange directory
+    env = {"CI_PIPELINE_ID": "159000", "FINN_BENCH_EXCHANGE_PIPELINE": "CI_158529"}
+    assert fn.collected_pipeline_id(env) == "158529"
+    # other directory names (e.g. "local") are not pipeline ids
+    env = {"CI_PIPELINE_ID": "159000", "FINN_BENCH_EXCHANGE_PIPELINE": "local"}
+    assert fn.collected_pipeline_id(env) == "159000"

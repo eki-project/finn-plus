@@ -64,6 +64,9 @@ variables:
   KEEP_EXCHANGE_DEPLOY:
     description: "Set to 1 to keep this pipeline's deployment packages (bitstreams) on the exchange share"
     value: ""
+  COLLECT_PIPELINE_ID:
+    description: "Re-run only Result Collection and the QoR jobs on the exchange directory of this earlier bench child pipeline (the number of its CI_<id> directory), without builds or measurements; set MANUAL_CFG_PATH to the same config"
+    value: ""
 
 workflow:
   name: '$PIPELINE_NAME'

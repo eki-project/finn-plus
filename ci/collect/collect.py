@@ -844,20 +844,20 @@ if __name__ == "__main__":
     fail = False
     fail_missing_comparison = False
 
+    # id of the pipeline that built the runs (differs from CI_PIPELINE_ID when re-collecting)
+    pipeline_id = collect_fn.collected_pipeline_id()
+    if pipeline_id != os.environ.get("CI_PIPELINE_ID", ""):
+        print("Re-collecting the runs of pipeline %s" % pipeline_id)
+    build_commit = None
+
     for id in run_ids:
         print("Processing run %d" % id)
         if args.followup:
-            experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_followup_" + str(id)
+            experiment_name = "CI_" + pipeline_id + "_followup_" + str(id)
         else:
-            experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + str(id)
+            experiment_name = "CI_" + pipeline_id + "_" + str(id)
         experiment_msg = (
-            "[CI] "
-            + os.environ.get("CI_PIPELINE_NAME")
-            + " ("
-            + os.environ.get("CI_PIPELINE_ID")
-            + "_"
-            + str(id)
-            + ")"
+            "[CI] " + os.environ.get("CI_PIPELINE_NAME") + " (" + pipeline_id + "_" + str(id) + ")"
         )
 
         # initialize logging wrapper with input parameters logged by benchmarking infrastructure
@@ -1167,6 +1167,9 @@ if __name__ == "__main__":
                 shutil.copytree(run_report_dir2, dvc_report_dir, dirs_exist_ok=True)
             dvc_logger.log_artifact(dvc_report_dir)
 
+            if build_commit is None:
+                done_info = exchange.read_done(exchange.run_dir("build", id, args.followup)) or {}
+                build_commit = done_info.get("commit") or os.environ.get("CI_COMMIT_SHA")
             # Save microbenchmark results in a list per DUT for later aggregation
             dut = params["params"]["dut"]
             if dut not in microbench_result_data:
@@ -1272,9 +1275,9 @@ if __name__ == "__main__":
                 dut_dir,
                 date.today().strftime("%Y-%m-%d")
                 + "_"
-                + os.environ.get("CI_COMMIT_SHORT_SHA")
+                + (build_commit or os.environ.get("CI_COMMIT_SHA") or "")[:8]
                 + "_"
-                + os.environ.get("CI_PIPELINE_ID")
+                + pipeline_id
                 + "_"
                 + str(len(microbench_result_data[dut]))
                 + ".json",
@@ -1282,11 +1285,16 @@ if __name__ == "__main__":
             dut_json = {
                 "dut": dut,
                 "date": date.today().strftime("%Y-%m-%d"),
-                "commit": os.environ.get("CI_COMMIT_SHA"),
-                "pipeline_id": os.environ.get("CI_PIPELINE_ID"),
+                "commit": build_commit or os.environ.get("CI_COMMIT_SHA"),
+                "pipeline_id": pipeline_id,
                 "pipeline_name": os.environ.get("CI_PIPELINE_NAME"),
                 "runs": microbench_result_data[dut],
             }
+            if pipeline_id != os.environ.get("CI_PIPELINE_ID", ""):
+                dut_json["collected_by"] = {
+                    "pipeline_id": os.environ.get("CI_PIPELINE_ID"),
+                    "commit": os.environ.get("CI_COMMIT_SHA"),
+                }
             print("Saving microbenchmark results for %s to %s" % (dut, dut_json_path))
             with open(dut_json_path, "w") as f:
                 json.dump(dut_json, f, indent=2)

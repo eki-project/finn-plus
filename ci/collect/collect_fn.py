@@ -214,3 +214,19 @@ def power_metrics(per_experiment, rails_names=None):
                 if "avg_" + key in idle:
                     metrics["dyn_" + key] = per_experiment[load]["avg_" + key] - idle["avg_" + key]
     return metrics
+
+
+def collected_pipeline_id(env=None):
+    """Pipeline id the collected runs belong to.
+
+    Normally ``CI_PIPELINE_ID``. When the collection re-reads the exchange directory of an
+    earlier pipeline (``FINN_BENCH_EXCHANGE_PIPELINE=CI_<id>``, set from
+    ``COLLECT_PIPELINE_ID``), it is that id, so experiment names, the database file name and
+    the ``pipeline_id`` field stay those of the builds and a re-collection overwrites the
+    first attempt instead of duplicating it."""
+    env = os.environ if env is None else env
+    override = env.get("FINN_BENCH_EXCHANGE_PIPELINE", "").strip()
+    match = re.fullmatch(r"CI_(\d+)", override)
+    if match:
+        return match.group(1)
+    return env.get("CI_PIPELINE_ID", "")

@@ -302,6 +302,9 @@ def start_bench_run(config_name, config=None):
             log_dict["status"],
             task_id=task_id,
             run_id=run_id,
+            # the code that built the run; a later re-collection of this exchange
+            # directory (COLLECT_PIPELINE_ID) records it instead of its own commit
+            commit=os.environ.get("CI_COMMIT_SHA", ""),
         )
 
     print("STOPPING JOB %d (of %d total jobs)" % (task_id, task_count))

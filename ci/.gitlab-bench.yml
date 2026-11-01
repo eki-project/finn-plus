@@ -25,6 +25,10 @@ variables:
   # this whenever newly stored models would be unloadable by older checkouts, which keep
   # using their own directory (models without a subdirectory belong to the first version).
   QOR_MODEL_SUBDIR: "v2"
+  # Set (to the number in the CI_<id> exchange directory of an earlier bench child pipeline)
+  # to re-run only Result Collection and the QoR jobs on that directory: no builds, no
+  # measurements. Lets a fixed collector process 20 h of builds without repeating them.
+  COLLECT_PIPELINE_ID: ""
 
 workflow:
   name: "bench_$BENCH_CFG"
@@ -36,6 +40,10 @@ FINN Build:
   stage: build
   tags:
     - otus
+  rules:
+    - if: $COLLECT_PIPELINE_ID != ""
+      when: never
+    - when: on_success
   needs:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
@@ -80,6 +88,8 @@ Measurement:
   tags:
     - board
   rules:
+    - if: $COLLECT_PIPELINE_ID != ""
+      when: never
     # Also run on failure of previous tasks to measure partial results
     - when: always
   script:
@@ -139,6 +149,9 @@ Result Collection:
       push_status=0
 
       export FINN_BENCH_EXCHANGE_DIR=$LOCAL_EXCHANGE_DIR
+      if [ -n "$COLLECT_PIPELINE_ID" ]; then
+        export FINN_BENCH_EXCHANGE_PIPELINE=CI_$COLLECT_PIPELINE_ID
+      fi
       .venv-collect/bin/python ci/collect/collect.py || collect_status=$?
       # Re-running the push is safe: experiments already on the Git remote are reported as
       # up to date and only cache objects still missing on the DVC remote are uploaded again
@@ -170,6 +183,8 @@ Result Collection:
 # pipeline. Configs without live FIFO sizing do not get these jobs at all.
 .live_fifo_only:
   rules:
+    - if: $COLLECT_PIPELINE_ID != ""
+      when: never
     # Also run on failure of previous tasks to process partial results
     - if: $RUN_FOLLOWUP == "true"
       when: always
@@ -283,6 +298,9 @@ Result Collection (Follow-up):
       push_status=0
 
       export FINN_BENCH_EXCHANGE_DIR=$LOCAL_EXCHANGE_DIR
+      if [ -n "$COLLECT_PIPELINE_ID" ]; then
+        export FINN_BENCH_EXCHANGE_PIPELINE=CI_$COLLECT_PIPELINE_ID
+      fi
       .venv-collect/bin/python ci/collect/collect.py --followup || collect_status=$?
       # Re-running the push is safe: experiments already on the Git remote are reported as
       # up to date and only cache objects still missing on the DVC remote are uploaded again

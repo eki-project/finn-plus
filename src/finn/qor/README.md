@@ -214,6 +214,16 @@ working directory as before. The `Exchange Cleanup` job deletes the pipeline's b
 writable from all three runners.
 `ci/exchange_cleanup.py --dry-run` previews what would be removed.
 
+**Re-collecting.** `Result Collection` can be re-run on the exchange directory of an earlier
+bench child pipeline without repeating its builds and measurements: start a manual pipeline
+with the same `MANUAL_CFG_PATH` and `COLLECT_PIPELINE_ID=<id>` (the number of the `CI_<id>`
+directory, i.e. the bench *child* pipeline). `FINN Build` and `Measurement` are skipped,
+the collector reads `CI_<id>` (`FINN_BENCH_EXCHANGE_PIPELINE`), names the experiments
+`CI_<id>_<run>` so they overwrite the first attempt, and the database file records the
+builds' pipeline id and commit (from the runs' `DONE` markers) plus `collected_by`.
+The QoR fitting follows as usual. Use it after fixing a collector crash or when a metric
+is added to the collector.
+
 ## Adding an operator
 
 1. Add an `OperatorFeatureSpec` in `features.py` (feature columns, derived columns via the
