@@ -1,0 +1,124 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 300.0,
+            "DSP": 0.0,
+            "BRAM_18K": 1.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 109127,
+            "max_cycles": 109127,
+            "max_cycles_node_name": "ConvolutionInputGenerator_rtl_0",
+            "estimated_throughput_fps": 1832.727006148799,
+            "estimated_latency_ns": 545635.0
+        }
+    },
+    "synth(ooc)": {
+        "resources": {
+            "LUT": 253,
+            "LUTRAM": 0,
+            "FF": 231,
+            "DSP": 0,
+            "BRAM": 0,
+            "BRAM_18K": 1,
+            "BRAM_36K": 0,
+            "URAM": 0
+        },
+        "timing": {
+            "WNS": 2.146,
+            "fmax_mhz": 350.38542396636296
+        }
+    },
+    "synth": {
+        "dut_hierarchy_found": 1,
+        "resources_extra": {
+            "LUT": 59,
+            "FF": 108,
+            "SRL": 0,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 0,
+            "URAM": 0,
+            "num_nodes": 1
+        },
+        "resources": {
+            "LUT": 162,
+            "FF": 95,
+            "SRL": 0,
+            "DSP": 0,
+            "BRAM_18K": 1,
+            "BRAM_36K": 0,
+            "URAM": 0
+        },
+        "timing": {
+            "WNS": 1.083,
+            "met": 1
+        }
+    },
+    "measurement": {
+        "power": {
+            "idle_experiment": {
+                "avg_0V85_power": 1791.0077777777778,
+                "avg_1V2_PL_power": 48.050000000000004,
+                "avg_total_power": 1839.0577777777773,
+                "min_0V85_power": 1791.0077777777778,
+                "min_1V2_PL_power": 48.050000000000004,
+                "min_total_power": 1839.0577777777773,
+                "max_0V85_power": 1791.0077777777778,
+                "max_1V2_PL_power": 48.050000000000004,
+                "max_total_power": 1839.0577777777773
+            },
+            "instrumentation_experiment": {
+                "avg_0V85_power": 1800.435131578948,
+                "avg_1V2_PL_power": 48.04736842105262,
+                "avg_total_power": 1848.4825,
+                "min_0V85_power": 1800.435131578948,
+                "min_1V2_PL_power": 48.04736842105262,
+                "min_total_power": 1848.4825,
+                "max_0V85_power": 1800.435131578948,
+                "max_1V2_PL_power": 48.04736842105262,
+                "max_total_power": 1848.4825
+            },
+            "avg_0V85_power": 1800.435131578948,
+            "avg_1V2_PL_power": 48.04736842105262,
+            "avg_total_power": 1848.4825,
+            "min_0V85_power": 1800.435131578948,
+            "min_1V2_PL_power": 48.04736842105262,
+            "min_total_power": 1848.4825,
+            "max_0V85_power": 1800.435131578948,
+            "max_1V2_PL_power": 48.04736842105262,
+            "max_total_power": 1848.4825,
+            "dyn_0V85_power": 9.427353801170057,
+            "dyn_1V2_PL_power": -0.00263157894738697,
+            "dyn_total_power": 9.424722222222726
+        },
+        "report_experiment_instrumentation": {
+            "error": false,
+            "min_latency_ms": 0.54563,
+            "throughput_fps": 1833,
+            "interval_cycles": 109120,
+            "min_latency_cycles": 109126,
+            "checksum": 15661740,
+            "frequency_mhz": 200,
+            "latency_ms": 0.545795,
+            "pipeline_depth": 1.0,
+            "latency_cycles": 109159,
+            "min_pipeline_depth": 1.0
+        }
+    },
+    "time": {
+        "step_create_dataflow_partition": 0,
+        "step_minimize_bit_width": 0,
+        "step_generate_estimate_reports": 0,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 1,
+        "step_create_stitched_ip": 71,
+        "step_out_of_context_synthesis": 154,
+        "step_synthesize_bitfile": 319,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 545
+    }
+}
