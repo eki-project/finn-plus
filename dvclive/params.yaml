@@ -1,0 +1,35 @@
+params:
+  dut: pool
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: true
+  synth_clk_period_ns: 5
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  function: MaxPool
+  idt: UINT2
+  odt:
+  ch: 128
+  pe: 8
+  k:
+  - 7
+  - 7
+  odim:
+  - 8
+  - 8
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  odt: UINT2
+  in_width: 16
+  accum_bits: 0
+  size: 0
+  dut_node_name: Pool_hls_0
+  dut_op_type: Pool_hls
+  dut_backend: hls
