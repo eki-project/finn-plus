@@ -1,0 +1,30 @@
+params:
+  dut: dwc
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: true
+  synth_clk_period_ns: 5
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  backend: hls
+  dtype: UINT2
+  ch: 768
+  in_elems: 48
+  out_elems: 64
+  n: 16
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  in_width: 96
+  out_width: 128
+  ratio: 1.3333333333333333
+  integer_ratio: false
+  dut_node_name: StreamingDataWidthConverter_hls_0
+  dut_op_type: StreamingDataWidthConverter_hls
+  dut_backend: hls
