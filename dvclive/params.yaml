@@ -1,0 +1,46 @@
+params:
+  dut: swg
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: true
+  synth_clk_period_ns: 5
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  idt: INT2
+  ifm_ch: 32
+  ifm_dim:
+  - 224
+  - 224
+  k:
+  - 1
+  - 1
+  stride:
+  - 2
+  - 2
+  dilation:
+  - 1
+  - 1
+  depthwise: 0
+  parallel_window: 0
+  m: 1
+  simd: 16
+  ram_style: block
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  impl_style: parallel
+  buffer_depth: 2
+  ofm_dim:
+  - 112
+  - 112
+  out_width: 32
+  is1D: 0
+  dut_node_name: ConvolutionInputGenerator_rtl_0
+  dut_op_type: ConvolutionInputGenerator_rtl
+  dut_backend: rtl
