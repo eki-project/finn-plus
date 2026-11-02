@@ -143,6 +143,9 @@ class bench_mvau(MicrobenchDUT):
         if backend == "hls" and (idt == DataType["BINARY"] or wdt == DataType["BINARY"]):
             # MVAU_hls raises "True binary (non-bipolar) inputs not yet supported"
             return "MVAU_hls does not support BINARY inputs or weights (use BIPOLAR)"
+        if backend == "hls" and simd < mw / 1024:
+            # asserted by MVAU_hls.defines() for ipgen: SIMD >= MW / 1024 (pipeline 158943 run 7)
+            return "HLS MVAU requires SIMD >= MW / 1024"
         if backend == "hls" and simd * pe * wdt.bitwidth() > MAX_ALLOWED_AP_INT_W:
             # the HLS MVAU packs all PE weights of a tile into one ap_uint in every mem_mode
             # (MVAU_hls.get_ap_int_max_w), limited by AP_INT_MAX_W

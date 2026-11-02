@@ -239,6 +239,8 @@ CASES = [
 INVALID = [
     ("mvau", {**_MVAU, "sf": 7}),
     ("mvau", {**_MVAU, "backend": "rtl"}),  # activation not supported by rtl
+    # SIMD 1 with MW 2048 violates the HLS requirement SIMD >= MW / 1024 (pipeline 158943 run 7)
+    ("mvau", {**_MVAU, "mw": 2048, "sf": 2048}),
     # 128 x 8 x 8 bit weight tile = 8192 bits > AP_INT_MAX_W (pipeline 152593 run 7)
     (
         "mvau",
