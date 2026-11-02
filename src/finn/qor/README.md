@@ -121,7 +121,9 @@ Versal-only backends or two-stream elementwise operations.
   feature of every operator (`clk_period_ns`, from `params.synth_clk_period_ns`; older runs:
   10 ns), and the
   post-route WNS is recorded (`synth/timing/WNS`, `met`); runs that missed timing are dropped
-  by the database loader (`drop_timing_failures`).
+  by the database loader (`drop_timing_failures`). The loader also drops RTL MVAU runs with
+  PE=1 collected before 2025-10-17: until the instrumentation checksum fix (PR #124) their
+  wrapper degenerated (unconnected output stream), so measurements and resources were invalid.
 - Power: the measurement records the `0V85` (PL/PS core) and `1V2_PL` rails of the RFSoC 2x2
   per experiment (`measurement/power/<experiment>/avg_<rail>`, `total_power` is their sum;
   the rails come from `ci/experiments/*.json`); the flat `avg_<rail>` names carry the load

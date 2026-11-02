@@ -201,11 +201,25 @@ def with_clock_period(spec: "OperatorFeatureSpec") -> "OperatorFeatureSpec":
     )
 
 
+# Date of the instrumentation checksum fix (eki-project/finn-plus PR #124): before it, RTL
+# MVAUs with PE=1 (one output subword wider than 23 bits) produced a degenerated
+# instrumentation wrapper with an unconnected output stream, so their measurements and
+# resources are invalid. Runs collected from this date on are fine.
+MVAU_PE1_FIX_DATE = pd.Timestamp("2025-10-17")
+
+
 def _mvau_drop_broken_runs(df: pd.DataFrame) -> pd.DataFrame:
-    """RTL MVAUs with PE=1 trigger an instrumentation degeneration bug (output stream
-    unconnected), so their measurements are invalid."""
-    if "params.backend" in df.columns and "dut_info.pe" in df.columns:
-        broken = (df["params.backend"] == "rtl") & (df["dut_info.pe"] == 1)
+    """Drop RTL MVAUs with PE=1 that were collected before :data:`MVAU_PE1_FIX_DATE`.
+
+    Rows without a (parseable) collection date are kept.
+    """
+    if "params.backend" in df.columns and "dut_info.pe" in df.columns and "date" in df.columns:
+        collected = pd.to_datetime(df["date"], errors="coerce")
+        broken = (
+            (df["params.backend"] == "rtl")
+            & (df["dut_info.pe"] == 1)
+            & (collected < MVAU_PE1_FIX_DATE)
+        )
         return df[~broken]
     return df
 

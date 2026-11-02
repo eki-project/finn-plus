@@ -158,3 +158,38 @@ def test_load_database_derives_targets(database):
 def test_load_database_unknown_operator(database):
     with pytest.raises(FileNotFoundError):
         load_microbenchmark_database("fifo", str(database))
+
+
+def test_mvau_pe1_rtl_runs_dropped_only_before_fix(tmp_path):
+    """RTL MVAUs with PE=1 were measured by a degenerated instrumentation wrapper until the
+    checksum fix (PR #124); only runs collected before that date are dropped."""
+    db = tmp_path / "db"
+    (db / "mvau").mkdir(parents=True)
+    resources = {"LUT": 100, "DSP": 0, "BRAM_18K": 0, "BRAM_36K": 0, "URAM": 0}
+
+    def _pe1_run(mw, backend):
+        run = _run(mw, resources)
+        run["params"]["backend"] = backend
+        run["dut_info"]["pe"] = 1
+        return run
+
+    for date, name, runs in [
+        ("2025-06-01", "old", [_pe1_run(16, "rtl"), _pe1_run(32, "hls")]),
+        ("2025-10-17", "fixed", [_pe1_run(64, "rtl")]),
+        ("2026-11-01", "new", [_pe1_run(128, "rtl")]),
+    ]:
+        (db / "mvau" / f"{name}.json").write_text(
+            json.dumps(
+                {
+                    "dut": "mvau",
+                    "date": date,
+                    "commit": name,
+                    "pipeline_id": "1",
+                    "pipeline_name": "p",
+                    "runs": runs,
+                }
+            )
+        )
+    df, stats = load_microbenchmark_database("mvau", str(db))
+    assert stats.broken == 1
+    assert sorted(df["params.mw"].tolist()) == [32, 64, 128]
