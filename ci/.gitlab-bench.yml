@@ -150,8 +150,8 @@ Result Collection:
     # All network operations are retried with backoff (ci/retry.sh) to ride out transient errors
     - |
       case "$BENCH_CFG:$MANUAL_CFG_PATH" in
-        *microbenchmark*) DVC_EXPERIMENTS=0 ;;
-        *) DVC_EXPERIMENTS=1 ;;
+        *microbenchmark*) DVC_EXPERIMENTS=0; COLLECT_ARGS="--no-dvc-experiments" ;;
+        *) DVC_EXPERIMENTS=1; COLLECT_ARGS="" ;;
       esac
       if [ "$DVC_EXPERIMENTS" = 1 ]; then
         bash ci/retry.sh -n 4 -d 15 -- dvc pull
@@ -166,7 +166,10 @@ Result Collection:
       if [ -n "$COLLECT_PIPELINE_ID" ]; then
         export FINN_BENCH_EXCHANGE_PIPELINE=CI_$COLLECT_PIPELINE_ID
       fi
-      .venv-collect/bin/python ci/collect/collect.py || collect_status=$?
+      # --no-dvc-experiments also covers runs built before microbenchmarks stopped tracking
+      # experiments (re-collections): without it each run would still save an experiment
+      # and retry the reference lookup against refs that were never fetched (70 s per run)
+      .venv-collect/bin/python ci/collect/collect.py $COLLECT_ARGS || collect_status=$?
       # Re-running the push is safe: experiments already on the Git remote are reported as
       # up to date and only cache objects still missing on the DVC remote are uploaded again
       if [ "$DVC_EXPERIMENTS" = 1 ]; then

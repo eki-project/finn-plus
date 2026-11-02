@@ -238,14 +238,22 @@ def generate_metric_plots(metric_reports, file):
 class DVCLoggerHelper:
     """Wrapper around DVC Live for logging experiments."""
 
-    def __init__(self, experiment_name, experiment_msg, id, params, is_followup=False):
-        """Initialize DVC logger with experiment details."""
+    def __init__(
+        self, experiment_name, experiment_msg, id, params, is_followup=False, dvc_experiments=True
+    ):
+        """Initialize DVC logger with experiment details.
+
+        ``dvc_experiments=False`` (``--no-dvc-experiments``) disables the DVC experiment of
+        every run regardless of its ``store_results_in_dvc_experiment`` parameter, e.g. when
+        re-collecting runs built before microbenchmarks stopped tracking experiments."""
         self.id = id
         self.is_followup = is_followup
         self.experiment_name = experiment_name
 
         # extract logging settings from params
-        self.store_as_experiment = params["params"].get("store_results_in_dvc_experiment", True)
+        self.store_as_experiment = dvc_experiments and params["params"].get(
+            "store_results_in_dvc_experiment", True
+        )
         self.store_as_data = params["params"].get("store_results_in_dvc_data", False)
 
         if self.store_as_experiment:
@@ -827,6 +835,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Indicate this is a follow-up run (prevents generating new follow-up configs)",
     )
+    parser.add_argument(
+        "--no-dvc-experiments",
+        action="store_true",
+        help="Save no DVC experiments (and compare nothing), whatever the runs' "
+        "store_results_in_dvc_experiment says; the CI passes it for microbenchmark configs",
+    )
     args = parser.parse_args()
 
     print(exchange.describe())
@@ -874,7 +888,12 @@ if __name__ == "__main__":
             % (id, run_kind, ", randomly sampled" if is_sampled else "", enforce_comparison)
         )
         with DVCLoggerHelper(
-            experiment_name, experiment_msg, id, params, is_followup=args.followup
+            experiment_name,
+            experiment_msg,
+            id,
+            params,
+            is_followup=args.followup,
+            dvc_experiments=not args.no_dvc_experiments,
         ) as dvc_logger:
             # optional metadata logged by builder
             metadata_builder = open_json_report(id, "metadata_builder.json", args.followup)
