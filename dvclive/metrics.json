@@ -1,0 +1,134 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 2878.0,
+            "DSP": 0.0,
+            "BRAM_18K": 8.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 16384,
+            "max_cycles": 16384,
+            "max_cycles_node_name": "MVAU_hls_0",
+            "estimated_throughput_fps": 12207.03125,
+            "estimated_latency_ns": 81920.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 5301.0,
+            "FF": 8670.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        }
+    },
+    "synth(ooc)": {
+        "resources": {
+            "LUT": 4672,
+            "LUTRAM": 128,
+            "FF": 10069,
+            "DSP": 0,
+            "BRAM": 4,
+            "BRAM_18K": 0,
+            "BRAM_36K": 4,
+            "URAM": 0
+        },
+        "timing": {
+            "WNS": 0.84,
+            "fmax_mhz": 240.3846153846154
+        }
+    },
+    "synth": {
+        "dut_hierarchy_found": 1,
+        "resources_extra": {
+            "LUT": 22,
+            "FF": 28,
+            "SRL": 0,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 0,
+            "URAM": 0,
+            "num_nodes": 1
+        },
+        "resources": {
+            "LUT": 4619,
+            "FF": 10018,
+            "SRL": 128,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 4,
+            "URAM": 0
+        },
+        "timing": {
+            "WNS": 0.67,
+            "met": 1
+        }
+    },
+    "measurement": {
+        "power": {
+            "idle_experiment": {
+                "avg_0V85_power": 1997.6945833333334,
+                "avg_1V2_PL_power": 48.03888888888889,
+                "avg_total_power": 2045.7334722222222,
+                "min_0V85_power": 1997.6945833333334,
+                "min_1V2_PL_power": 48.03888888888889,
+                "min_total_power": 2045.7334722222222,
+                "max_0V85_power": 1997.6945833333334,
+                "max_1V2_PL_power": 48.03888888888889,
+                "max_total_power": 2045.7334722222222
+            },
+            "instrumentation_experiment": {
+                "avg_0V85_power": 2177.183881578948,
+                "avg_1V2_PL_power": 48.03684210526315,
+                "avg_total_power": 2225.2207236842105,
+                "min_0V85_power": 2177.183881578948,
+                "min_1V2_PL_power": 48.03684210526315,
+                "min_total_power": 2225.2207236842105,
+                "max_0V85_power": 2177.183881578948,
+                "max_1V2_PL_power": 48.03684210526315,
+                "max_total_power": 2225.2207236842105
+            },
+            "avg_0V85_power": 2177.183881578948,
+            "avg_1V2_PL_power": 48.03684210526315,
+            "avg_total_power": 2225.2207236842105,
+            "min_0V85_power": 2177.183881578948,
+            "min_1V2_PL_power": 48.03684210526315,
+            "min_total_power": 2225.2207236842105,
+            "max_0V85_power": 2177.183881578948,
+            "max_1V2_PL_power": 48.03684210526315,
+            "max_total_power": 2225.2207236842105,
+            "dyn_0V85_power": 179.48929824561446,
+            "dyn_1V2_PL_power": -0.002046783625743842,
+            "dyn_total_power": 179.4872514619883
+        },
+        "report_experiment_instrumentation": {
+            "frequency_mhz": 200,
+            "latency_ms": 0.082965,
+            "throughput_fps": 12202,
+            "interval_cycles": 16391,
+            "min_latency_cycles": 16394,
+            "error": false,
+            "min_pipeline_depth": 1.0,
+            "pipeline_depth": 1.01,
+            "checksum": 1913,
+            "latency_cycles": 16593,
+            "min_latency_ms": 0.08197
+        }
+    },
+    "time": {
+        "step_create_dataflow_partition": 0,
+        "step_minimize_bit_width": 0,
+        "step_generate_estimate_reports": 0,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 61,
+        "step_create_stitched_ip": 74,
+        "step_out_of_context_synthesis": 207,
+        "step_synthesize_bitfile": 373,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 715
+    }
+}
