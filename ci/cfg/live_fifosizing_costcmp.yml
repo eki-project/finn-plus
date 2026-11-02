@@ -1,0 +1,210 @@
+# Cost-function comparison for live FIFO sizing: every DUT of live_fifosizing.yml is built once
+# per experiment config (the matrix expands the list), so the same bitfile is measured with the
+# branch-and-bound search minimising the storage in bits and with the search minimising the FPGA
+# primitive cost, and each result gets its own follow-up build. The two runs of a DUT differ
+# only in experiments_config, which collect.py ignores when matching reference experiments.
+# Compare the results with scripts/compare_fifo_cost_models.py.
+[
+    # KWS (MLP)
+    {
+        "dut": ["kws"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    # Cybersecurity (MLP)
+    {
+        "dut": ["cybsec"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    ### BNN-PYNQ ###
+    # tfc-w1a1
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/tfc-w1a1_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/tfc-w1a1_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/tfc-w1a1_specialize_layers.json],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+        "validation_dataset" : ["mnist"],
+    },
+    # tfc-w2a2
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/tfc-w2a2_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/tfc-w2a2_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/tfc-w2a2_specialize_layers.json],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+        "validation_dataset" : ["mnist"],
+    },
+    # cnv-w1a1
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/cnv-w1a1_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/cnv-w1a1_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/cnv-w1a1_specialize_layers.json],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+        "validation_dataset" : ["cifar"],
+    },
+    # cnv-w2a2
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/cnv-w2a2_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/cnv-w2a2_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/cnv-w2a2_specialize_layers.json],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+        "validation_dataset" : ["cifar"],
+    },
+
+    # GTSRB (cnv-w1a1)
+    {
+        "dut": ["gtsrb"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    # VGG-10 (1D CNN) (RadioML)
+    {
+        "dut": ["vgg10"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    # MobileNetV1 (ImageNet)
+    {
+        "dut": ["mobilenetv1"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    # ResNet-18 (CIFAR100)
+    {
+        "dut": ["resnet18"],
+        "model_path": [models/resnet18/resnet18_w3a3_cifar100.onnx],
+        "folding_config_file": [models/resnet18/resnet18_folding_config.json],
+        "specialize_layers_config_file": [models/resnet18/resnet18_specialize_layers.json],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+        "validation_dataset" : ["cifar100"],
+    },
+
+    ### NEW Transformer models (dvc-imported from finn-transformers repo):
+    # radioml model
+    {
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/radioml"],
+        "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [95000],
+        "validation_dataset" : ["radioml_transformer"],
+    },
+
+    # vision model
+    {
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/vision"],
+        "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1525],
+        "validation_dataset" : ["cifar"],
+    },
+
+    # language model
+    {
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/language"],
+        "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["live_fifo"],
+        "experiments_config": ["../experiments/fifosizing_cost_bits.json", "../experiments/fifosizing_cost_primitives.json"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1000],
+        "validation_dataset" : ["tinystories"],
+    },
+
+    # Synthetic non-linear models
+    # {
+    #     "dut": ["synthetic_nonlinear"],
+    #     "dim": [64],
+    #     "kernel_size": [5],
+    #     "ch": [8],
+    #     "simd": [8],
+    #     "pe": [8],
+    #     "parallel_window": [1],
+
+    #     "lb_num_layers": [1],
+    #     "rb_num_layers": [4, 8, 16],
+
+    #     "auto_fifo_depths": [True],
+    #     "auto_fifo_strategy": ["live_fifo"],
+    #     "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #     "synth_clk_period_ns": [10],
+    # },
+    # {
+    #     "dut": ["synthetic_nonlinear"],
+    #     "dim": [64],
+    #     "kernel_size": [5],
+    #     "ch": [8],
+    #     "simd": [1],
+    #     "pe": [1],
+    #     "parallel_window": [0],
+
+    #     "lb_num_layers": [1],
+    #     "rb_num_layers": [4, 8, 16],
+
+    #     "auto_fifo_depths": [True],
+    #     "auto_fifo_strategy": ["live_fifo"],
+    #     "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #     "synth_clk_period_ns": [10],
+    # }
+]

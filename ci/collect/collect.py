@@ -531,6 +531,8 @@ class ExperimentComparator:
         "store_results_in_dvc_experiment",
         "store_results_in_dvc_data",
         "validation_dataset",
+        # selects the experiments measured on the board, not what is built
+        "experiments_config",
     }
 
     # Additional params ignored when matching a live FIFO-sizing run (or its follow-up) against
