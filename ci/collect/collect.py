@@ -1242,13 +1242,23 @@ if __name__ == "__main__":
 
         # Always aggregate/compare/plot metrics, but only enforce the result for standard builds
         collect_cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "collect.yaml")
-        try:
-            comp = ExperimentComparator(dvc_logger, collect_cfg_path)
-            metrics = comp.aggregate_metrics_across_reports()
-        except Exception as e:
-            print("ERROR: Metric aggregation raised an exception for run %d: %s" % (id, e))
+        if not dvc_logger.store_as_experiment:
+            # The comparison runs on DVC experiments (current and ci_known_good references).
+            # Runs without experiment tracking (microbenchmarks, store_results_in_dvc_experiment
+            # false) only feed the database, so there is nothing to compare and nothing to enforce.
+            print("Run %d: no DVC experiment tracking, skipping the reference comparison" % id)
             metrics = None
-        if metrics is None:
+            enforce_comparison = False
+        else:
+            try:
+                comp = ExperimentComparator(dvc_logger, collect_cfg_path)
+                metrics = comp.aggregate_metrics_across_reports()
+            except Exception as e:
+                print("ERROR: Metric aggregation raised an exception for run %d: %s" % (id, e))
+                metrics = None
+        if metrics is None and not dvc_logger.store_as_experiment:
+            pass
+        elif metrics is None:
             print(
                 "%s: No comparison point found for run %d (kind '%s')"
                 % ("ERROR" if enforce_comparison else "WARNING", id, run_kind)

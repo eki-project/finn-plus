@@ -139,11 +139,21 @@ Result Collection:
     - when: always
   script:
     - !reference [.collect_venv, script]
+    # Microbenchmarks write their results to the database on the share and run without DVC
+    # experiments (store_results_in_dvc_experiment: false), so the models (dvc pull, needed by
+    # dvclive), the reference experiments and the push are only fetched for regression configs.
     # pulling models seems to be needed for dvclive to save experiments, even though they are not used or modified
     # All network operations are retried with backoff (ci/retry.sh) to ride out transient errors
-    - bash ci/retry.sh -n 4 -d 15 -- dvc pull
-    - bash ci/retry.sh -n 4 -d 10 -- git fetch origin +refs/tags/*:refs/tags/*
-    - bash ci/retry.sh -n 4 -d 10 -- git fetch git@github.com:eki-project/finn-plus.git +refs/exps/*:refs/exps/*
+    - |
+      case "$BENCH_CFG:$MANUAL_CFG_PATH" in
+        *microbenchmark*) DVC_EXPERIMENTS=0 ;;
+        *) DVC_EXPERIMENTS=1 ;;
+      esac
+      if [ "$DVC_EXPERIMENTS" = 1 ]; then
+        bash ci/retry.sh -n 4 -d 15 -- dvc pull
+        bash ci/retry.sh -n 4 -d 10 -- git fetch origin +refs/tags/*:refs/tags/*
+        bash ci/retry.sh -n 4 -d 10 -- git fetch git@github.com:eki-project/finn-plus.git +refs/exps/*:refs/exps/*
+      fi
     - |
       collect_status=0
       push_status=0
@@ -155,7 +165,9 @@ Result Collection:
       .venv-collect/bin/python ci/collect/collect.py || collect_status=$?
       # Re-running the push is safe: experiments already on the Git remote are reported as
       # up to date and only cache objects still missing on the DVC remote are uploaded again
-      bash ci/retry.sh -n 5 -d 30 -- dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
+      if [ "$DVC_EXPERIMENTS" = 1 ]; then
+        bash ci/retry.sh -n 5 -d 30 -- dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
+      fi
 
       if [ "$collect_status" -ne 0 ]; then
         exit "$collect_status"

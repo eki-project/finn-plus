@@ -190,8 +190,14 @@ its expansion in the exchange directory and the others follow it. `sampling_stat
 (build artifact) reports attempts and rejection reasons. Locally: `finn bench --sample mvau:20`.
 In CI, launch the manual bench pipeline with `MANUAL_CFG_PATH=microbenchmark_sample_<dut>`;
 `SAMPLE_COUNT` / `SAMPLE_SEED` override the config. Sampled runs are new by construction, so
-the result collection does not require a reference experiment for them (runs of grid configs
-such as `microbenchmark_basic` are still compared against the `ci_known_good` experiments).
+the result collection does not require a reference experiment for them. Microbenchmarks
+run without DVC experiment tracking altogether (`store_results_in_dvc_experiment: false` in
+`sample_defaults()` and in `microbenchmark_basic.yml`): the database on the share is the
+only input of the model fitting, the per-run experiments of the regression flow cost one
+git commit per run plus a push of all of them, and the collection job skips the DVC pull,
+the experiment fetch and the push for microbenchmark configs. Consequently there is no
+`ci_known_good` reference comparison for microbenchmarks; the smoke config checks that
+the flow builds and measures, the database tells whether the numbers moved.
 
 **Artifact exchange.** Per-run artifacts (reports, `deploy.zip` bitstream packages) are
 exchanged between the build (cluster), measurement (board) and collection runners through a
@@ -218,9 +224,10 @@ writable from all three runners.
 bench child pipeline without repeating its builds and measurements: start a manual pipeline
 with the same `MANUAL_CFG_PATH` and `COLLECT_PIPELINE_ID=<id>` (the number of the `CI_<id>`
 directory, i.e. the bench *child* pipeline). `FINN Build` and `Measurement` are skipped,
-the collector reads `CI_<id>` (`FINN_BENCH_EXCHANGE_PIPELINE`), names the experiments
-`CI_<id>_<run>` so they overwrite the first attempt, and the database file records the
-builds' pipeline id and commit (from the runs' `DONE` markers) plus `collected_by`.
+the collector reads `CI_<id>` (`FINN_BENCH_EXCHANGE_PIPELINE`) and the database file records
+the builds' pipeline id and commit (from the runs' `DONE` markers) plus `collected_by`
+(regression configs, which do track experiments, name them `CI_<id>_<run>` so a
+re-collection overwrites the first attempt).
 The QoR fitting follows as usual. Use it after fixing a collector crash or when a metric
 is added to the collector.
 

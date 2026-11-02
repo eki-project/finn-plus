@@ -503,3 +503,19 @@ def test_instrumentation_and_frame_helpers():
     assert not output_words_ok(0, 8)
     assert frame_cycles_ok(1) and frame_cycles_ok(MAX_FRAME_CYCLES)
     assert not frame_cycles_ok(MAX_FRAME_CYCLES + 1) and not frame_cycles_ok(0)
+
+
+def test_microbenchmarks_do_not_track_dvc_experiments():
+    """Microbenchmark results live in the database only: no per-run DVC experiments."""
+    import yaml
+    from pathlib import Path
+
+    for dut_cls in MICROBENCH_DUTS.values():
+        defaults = dut_cls.sample_defaults()
+        assert defaults["store_results_in_dvc_data"] is True
+        assert defaults["store_results_in_dvc_experiment"] is False
+    cfg_path = Path(__file__).resolve().parents[2] / "ci" / "cfg" / "microbenchmark_basic.yml"
+    entries = yaml.safe_load(cfg_path.read_text())
+    assert isinstance(entries, list) and entries
+    for entry in entries:
+        assert entry["store_results_in_dvc_experiment"] == [False]

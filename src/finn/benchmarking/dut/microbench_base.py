@@ -158,7 +158,11 @@ class MicrobenchDUT(bench):
         return {
             "dut": cls.NAME,
             "instrumentation_no_dma": True,
+            # results go to the microbenchmark database on the share (the only input of
+            # the QoR model fitting); the per-run DVC experiments of the regression flow
+            # are not needed and dominated the collection time (one git commit per run)
             "store_results_in_dvc_data": True,
+            "store_results_in_dvc_experiment": False,
             # 200 MHz: HLS target, out-of-context synthesis, shell clocking wizard and the
             # frequency the design runs at on the board all follow this value
             "synth_clk_period_ns": 5,
