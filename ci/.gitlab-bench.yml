@@ -125,6 +125,10 @@ Measurement:
     - .venv-collect/bin/pip install --quiet 'dvc[webdav]~=3.67.0' 'dvclive[image]~=3.49.0' 'matplotlib~=3.10.9' 'pyyaml~=6.0'
     # the dvc CLI calls below must come from the same environment
     - export PATH=$PWD/.venv-collect/bin:$PATH
+    # dvc/dulwich keep git pack files open across the per-run experiment saves of the
+    # regression configs; with the default soft limit (1024) a long collection died with
+    # "Too many open files" (first pipeline of 174 runs failed at run 85 resp. 129)
+    - ulimit -n $(ulimit -Hn) || true
 
 Result Collection:
   id_tokens:
