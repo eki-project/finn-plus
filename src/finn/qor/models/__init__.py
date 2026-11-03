@@ -7,6 +7,8 @@ preprocessing pipeline, GridSearchCV selection and pickle persistence unchanged:
 * :class:`TabTransformerRegressor` – FT-Transformer style tabular transformer (needs torch).
 * :class:`SymbolicRegressor` – PySR symbolic regression (needs pysr + Julia to fit, only
   sympy to predict).
+* :class:`TabPFNRegressor` – pre-trained TabPFN foundation model (needs tabpfn + torch and
+  staged weights).
 
 :func:`optional_regressor_grid` lists the grid entries whose runtime dependencies are
 importable (checked via ``importlib.util.find_spec`` so that merely listing the grid never
@@ -18,7 +20,7 @@ import logging
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer, StandardScaler
+from sklearn.preprocessing import FunctionTransformer, OrdinalEncoder, StandardScaler
 from typing import Any, Optional
 
 from finn.qor.models.sklearn_extras import (
@@ -31,6 +33,7 @@ from finn.qor.models.sklearn_extras import (
     signed_log1p,
 )
 from finn.qor.models.symbolic import SymbolicRegressor
+from finn.qor.models.tabpfn import TabPFNRegressor
 from finn.qor.models.transformer import TabTransformerRegressor
 
 __all__ = [
@@ -38,6 +41,7 @@ __all__ = [
     "LogTargetMLPRegressor",
     "LogTargetRegressor",
     "SymbolicRegressor",
+    "TabPFNRegressor",
     "TabTransformerRegressor",
     "OPTIONAL_DEPENDENCIES",
     "dependency_status",
@@ -53,6 +57,7 @@ logger = logging.getLogger(__name__)
 OPTIONAL_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "TabTransformerRegressor": ("torch",),
     "SymbolicRegressor": ("pysr", "sympy"),
+    "TabPFNRegressor": ("tabpfn", "torch"),
 }
 
 
@@ -138,4 +143,30 @@ def optional_regressor_grid(quick: bool = False) -> list[tuple[type, dict[str, l
         )
     else:
         logger.info("SymbolicRegressor not available (%s)", status["SymbolicRegressor"])
+    if status["TabPFNRegressor"] is None:
+        grid.append(
+            (
+                TabPFNRegressor,
+                {
+                    # TabPFN preprocesses its inputs itself: raw numeric features and
+                    # ordinal codes for the categorical ones (declared via
+                    # categorical_features_indices, filled in by the pipeline builder)
+                    "preprocessor__num": [
+                        FunctionTransformer(validate=True, feature_names_out="one-to-one")
+                    ],
+                    "preprocessor__cat": [
+                        OrdinalEncoder(
+                            handle_unknown="use_encoded_value",
+                            unknown_value=-1,
+                            encoded_missing_value=-2,
+                        )
+                    ],
+                    "regressor__n_estimators": [1] if quick else [1, 8],
+                    "regressor__target_transform": ["log1p"] if quick else ["none", "log1p"],
+                    "regressor__random_state": [RANDOM_STATE],
+                },
+            )
+        )
+    else:
+        logger.info("TabPFNRegressor not available (%s)", status["TabPFNRegressor"])
     return grid

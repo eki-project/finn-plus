@@ -470,6 +470,76 @@ QoR Symbolic Regression:
     paths:
       - qor_symbolic_artifacts/
 
+# Pre-trained TabPFN-3.5 (Prior Labs tabular foundation model) as a further QoR regressor:
+# evaluated for the model comparison, not stored as a model (the 3.5 weights are licensed for
+# research only, and predicting needs the 876 MB checkpoint on every machine that loads the
+# model). Manual, and the only QoR job that runs on the cluster: a CPU evaluation takes a day,
+# one GPU does it in well under an hour. The weights are staged by hand in TABPFN_MODEL_DIR
+# (see src/finn/qor/README.md); the job refuses to run without them and never downloads.
+QoR TabPFN:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: qor
+  tags:
+    - otus
+  rules:
+    - if: $BENCH_CFG =~ /^microbenchmark/ || $MANUAL_CFG_PATH =~ /microbenchmark/
+      when: manual
+      allow_failure: true
+  needs:
+    - job: Result Collection
+  # above the Slurm wall time below; the GitLab timer also runs while the job waits in the queue
+  timeout: 3h
+  variables:
+    # One GPU (--gres=gpu:TYPE:COUNT per the PC2 docs) with the CPU share the docs pair with a
+    # GPU (16 cores) and memory for the venv on the RAM disk plus TabPFN's host memory (8 GB
+    # peak measured). Wall time hours:minutes:seconds; no array, one task.
+    QOR_GPU_SLURM_TIMEOUT: "2:00:00"
+    QOR_GPU_CPU_CORES: "16"
+    QOR_GPU_MEM: "64G"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $QOR_GPU_SLURM_PARTITION --gres=$QOR_GPU_SLURM_GRES -t $QOR_GPU_SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $QOR_GPU_CPU_CORES --mem $QOR_GPU_MEM --open-mode=append"
+  # modules of the cluster nodes (Python 3.14 etc.), no Xilinx tools needed
+  extends: .n2_setup_general
+  script:
+    - nvidia-smi || echo "WARNING: nvidia-smi not found, TabPFN will run on the CPU"
+    # Venv on the node's RAM disk like FINN Build, but without the FINN wheel: the fitting
+    # script only needs scikit-learn & co. and imports finn.qor from src/. torch comes from
+    # the PyTorch index with the CUDA 12.6 runtime (same torch version as the FINN venv; the
+    # CUDA 13 build that PyPI's wheel of this version carries needs a newer driver), tabpfn
+    # pulls its own dependencies (lightgbm, skrub, huggingface-hub, pydantic) from PyPI.
+    - |
+      VENV=$PATH_WORKDIR/qor-tabpfn-venv
+      rm -rf "$VENV"
+      trap 'rm -rf "$VENV"' EXIT
+      python3 -m venv "$VENV"
+      "$VENV"/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'sympy~=1.14'
+      "$VENV"/bin/pip install --quiet 'torch==2.12.1+cu126' --extra-index-url https://download.pytorch.org/whl/cu126
+      "$VENV"/bin/pip install --quiet 'tabpfn~=9.2.0'
+      export FINN_MICROBENCHMARK_DATABASE=$OTUS_BENCHMARK_DIR_STORE
+      # the tabpfn package resolves bare checkpoint names against this directory
+      export TABPFN_MODEL_CACHE_DIR=$TABPFN_MODEL_DIR
+      # never start the license/download flow, even if a checkpoint name does not resolve
+      export TABPFN_NO_BROWSER=1
+      "$VENV"/bin/python - <<'PY'
+      import sys, torch, tabpfn
+      sys.path.insert(0, "src")
+      from finn.qor.models.tabpfn import DEFAULT_MODEL_FILE, resolve_device, resolve_model_path
+      path = resolve_model_path(DEFAULT_MODEL_FILE)
+      print(f"tabpfn {tabpfn.__version__}, torch {torch.__version__}, CUDA available: {torch.cuda.is_available()}")
+      if torch.cuda.is_available():
+          print("GPU:", torch.cuda.get_device_name(0))
+      print("device:", resolve_device("auto"), "checkpoint:", path)
+      if path is None:
+          sys.exit(f"ERROR: {DEFAULT_MODEL_FILE} not staged in $TABPFN_MODEL_CACHE_DIR (TABPFN_MODEL_DIR)")
+      PY
+      "$VENV"/bin/python ci/qor/fit_estimators.py --output-dir qor_tabpfn_artifacts --regressors TabPFNRegressor --no-store
+  artifacts:
+    name: "qor_tabpfn_artifacts"
+    when: always
+    paths:
+      - qor_tabpfn_artifacts/
+
 QoR End2End Report:
   id_tokens:
     CI_JOB_JWT:

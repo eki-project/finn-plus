@@ -67,6 +67,15 @@ variables:
   COLLECT_PIPELINE_ID:
     description: "Re-run only Result Collection and the QoR jobs on the exchange directory of this earlier bench child pipeline (the number of its CI_<id> directory), without builds or measurements; set MANUAL_CFG_PATH to the same config"
     value: ""
+  QOR_GPU_SLURM_PARTITION:
+    description: "Slurm GPU partition of the manual QoR TabPFN job (PC2 docs: gpu_a40 = 3x NVIDIA A40 per node, gpu_h100 on Otus; gpu = A100 on Noctua 2)"
+    value: "gpu_a40"
+  QOR_GPU_SLURM_GRES:
+    description: "GPU request of the QoR TabPFN job as --gres=gpu:TYPE:COUNT (TYPE as listed by the PC2 docs: a40, h100, a100)"
+    value: "gpu:a40:1"
+  TABPFN_MODEL_DIR:
+    description: "Directory with the staged TabPFN checkpoint (tabpfn-v3.5-20260909.safetensors) as seen from the cluster; the job never downloads weights"
+    value: "$OTUS_BENCHMARK_DIR_STORE/tabpfn_models"
 
 workflow:
   name: '$PIPELINE_NAME'

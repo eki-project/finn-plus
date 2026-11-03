@@ -35,9 +35,10 @@ finn build ──step_generate_estimate_reports──▶  estimate_layer_resourc
   resource breakdowns).
 - `models/` – additional scikit-learn compatible regressors: log-target gradient boosting
   and MLP (always available), `TabTransformerRegressor` (FT-Transformer style tabular
-  transformer, needs torch) and `SymbolicRegressor` (PySR symbolic regression; needs pysr +
-  Julia to fit, only sympy to predict). `available_regressor_grid()` adds those whose
-  dependencies are importable to the base grid.
+  transformer, needs torch), `SymbolicRegressor` (PySR symbolic regression; needs pysr +
+  Julia to fit, only sympy to predict) and `TabPFNRegressor` (pre-trained TabPFN foundation
+  model; needs tabpfn + torch and staged weights). `available_regressor_grid()` adds those
+  whose dependencies are importable to the base grid.
 - `finn.analysis.fpgadataflow.empirical_qor_estimation` – node-to-feature extractors
   (registered per operator with `@register_node_features`) and the analysis passes
   `empirical_res_estimation` / `empirical_power_estimation` (these are the only parts that
@@ -153,6 +154,7 @@ shows what is available, `--set REGRESSOR.param=JSON` overrides a grid list.
 | `LogTargetHGBRegressor`, `LogTargetMLPRegressor` | scikit-learn | fitted on the sign-preserving log of the target (log-space MSE ≈ relative error); the MLP is the tuned neural baseline |
 | `TabTransformerRegressor` | torch (CPU is enough) | one token per preprocessed column, CLS pooling, early stopping; the pickle stores the weights as numpy arrays, so it is torch-version independent. `torch_threads=1` avoids oversubscription under GridSearchCV. Runs as `preferred_n_jobs=None` (process parallel). |
 | `SymbolicRegressor` | pysr + Julia (fit), sympy (predict) | PySR 2.x with `deterministic=True` (serial); numeric inputs are fed raw so the formula is in feature units, one-hot columns as 0/1 variables; `relative_weights` approximates a relative-error objective. Only the selected expression (sympy `srepr`) and the Pareto front are kept, so inference needs no Julia. The model sidecar gets an `equation` entry (variables, sympy, LaTeX, PySR form, Pareto front) and the fitting job writes `*_equation.md/.tex` and `*_pareto.png`. |
+| `TabPFNRegressor` | tabpfn + torch, staged checkpoint | Prior Labs' pre-trained tabular transformer (default: TabPFN-3.5, 220 M parameters): `fit` only stores the training rows as in-context examples, `predict` is one forward pass over context plus query rows. Grid: ensemble size `n_estimators` {1, 8} and `target_transform` {none, log1p}; the grid replaces the pipeline's preprocessing by raw numeric features and ordinal-encoded categoricals (declared via `categorical_features_indices`, Prior Labs discourages one-hot encoding and scaling). Serial (`preferred_n_jobs=1`, every worker would load the weights). The pickle holds the context, not the weights; after loading, the first prediction re-fits with `fit_mode="fit_with_cache"` (context encoded once, then tens of milliseconds per row). |
 
 Symbolic regression runs in the separate manual CI job `QoR Symbolic Regression` (hours;
 Julia depot cached on the runner in `LOCAL_QOR_JULIA_DEPOT`; the interpreter selected by
@@ -162,6 +164,23 @@ manual job `QoR Transformer`, also without storing models: a single fit on ~6000
 takes 3 to 9 minutes on one CPU core, and its grid needs 80 fits per target. The regular
 `QoR Model Fitting` job therefore skips both and needs neither torch nor PySR; all jobs use
 the same cross-validation splits, so their `*_selection.csv` tables are comparable.
+
+TabPFN runs in the manual job `QoR TabPFN`, the only QoR job on the cluster: a Slurm job with
+one GPU (pipeline variables `QOR_GPU_SLURM_PARTITION`/`QOR_GPU_SLURM_GRES`, default one
+NVIDIA A40; the job prints `nvidia-smi` and the resolved device). Inference cost grows with
+the square of the context size, so the cross-validated grid over all targets takes a day on
+CPUs but well under an hour on one GPU. The job stores no models and only produces the
+selection tables, for two reasons: the TabPFN-3.5 weights are licensed by Prior Labs for
+non-commercial research only (the TabPFN-2 weights are Apache-licensed with attribution),
+and a stored model would need the checkpoint on every machine that loads it. The weights are
+never downloaded by CI: obtain the checkpoint `tabpfn-v3.5-20260909.safetensors` from Prior
+Labs (their license flow) and copy it into the directory named by the pipeline variable
+`TABPFN_MODEL_DIR` (default: a `tabpfn_models/` subdirectory of the microbenchmark database,
+so it travels with the data); the job exports it as `TABPFN_MODEL_CACHE_DIR`, the tabpfn
+package's own setting, and fails early if the file is missing. Locally, set
+`TABPFN_MODEL_CACHE_DIR` and `pip install tabpfn` to run the same evaluation
+(`--regressors TabPFNRegressor --no-store`) or the smoke tests in `tests/qor/test_tabpfn.py`
+(skipped without the package or the weights).
 
 Future work: a graph neural network over the whole dataflow graph (cross-layer effects,
 shell overhead) needs graph-level ground truth beyond the handful of end2end builds and is

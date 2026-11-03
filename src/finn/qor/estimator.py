@@ -261,6 +261,12 @@ class QoREstimator:
                 ("cat", OneHotEncoder(handle_unknown="ignore"), categorical),
             ]
         )
+        if "categorical_features_indices" in regressor.get_params(deep=False):
+            # regressors that handle categorical features natively (TabPFN) get the column
+            # positions after the preprocessor; their grid replaces the one-hot encoder by
+            # an ordinal encoder, so every categorical feature stays one column
+            indices = list(range(len(numeric), len(numeric) + len(categorical)))
+            regressor.set_params(categorical_features_indices=indices)
         return Pipeline([("preprocessor", preprocessor), ("regressor", regressor)])
 
     def rows_with_target(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -558,8 +564,11 @@ def _oof_evaluate(
 
 
 def _single_predict_ms(model: Pipeline, X: pd.DataFrame, repeats: int = 20) -> float:
-    """Median wall time of predicting one sample (the per-node cost in a build), in ms."""
+    """Median wall time of predicting one sample (the per-node cost in a build), in ms. A
+    regressor may cap the repetitions via ``single_predict_repeats`` (TabPFN re-encodes its
+    whole context per call, which takes seconds on a CPU)."""
     row = X.iloc[[0]]
+    repeats = min(repeats, getattr(model[-1], "single_predict_repeats", repeats))
     times = []
     for _ in range(repeats):
         start = time.perf_counter()
