@@ -502,7 +502,7 @@ QoR TabPFN:
   # modules of the cluster nodes (Python 3.14 etc.), no Xilinx tools needed
   extends: .n2_setup_general
   script:
-    - nvidia-smi || echo "WARNING: nvidia-smi not found, TabPFN will run on the CPU"
+    - 'nvidia-smi || echo "WARNING - nvidia-smi not found, TabPFN will run on the CPU"'
     # Venv on the node's RAM disk like FINN Build, but without the FINN wheel: the fitting
     # script only needs scikit-learn & co. and imports finn.qor from src/. torch comes from
     # the PyTorch index with the CUDA 12.6 runtime (same torch version as the FINN venv; the
