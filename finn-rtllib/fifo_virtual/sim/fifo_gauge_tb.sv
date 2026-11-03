@@ -304,7 +304,9 @@ module fifo_gauge_tb;
 				@(posedge clk iff (ocfg == READ_FILL));
 				repeat(2) @(posedge clk)  id   = { id,   ocfg };
 				repeat(4) @(posedge clk)  fill = { fill, ocfg };
-				$display("Retrieved FIFO Fill [%0d] = %0d (-> Size: %0d)", id, fill, fill+1);
+				// READ_FILL reports the peak occupancy since the RUN_BOUNDED command,
+				// which here predates the shrinking of the terminal FIFOs.
+				$display("Retrieved FIFO Peak Fill [%0d] = %0d (-> Size: %0d)", id, fill, fill+1);
 			end
 		join
 		repeat(3*OFM_SIZE) @(posedge clk iff ovld);
@@ -332,7 +334,13 @@ module fifo_gauge_tb;
 				@(posedge clk iff (ocfg == READ_STALL));
 				repeat(2) @(posedge clk)  id  = { id,  ocfg };
 				repeat(4) @(posedge clk)  ret = { ret, ocfg };
-				$display("Retrieved FIFO stall signature [%0d] = %4b", id, ret);
+				$display("Retrieved FIFO stall signature [%0d] = %8b (per frame: %4b, since run: %4b)", id, ret[7:0], ret[3:0], ret[7:4]);
+				// Bits [7:4] accumulate the stall flags since the last RUN_* command:
+				// the input FIFO bounded to 2 elements must have blocked its producer.
+				if(l == 0)  assert(ret[5]) else begin
+					$error("Producer-blocked flag not set for the shrunk FIFO %0d.", l);
+					$stop;
+				end
 			end
 		join
 

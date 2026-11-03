@@ -1808,8 +1808,13 @@ class ZynqBuild(Transformation):
         instrumentation_avg_n: int = 64,
         live_fifo_sizing: bool = False,
         partition_model_dir: Path | str | None = None,
+        instrumentation_steady_state: bool = False,
     ) -> None:
-        """Initialize ZynqBuild with platform and build settings."""
+        """Initialize ZynqBuild with platform and build settings.
+
+        The steady-state registers of the instrumentation wrapper are generated when
+        ``instrumentation_steady_state`` is set or the build does live FIFO sizing.
+        """
         super().__init__()
         self.fpga_part = pynq_part_map[platform]
         self.axi_port_width = pynq_native_port_width[platform]
@@ -1820,6 +1825,7 @@ class ZynqBuild(Transformation):
         self.instrumentation_no_dma = instrumentation_no_dma
         self.instrumentation_avg_n = instrumentation_avg_n
         self.live_fifo_sizing = live_fifo_sizing
+        self.instrumentation_steady_state = instrumentation_steady_state or live_fifo_sizing
         self.partition_model_dir = (
             str(partition_model_dir) if partition_model_dir is not None else None
         )
@@ -1837,7 +1843,10 @@ class ZynqBuild(Transformation):
             if self.instrumentation_no_dma is True or self.live_fifo_sizing is True:
                 prep_transforms = [
                     GenerateInstrumentationIP(
-                        self.fpga_part, self.period_ns, self.instrumentation_avg_n
+                        self.fpga_part,
+                        self.period_ns,
+                        self.instrumentation_avg_n,
+                        steady_state=self.instrumentation_steady_state,
                     ),
                     Floorplan(),
                     CreateDataflowPartition(partition_model_dir=self.partition_model_dir),
@@ -1846,7 +1855,10 @@ class ZynqBuild(Transformation):
                 # DMA & Instrumentation Wrapper Case
                 prep_transforms = [
                     GenerateInstrumentationIP(
-                        self.fpga_part, self.period_ns, self.instrumentation_avg_n
+                        self.fpga_part,
+                        self.period_ns,
+                        self.instrumentation_avg_n,
+                        steady_state=self.instrumentation_steady_state,
                     ),
                     InsertIODMA(self.axi_port_width),
                     InsertDWC(),
