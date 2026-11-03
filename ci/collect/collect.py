@@ -1263,6 +1263,10 @@ if __name__ == "__main__":
                 configuration["target_fps"] = ["None"]
                 configuration["folding_config_file"] = [folding_config_path]
                 configuration["fifo_config_file"] = [fifo_config_path]
+                # The follow-up build has real FIFOs and a normal driver: it must not inherit
+                # the live FIFO sizing experiment config of the measured run (the default
+                # experiment config applies to a build without auto FIFO sizing).
+                configuration.pop("experiments_config", None)
 
                 follow_up_bench_cfg.append(configuration)
 
