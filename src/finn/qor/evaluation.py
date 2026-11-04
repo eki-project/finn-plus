@@ -64,6 +64,7 @@ def plot_regressor_comparison(result: "SelectionResult", out_path: str) -> None:
     # plain arrays for matplotlib: a one-row frame (single regressor) would otherwise hand it
     # single-element Series, on which it calls float() (pandas FutureWarning)
     def col(name: str) -> np.ndarray:
+        """Column ``name`` of the score table as a float array."""
         return scores[name].to_numpy(dtype=float)
 
     fig, axes = plt.subplots(1, 4 if with_timing else 3, figsize=(26 if with_timing else 20, 5))
