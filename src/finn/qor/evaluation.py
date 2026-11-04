@@ -61,20 +61,23 @@ def plot_regressor_comparison(result: "SelectionResult", out_path: str) -> None:
     x = np.arange(len(names))
     with_timing = {"fit_time_s", "single_predict_ms"} <= set(scores.columns)
 
+    # plain arrays for matplotlib: a one-row frame (single regressor) would otherwise hand it
+    # single-element Series, on which it calls float() (pandas FutureWarning)
+    def col(name: str) -> np.ndarray:
+        return scores[name].to_numpy(dtype=float)
+
     fig, axes = plt.subplots(1, 4 if with_timing else 3, figsize=(26 if with_timing else 20, 5))
     ax1, ax2, ax3 = axes[:3]
     best_err = [
-        scores["mean_score"] - scores["min_fold_score"],
-        scores["max_fold_score"] - scores["mean_score"],
+        col("mean_score") - col("min_fold_score"),
+        col("max_fold_score") - col("mean_score"),
     ]
     worst_err = [
-        scores["worst_mean_score"] - scores["worst_min_fold_score"],
-        scores["worst_max_fold_score"] - scores["worst_mean_score"],
+        col("worst_mean_score") - col("worst_min_fold_score"),
+        col("worst_max_fold_score") - col("worst_mean_score"),
     ]
-    ax1.bar(x - 0.2, scores["mean_score"], 0.4, yerr=best_err, capsize=4, label="Best params")
-    ax1.bar(
-        x + 0.2, scores["worst_mean_score"], 0.4, yerr=worst_err, capsize=4, label="Worst params"
-    )
+    ax1.bar(x - 0.2, col("mean_score"), 0.4, yerr=best_err, capsize=4, label="Best params")
+    ax1.bar(x + 0.2, col("worst_mean_score"), 0.4, yerr=worst_err, capsize=4, label="Worst params")
     ax1.set_xticks(x)
     ax1.set_xticklabels(names, rotation=45, ha="right")
     ax1.set_ylabel(f"Mean CV {result.scoring}")
@@ -100,10 +103,10 @@ def plot_regressor_comparison(result: "SelectionResult", out_path: str) -> None:
 
     if with_timing:
         ax4 = axes[3]
-        ax4.bar(x - 0.2, scores["fit_time_s"].clip(lower=1e-4), 0.4, label="Fit time (s)")
+        ax4.bar(x - 0.2, np.clip(col("fit_time_s"), 1e-4, None), 0.4, label="Fit time (s)")
         ax4.bar(
             x + 0.2,
-            (scores["single_predict_ms"] / 1e3).clip(lower=1e-6),
+            np.clip(col("single_predict_ms") / 1e3, 1e-6, None),
             0.4,
             label="Single prediction (s)",
         )
