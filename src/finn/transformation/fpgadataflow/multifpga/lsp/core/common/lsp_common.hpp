@@ -165,23 +165,28 @@ namespace lsp {
             );
         };
 
-        /** Pack a beat for a data frame: the protocol header, followed by the given segments. */
-        template<int... Ws>
+        /** Pack a beat for a data frame: the protocol header (if given), followed by the given segments,
+        * starting at bit `Offset` (e.g. to leave room for Ethernet / Ethernet+UDP headers).
+        * The reference variants only write their own range of `beat` and keep all other bits (e.g. an
+        * already written Ethernet header). The returning variants start from an all-zero beat. */
+        template<int Offset = 0, int... Ws>
+        void packBeat(ap_uint<BEAT_WIDTH>& beat, const lsp::protocol::lsp_header_t& header, const lsp_data_segment_t<Ws>&... segments) {
+            lsp::helpers::packFrom<BEAT_WIDTH, Offset>(beat, header.pack(), segments.pack()...);
+        }
+        template<int Offset = 0, int... Ws>
+        void packBeat(ap_uint<BEAT_WIDTH>& beat, const lsp_data_segment_t<Ws>&... segments) {
+            lsp::helpers::packFrom<BEAT_WIDTH, Offset>(beat, segments.pack()...);
+        }
+        template<int Offset = 0, int... Ws>
         ap_uint<BEAT_WIDTH> packBeat(const lsp::protocol::lsp_header_t& header, const lsp_data_segment_t<Ws>&... segments) {
             ap_uint<BEAT_WIDTH> beat = 0;
-            // TODO: Replace the hardcoded 0 offset with
-            // TODO: a configurable offset to consider Ethernet Header / Ethernet+UDP Headers
-            lsp::helpers::packFrom<BEAT_WIDTH, 0>(beat, header.pack(), segments.pack()...);
+            packBeat<Offset>(beat, header, segments...);
             return beat;
         }
-
-        /** Pack a beat for a data frame without a protocol header, containing only the given segments. */
-        template<int... Ws>
+        template<int Offset = 0, int... Ws>
         ap_uint<BEAT_WIDTH> packBeat(const lsp_data_segment_t<Ws>&... segments) {
             ap_uint<BEAT_WIDTH> beat = 0;
-            // TODO: Replace the hardcoded 0 offset with
-            // TODO: a configurable offset to consider Ethernet Header / Ethernet+UDP Headers
-            lsp::helpers::packFrom<BEAT_WIDTH, 0>(beat, segments.pack()...);
+            packBeat<Offset>(beat, segments...);
             return beat;
         }
 
@@ -381,45 +386,71 @@ namespace lsp {
             "Credit record fields must fill exactly WIDTH bits"
         );
 
-        constexpr int CREDITS_PER_BEAT = constants::BEAT_WIDTH / lsp_credit_record_t::WIDTH;
-        constexpr int CREDITS_PER_HEADER_BEAT =
-            (constants::BEAT_WIDTH - protocol::lsp_header_t::WIDTH) / lsp_credit_record_t::WIDTH;
+        /** Number of credit records that fit into a beat behind `offset` bits, and behind the protocol
+        * header if `withHeader` is set. */
+        constexpr int creditsPerBeat(int offset, bool withHeader) {
+            return (constants::BEAT_WIDTH - offset - (withHeader ? protocol::lsp_header_t::WIDTH : 0))
+                / lsp_credit_record_t::WIDTH;
+        }
 
-        /** Pack credit records into a beat. At most CREDITS_PER_BEAT credits can be sent. `used` gives the actual count
-        * of updated credit records. (used = 3 means 0,1,2 were written) The rest is 0-padded. */
-        inline ap_uint<lsp::constants::BEAT_WIDTH> packBeat(
-            const lsp_credit_record_t (& creditRecords)[CREDITS_PER_BEAT],
+        // Capacities without an offset
+        constexpr int CREDITS_PER_BEAT = creditsPerBeat(0, false);
+        constexpr int CREDITS_PER_HEADER_BEAT = creditsPerBeat(0, true);
+
+        /** Pack credit records into a beat: the protocol header (if given), followed by the records,
+        * starting at bit `Offset` (e.g. to leave room for Ethernet / Ethernet+UDP headers).
+        * At most creditsPerBeat(Offset, withHeader) records fit. `used` gives the actual count of updated
+        * credit records (used = 3 means slots 0-2 are written).
+        * The reference variants only write the header and the used slots and keep all other bits of
+        * `beat`. The returning variants start from an all-zero beat, so unused slots are 0. */
+        template<int Offset = 0>
+        void packBeat(
+            ap_uint<lsp::constants::BEAT_WIDTH>& beat,
+            const lsp_credit_record_t (& creditRecords)[creditsPerBeat(Offset, false)],
             const unsigned int used
         ) {
             constexpr int RW = lsp_credit_record_t::WIDTH;
-            ap_uint<lsp::constants::BEAT_WIDTH> beat = 0;
-            for (unsigned int i = 0; i < CREDITS_PER_BEAT; ++i) {
+            for (unsigned int i = 0; i < creditsPerBeat(Offset, false); ++i) {
 #pragma HLS UNROLL
                 if (i < used) {
-                    beat.range((i + 1) * RW - 1, i * RW) = creditRecords[i].pack();
+                    beat.range(Offset + (i + 1) * RW - 1, Offset + i * RW) = creditRecords[i].pack();
                 }
             }
-            return beat;
         }
-
-        /** Pack credit records into a beat with the protocol header.
-        * At most CREDITS_PER_HEADER_BEAT credits can be sent. `used` gives the actual count
-        * of updated credit records (used = 3 means 0,1,2 were written). The rest is 0-padded. */
-        inline ap_uint<lsp::constants::BEAT_WIDTH> packBeat(
+        template<int Offset = 0>
+        void packBeat(
+            ap_uint<lsp::constants::BEAT_WIDTH>& beat,
             const protocol::lsp_header_t& header,
-            const lsp_credit_record_t (& creditRecords)[CREDITS_PER_HEADER_BEAT],
+            const lsp_credit_record_t (& creditRecords)[creditsPerBeat(Offset, true)],
             const unsigned int used
         ) {
             constexpr int HW = protocol::lsp_header_t::WIDTH;
             constexpr int RW = lsp_credit_record_t::WIDTH;
-            ap_uint<lsp::constants::BEAT_WIDTH> beat = 0;
-            beat.range(HW - 1, 0) = header.pack();
-            for (unsigned int i = 0; i < CREDITS_PER_HEADER_BEAT; ++i) {
+            beat.range(Offset + HW - 1, Offset) = header.pack();
+            for (unsigned int i = 0; i < creditsPerBeat(Offset, true); ++i) {
 #pragma HLS UNROLL
                 if (i < used) {
-                    beat.range(HW + (i + 1) * RW - 1, HW + i * RW) = creditRecords[i].pack();
+                    beat.range(Offset + HW + (i + 1) * RW - 1, Offset + HW + i * RW) = creditRecords[i].pack();
                 }
             }
+        }
+        template<int Offset = 0>
+        ap_uint<lsp::constants::BEAT_WIDTH> packBeat(
+            const lsp_credit_record_t (& creditRecords)[creditsPerBeat(Offset, false)],
+            const unsigned int used
+        ) {
+            ap_uint<lsp::constants::BEAT_WIDTH> beat = 0;
+            packBeat<Offset>(beat, creditRecords, used);
+            return beat;
+        }
+        template<int Offset = 0>
+        ap_uint<lsp::constants::BEAT_WIDTH> packBeat(
+            const protocol::lsp_header_t& header,
+            const lsp_credit_record_t (& creditRecords)[creditsPerBeat(Offset, true)],
+            const unsigned int used
+        ) {
+            ap_uint<lsp::constants::BEAT_WIDTH> beat = 0;
+            packBeat<Offset>(beat, header, creditRecords, used);
             return beat;
         }
 
