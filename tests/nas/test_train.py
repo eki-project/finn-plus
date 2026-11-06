@@ -39,7 +39,7 @@ class TestData:
         x = torch.tensor([0, 128, 255], dtype=torch.uint8)
         out = to_input(x)
         assert out.dtype == torch.float32
-        assert out.min() == 0.0 and out.max() == 1.0
+        assert out.tolist() == [-1.0, 0.0, 127 / 128]
 
     def test_split_is_deterministic_and_disjoint(self) -> None:
         images = torch.arange(100, dtype=torch.uint8)[:, None, None, None].expand(100, 1, 2, 2)

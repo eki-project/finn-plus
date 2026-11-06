@@ -53,13 +53,14 @@ class ImageDataset:
 
 
 def to_input(images: torch.Tensor) -> torch.Tensor:
-    """Convert ``uint8`` images to the network input: float values in [0, 1].
+    """Convert ``uint8`` images to the network input: signed fixed point in [-1, 1).
 
-    No mean/std normalization on purpose: the accelerator then consumes the raw 8 bit pixels
-    (scaled by a power-of-two-free constant that the input quantizer absorbs), and the first
-    layer's quantizer and batch norm take over the role of normalization.
+    Pixel ``p`` becomes ``p / 128 - 1``, i.e. exactly the 8 bit Q1.7 values that the input
+    quantizer of the candidate networks (see ``finn.nas.space.build.input_quantizer``)
+    represents, so the quantizer is lossless and the accelerator consumes the raw pixels. No
+    mean/std normalization on purpose: the first layer's batch norm takes over that role.
     """
-    return images.float().div_(255.0)
+    return images.float().div_(128.0).sub_(1.0)
 
 
 def split_train_val(

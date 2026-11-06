@@ -26,10 +26,16 @@ class TrainConfig:
     epochs: int = 10
     batch_size: int = 256
     #: Peak learning rate of the one-cycle schedule (linear warm-up, cosine decay to zero).
-    lr: float = 2e-3
+    lr: float = 2e-2
     warmup_fraction: float = 0.15
     weight_decay: float = 1e-4
     label_smoothing: float = 0.0
+    #: Scale the logits by a learned scalar before the loss, initialized so that the logits
+    #: of the first batch have unit standard deviation. The candidate networks have constant
+    #: quantizer scales and no output normalization, so their raw logits are arbitrarily
+    #: large and would saturate the softmax; the scalar is not part of the network and does
+    #: not change its predictions (argmax).
+    logit_scale: bool = True
     augment: bool = True
     seed: int = 0
     #: Stop early once this wall-clock budget is exceeded (checked after each epoch).
@@ -68,6 +74,18 @@ def lr_at(step: int, total_steps: int, cfg: TrainConfig) -> float:
         return cfg.lr * (step + 1) / warmup
     progress = (step - warmup) / max(1, total_steps - warmup)
     return cfg.lr * 0.5 * (1.0 + math.cos(math.pi * min(1.0, progress)))
+
+
+def _initial_logit_scale(
+    model: torch.nn.Module, dataset: ImageDataset, batch_size: int, device: torch.device
+) -> torch.nn.Parameter:
+    """Return a learnable scalar that standardizes the logits of one training batch."""
+    model.train()
+    with torch.no_grad():
+        x = to_input(dataset.train_x[:batch_size].to(device))
+        std = float(model(x).float().std())
+    value = 1.0 / std if math.isfinite(std) and std > 1e-6 else 1.0
+    return torch.nn.Parameter(torch.tensor(value, device=device))
 
 
 @torch.no_grad()
@@ -113,7 +131,12 @@ def train(
         model.to(device)
         torch.manual_seed(cfg.seed)
         generator = torch.Generator(device=dataset.train_x.device).manual_seed(cfg.seed)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+        param_groups: list[dict[str, Any]] = [{"params": list(model.parameters())}]
+        scale = None
+        if cfg.logit_scale:
+            scale = _initial_logit_scale(model, dataset, cfg.batch_size, device)
+            param_groups.append({"params": [scale], "weight_decay": 0.0})
+        optimizer = torch.optim.AdamW(param_groups, lr=cfg.lr, weight_decay=cfg.weight_decay)
         loss_fn = torch.nn.CrossEntropyLoss(label_smoothing=cfg.label_smoothing)
         n = dataset.train_x.shape[0]
         steps_per_epoch = max(1, math.ceil(n / cfg.batch_size))
@@ -134,7 +157,10 @@ def train(
                 y = dataset.train_y[idx].to(device)
                 for group in optimizer.param_groups:
                     group["lr"] = lr_at(step, total_steps, cfg)
-                loss = loss_fn(model(x), y)
+                logits = model(x)
+                if scale is not None:
+                    logits = logits * scale
+                loss = loss_fn(logits, y)
                 if not torch.isfinite(loss):
                     result.diverged = True
                     break

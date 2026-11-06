@@ -156,6 +156,8 @@ add whose branches both have scale 1, and the untrained-BatchNorm case above.
 - `cli.py` – summary printing and exit codes behind `finn nas eval` (the command itself is
   defined in `finn.interface.run_finn`).
 - `logcapture.py` – collects FINN log warnings during an evaluation.
+- `space/` – the grammar-based search space (genotypes, shape inference, sampling, mutation,
+  crossover, seeds, Brevitas module construction); see its README.
 - `zc/` – zero-cost proxies vendored from NASLib and adapted to Brevitas networks (see its
   README for provenance, per-measure notes and the default measure list).
 - `data.py` / `train.py` – CIFAR-10 as device tensors and a short QAT training loop with a
