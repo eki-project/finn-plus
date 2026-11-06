@@ -39,6 +39,9 @@ from finn.transformation.fpgadataflow.convert_to_hw.binary_matrix_vector_activat
 )
 from finn.transformation.fpgadataflow.convert_to_hw.concat import InferConcatLayer
 from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.duplicate_streams import (
+    InferDuplicateStreamsLayer,
+)
 from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
     InferElementwiseBinaryOperation,
 )
@@ -56,7 +59,6 @@ from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThr
 from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
     InferVectorVectorActivation,
 )
-from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
 
 # Reuse FINN auto-folding functionality to build folding of attention operators
 from finn.transformation.fpgadataflow.set_folding import (
@@ -71,7 +73,7 @@ from finn.transformation.streamline.absorb import AbsorbConsecutiveTransposes
 
 # FINN Streamlining transformations still required during hardware conversion
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.util.exception import FINNUserError
+from finn.util.exception import FINNInternalError, FINNUserError
 
 if TYPE_CHECKING:
     from finn.custom_op.fpgadataflow.hls.attention_hls import ScaledDotProductAttention_hls
@@ -160,9 +162,9 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
     # Any remaining reshape operator must be implemented to keep the graph valid
     # while also not breaking the chain of FINN operators.
     model = model.transform(InferReshape())
-    # Explicitly replicate stream connections between layers as hardware does
-    # not allow multiple consumer of a single AXI stream.
-    model = model.transform(InferReplicateStream())
+    # Explicitly duplicate stream connections between layers as hardware does
+    # not allow multiple consumers of a single AXI stream.
+    model = model.transform(InferDuplicateStreamsLayer())
 
     # Cleanup the graph after hardware conversion by redoing type and shape
     # inference. There is also more potential for rounding thresholds after
@@ -362,7 +364,8 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
 
         for _index, node in enumerate(model.graph.node):
             # A node should not be named "defaults"...
-            assert node.name != "defaults", "Node has reserved name 'defaults'"
+            if not (node.name != "defaults"):
+                raise FINNInternalError("Node has reserved name 'defaults'")
             # Convert this to the custom-op instance for easy access to node
             # attributes
             inst = getCustomOp(node)
