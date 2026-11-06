@@ -165,6 +165,8 @@ add whose branches both have scale 1, and the untrained-BatchNorm case above.
   crossover, seeds, Brevitas module construction); see its README.
 - `zc/` – zero-cost proxies vendored from NASLib and adapted to Brevitas networks (see its
   README for provenance, per-measure notes and the default measure list).
+- `search.py` – NSGA-II over genotypes on top of Optuna (sampler subclass, constrained dominance,
+  Pareto/hypervolume helpers); `experiments/` – the drivers behind `finn nas sample|search|groundtruth`.
 - `data.py` / `train.py` – CIFAR-10 as device tensors and a short QAT training loop with a
   robust default recipe, for proxy ground truth and for training selected candidates.
 

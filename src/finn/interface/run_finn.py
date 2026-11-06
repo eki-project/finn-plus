@@ -1446,7 +1446,7 @@ def nas_eval(
         timeout,
         cache_path,
         keep_artifacts,
-        Path("."),  # replaced below once the settings are known
+        Path(),  # replaced below once the settings are known
     )
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
@@ -1478,7 +1478,7 @@ def nas_eval(
 @skip_dep_update
 @batch
 @oracle_options
-@click.option("--count", "-n", type=int, default=100, show_default=True, help="Samples to draw.")
+@click.option("--count", type=int, default=100, show_default=True, help="Samples to draw.")
 @click.option("--seed", type=int, default=0, show_default=True, help="Random seed.")
 @click.option(
     "--space-config",
@@ -1609,6 +1609,316 @@ def nas_sample(
     sys.exit(0)
 
 
+@click.command(
+    name="search",
+    help="Run a multi-objective search (NSGA-II or random) over the NAS search space with the "
+    "oracle in the loop and write the Optuna study, the records and a summary into OUTPUT_DIR. "
+    "Re-running with a larger --budget resumes the study.",
+)
+@finn_deps
+@finn_deps_definitions
+@finn_build_dir
+@num_default_workers
+@skip_dep_update
+@batch
+@oracle_options
+@click.option("--budget", type=int, default=1000, show_default=True, help="Total number of trials.")
+@click.option(
+    "--population", type=int, default=50, show_default=True, help="Trials per generation."
+)
+@click.option(
+    "--algorithm",
+    type=click.Choice(["nsga2", "random"]),
+    default="nsga2",
+    show_default=True,
+    help="Search algorithm.",
+)
+@click.option(
+    "--feasibility",
+    type=click.Choice(["constraint", "discard"]),
+    default="constraint",
+    show_default=True,
+    help="How infeasible candidates are fed back: as constraint-violating trials that stay in "
+    "the population, or discarded without any feedback.",
+)
+@click.option(
+    "--violation",
+    type=click.Choice(["binary", "graded"]),
+    default="graded",
+    show_default=True,
+    help="Constraint violation of an infeasible candidate: 1.0 for all, or graded by how far "
+    "it got through the oracle pipeline.",
+)
+@click.option(
+    "--proxy", default="nwot", show_default=True, help="Zero-cost proxy used as objective."
+)
+@click.option(
+    "--objectives",
+    default="proxy,LUT,BRAM,cycles",
+    show_default=True,
+    help="Comma separated objectives from proxy, LUT, BRAM, URAM, DSP, cycles.",
+)
+@click.option("--mutation-prob", type=float, default=0.3, show_default=True)
+@click.option("--crossover-prob", type=float, default=0.9, show_default=True)
+@click.option("--seed", type=int, default=0, show_default=True, help="Random seed.")
+@click.option(
+    "--space-config",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="JSON file with search space settings (finn.nas.space.SpaceConfig); the default "
+    "space if omitted.",
+)
+@click.option(
+    "--workers", "-w", type=int, default=4, show_default=True, help="Parallel evaluation processes."
+)
+@click.option(
+    "--proxies/--no-proxies",
+    default=True,
+    show_default=True,
+    help="Also compute the zero-cost proxies (needs --data-root; required for the proxy "
+    "objective).",
+)
+@click.option(
+    "--data-root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="CIFAR-10 directory (downloaded on first use) for the proxy minibatch.",
+)
+@click.option(
+    "--proxy-batch", type=int, default=64, show_default=True, help="Minibatch size for proxies."
+)
+@click.option(
+    "--eval-timeout",
+    type=float,
+    default=300.0,
+    show_default=True,
+    help="Time limit per candidate inside a worker, in seconds.",
+)
+@click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
+def nas_search(
+    finn_deps: Path | None,
+    finn_deps_definitions: Path | None,
+    finn_build_dir: Path | None,
+    num_default_workers: int,
+    skip_dep_update: bool,
+    batch: bool,
+    fpga_part: str | None,
+    board: str | None,
+    clk_period_ns: float,
+    target_fps: int | None,
+    folding_config: Path | None,
+    require_target_met: bool,
+    strict_codegen: bool,
+    timeout: float | None,
+    cache_path: Path | None,
+    keep_artifacts: str,
+    budget: int,
+    population: int,
+    algorithm: str,
+    feasibility: str,
+    violation: str,
+    proxy: str,
+    objectives: str,
+    mutation_prob: float,
+    crossover_prob: float,
+    seed: int,
+    space_config: Path | None,
+    workers: int,
+    proxies: bool,
+    data_root: Path | None,
+    proxy_batch: int,
+    eval_timeout: float,
+    output_dir: Path,
+) -> None:
+    """Multi-objective search experiment over the NAS search space."""
+    output_dir = output_dir.expanduser().absolute()
+    objective_names = [o.strip() for o in objectives.split(",") if o.strip()]
+    if proxies and data_root is None:
+        raise click.UsageError("--proxies needs --data-root (or pass --no-proxies).")
+    if "proxy" in objective_names and not proxies:
+        raise click.UsageError('The "proxy" objective needs --proxies (and --data-root).')
+    if finn_build_dir is not None:
+        finn_build_dir = finn_build_dir.expanduser().absolute()
+        finn_build_dir.mkdir(parents=True, exist_ok=True)
+    if finn_deps is not None:
+        finn_deps = finn_deps.expanduser().absolute()
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
+    oracle = make_oracle_config(
+        fpga_part,
+        board,
+        clk_period_ns,
+        target_fps,
+        folding_config,
+        require_target_met,
+        strict_codegen,
+        timeout,
+        cache_path,
+        keep_artifacts,
+        output_dir / "work",
+    )
+    settings = FINNSettings.init(
+        auto_set_environment_vars=True,
+        automatic_dependency_updates=not skip_dep_update,
+        flow_config=output_dir / "dummy.yaml",
+        **get_function_args(),
+    )
+    prepare_finn(settings, True, batch)
+    Console().rule("[bold cyan]Searching the NAS search space[/bold cyan]")
+
+    # Late imports because we need prepare_finn to setup remaining dependencies first
+    from finn.nas.evaluate import EvaluatorConfig
+    from finn.nas.experiments.search import run_search
+    from finn.nas.search import SearchConfig
+    from finn.nas.space import SpaceConfig
+
+    try:
+        search = SearchConfig(
+            algorithm=algorithm,  # type: ignore[arg-type]
+            population_size=population,
+            budget=budget,
+            objectives=objective_names,
+            proxy=proxy,
+            feasibility=feasibility,  # type: ignore[arg-type]
+            violation=violation,  # type: ignore[arg-type]
+            mutation_prob=mutation_prob,
+            crossover_prob=crossover_prob,
+            seed=seed,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    space = (
+        SpaceConfig.from_dict(json.loads(space_config.read_text()))
+        if space_config is not None
+        else SpaceConfig()
+    )
+    batch_tensors = None
+    if proxies:
+        from finn.nas.data import load_cifar10
+        from finn.nas.data import proxy_batch as draw_proxy_batch
+
+        dataset = load_cifar10(data_root, device="cpu")
+        batch_tensors = draw_proxy_batch(dataset, proxy_batch, seed=seed)
+    evaluator = EvaluatorConfig(
+        oracle=oracle,
+        compute_proxies=proxies,
+        timeout_s=eval_timeout,
+    )
+    summary = run_search(
+        space,
+        evaluator,
+        search,
+        output_dir,
+        n_workers=workers,
+        proxy_batch=batch_tensors,
+        progress=status,
+    )
+    # The front and the per-generation tables are long; the files hold the details.
+    rich.print(
+        {
+            k: v
+            for k, v in summary.items()
+            if k not in ("pareto_front", "generations", "evaluations", "hypervolume")
+        }
+    )
+    rich.print({"generations": summary["generations"]})
+    sys.exit(0)
+
+
+@click.command(
+    name="groundtruth",
+    help="Train a selection of the feasible candidates of a sampling run (records in "
+    "RECORDS_DIR) with the shared short recipe and correlate every zero-cost proxy with the "
+    "validation accuracy. Writes the training records and the correlations into OUTPUT_DIR; "
+    "re-running continues an interrupted run.",
+)
+@finn_deps
+@finn_deps_definitions
+@finn_build_dir
+@num_default_workers
+@skip_dep_update
+@batch
+@click.option("--count", type=int, default=50, show_default=True, help="Candidates to train.")
+@click.option(
+    "--selection",
+    type=click.Choice(["stratified", "first"]),
+    default="stratified",
+    show_default=True,
+    help="Evenly spaced over the size range, or the first feasible records.",
+)
+@click.option("--epochs", type=int, default=10, show_default=True)
+@click.option("--lr", type=float, default=None, help="Peak learning rate (default: recipe).")
+@click.option("--batch-size", type=int, default=256, show_default=True)
+@click.option("--seed", type=int, default=0, show_default=True)
+@click.option(
+    "--data-root",
+    type=click.Path(path_type=Path),
+    required=True,
+    help="CIFAR-10 directory (downloaded on first use).",
+)
+@click.option("--device", default=None, help="Torch device (default: cuda if available).")
+@click.argument("records_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
+def nas_groundtruth(
+    finn_deps: Path | None,
+    finn_deps_definitions: Path | None,
+    finn_build_dir: Path | None,
+    num_default_workers: int,
+    skip_dep_update: bool,
+    batch: bool,
+    count: int,
+    selection: str,
+    epochs: int,
+    lr: float | None,
+    batch_size: int,
+    seed: int,
+    data_root: Path,
+    device: str | None,
+    records_dir: Path,
+    output_dir: Path,
+) -> None:
+    """Proxy ground-truth experiment: train sampled candidates and correlate."""
+    output_dir = output_dir.expanduser().absolute()
+    records_dir = records_dir.expanduser().absolute()
+    if finn_build_dir is not None:
+        finn_build_dir = finn_build_dir.expanduser().absolute()
+        finn_build_dir.mkdir(parents=True, exist_ok=True)
+    if finn_deps is not None:
+        finn_deps = finn_deps.expanduser().absolute()
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
+    settings = FINNSettings.init(
+        auto_set_environment_vars=True,
+        automatic_dependency_updates=not skip_dep_update,
+        flow_config=output_dir / "dummy.yaml",
+        **get_function_args(),
+    )
+    prepare_finn(settings, True, batch)
+    Console().rule("[bold cyan]Training sampled candidates[/bold cyan]")
+
+    # Late imports because we need prepare_finn to setup remaining dependencies first
+    import torch
+
+    from finn.nas.data import load_cifar10
+    from finn.nas.experiments.ground_truth import GroundTruthConfig, run_ground_truth
+    from finn.nas.experiments.sampling import RECORDS_FILE
+    from finn.nas.train import TrainConfig
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    train_cfg = TrainConfig(epochs=epochs, batch_size=batch_size, seed=seed)
+    if lr is not None:
+        train_cfg.lr = lr
+    config = GroundTruthConfig(count=count, selection=selection, seed=seed, train=train_cfg)
+    dataset = load_cifar10(data_root, device=device)
+    records = records_dir / RECORDS_FILE
+    if not records.exists():
+        records = records_dir / "records.jsonl"
+    summary = run_ground_truth(records, output_dir, config, dataset, device, progress=status)
+    rich.print(summary)
+    sys.exit(0)
+
+
 def main() -> None:
     """Clicks entrypoint function."""
     # May replace the process image, so keep it first to not redo any work.
@@ -1634,6 +1944,8 @@ def main() -> None:
     main_group.add_command(finn_check)
     nas.add_command(nas_eval)
     nas.add_command(nas_sample)
+    nas.add_command(nas_search)
+    nas.add_command(nas_groundtruth)
     main_group.add_command(nas)
     try:
         main_group()
