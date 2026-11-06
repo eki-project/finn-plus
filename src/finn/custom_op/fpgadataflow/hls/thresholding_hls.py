@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any, cast
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.memstream import MemStreamOp
 from finn.custom_op.fpgadataflow.thresholding import Thresholding
 from finn.util.basic import get_vivado_version, is_versal
 from finn.util.data_packing import (
@@ -69,7 +70,7 @@ if TYPE_CHECKING:
 
 
 @register_custom_op
-class Thresholding_hls(Thresholding, HLSBackend):
+class Thresholding_hls(Thresholding, HLSBackend, MemStreamOp):
     """Class that corresponds to finn-hls Thresholding_Batch function."""
 
     def __init__(self, onnx_node: NodeProto, **kwargs: Any) -> None:
@@ -110,9 +111,14 @@ class Thresholding_hls(Thresholding, HLSBackend):
             # weight data from the weight FIFOs.
             "runtime_writeable_weights": ("i", False, 0, {0, 1}),
         }
+        my_attrs.update(MemStreamOp.get_nodeattr_types(self))
         my_attrs.update(Thresholding.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
+
+    def memstream_depth(self) -> int:
+        """Return the threshold words of one set (TMEM)."""
+        return self.calc_tmem()
 
     def _threshold_mem_width(self) -> int:
         """Return the bit width of one threshold memory word (PE * threshold bits * numSteps)."""

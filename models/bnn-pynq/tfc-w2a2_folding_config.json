@@ -1,5 +1,5 @@
 {
-  "Defaults": {},
+  "Defaults": {"ram_cascade_height": [0, ["MVAU_hls"]]},
   "Reshape_rtl_0": {
     "PE": 28
   },

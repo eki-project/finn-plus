@@ -33,6 +33,7 @@ from abc import abstractmethod
 from numpy.typing import NDArray
 
 from finn.util.exception import FINNInternalError
+from finn.util.logging import log
 
 # contains the amount of available FPGA resources for several
 # Xilinx platforms, as well as certain resource limit guidelines
@@ -86,6 +87,7 @@ class Platform:
         eth_slr: int = 0,
         eth_gbps: int = 0,
         qsfp_slr: str | None = None,
+        pcie_slr: int | None = None,
         limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
         avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
     ) -> None:
@@ -102,6 +104,10 @@ class Platform:
         self.hbm_slr = hbm_slr
         self.ddr_slr = ddr_slr
         self.qsfp_slr = qsfp_slr
+        # SLR hosting the PCIe/XDMA shell interface, i.e. the SLR with a direct
+        # connection to host memory. None means "not confirmed for this board";
+        # use get_pcie_slr() rather than reading this attribute directly.
+        self.pcie_slr = pcie_slr
         # limits must be a np.array either of
         # the same shape as compute_resources
         # or broadcastable to it
@@ -224,6 +230,26 @@ class Platform:
                 )
             constraints.append(constraints_line)
         return constraints
+
+    def get_pcie_slr(self) -> int:
+        """Return the SLR that hosts the PCIe/XDMA shell interface.
+
+        This is the anchor target for nodes whose external memory is host memory
+        (`FpgaMemoryType.HOST_MEM`) rather than on-card HBM/DDR.
+
+        Boards whose shell layout has not been confirmed leave `pcie_slr` unset; for
+        those, SLR 0 is returned as a documented fallback, with a warning on multi-SLR
+        parts (on a single-SLR part there is nothing to choose, so no warning).
+        """
+        if self.pcie_slr is not None:
+            return self.pcie_slr
+        if self.nslr > 1:
+            log.warning(
+                "No confirmed PCIe/host-memory SLR is recorded for this platform; "
+                "falling back to SLR 0 for host-memory anchoring. Placement may be "
+                "suboptimal until the board's shell layout is confirmed and pcie_slr is set."
+            )
+        return 0
 
     def map_device_to_slr(self, idx: int) -> tuple[int, int]:
         """Map a global SLR index to (local_slr, device_id)."""
@@ -501,6 +527,7 @@ class Alveo_NxU280_Platform(Platform):
             eth_slr=2,
             eth_gbps=100,
             qsfp_slr="SLR2",
+            pcie_slr=0,
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -540,6 +567,7 @@ class Alveo_NxU55C_Platform(Platform):
             eth_slr=1,
             eth_gbps=100,
             qsfp_slr="SLR1",
+            pcie_slr=0,
             limits=limits,
             avg_constraints=avg_constraints,
         )

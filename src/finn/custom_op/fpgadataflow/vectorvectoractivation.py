@@ -50,7 +50,8 @@ from qonnx.util.basic import (
 from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.memstream import MemStreamOp
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
@@ -61,7 +62,7 @@ if TYPE_CHECKING:
 
 
 @register_custom_op
-class VVAU(HWCustomOp):
+class VVAU(MemStreamOp):
     """Abstraction layer for HW implementation of VectorVectorActivation layers."""
 
     def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
@@ -359,6 +360,10 @@ class VVAU(HWCustomOp):
         ch = self.channels
         k_h, k_w = self.kernel
         return (k_h * k_w * ch // self.pe) // self.simd
+
+    def memstream_depth(self) -> int:
+        """Return the weight words of one set (WMEM)."""
+        return self.calc_wmem()
 
     def calc_tmem(self) -> int:
         """Calculate and return TMEM."""
