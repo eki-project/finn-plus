@@ -7,10 +7,23 @@
 #include <hls_stream.h>
 #include <tuple>
 #include <utility>
+#include <algorithm>
+#include <type_traits>
 
 #define AP_WIDTH(x) (decltype(x)::width)
 
 namespace lsp {
+
+    /** Ceiling of log2(n): the number of bits needed to tell n different values apart
+    * (clog2(1) == 0). To store the value n itself, use clog2(n + 1). */
+    constexpr int clog2(unsigned long long n) {
+        int bits = 0;
+        while ((1ULL << bits) < n) ++bits;
+        return bits;
+    }
+    static_assert(clog2(1) == 0 && clog2(2) == 1 && clog2(8) == 3 && clog2(9) == 4, "clog2 is broken");
+
+
     namespace constants {
         // CONSTANTS
 
@@ -24,7 +37,7 @@ namespace lsp {
         constexpr unsigned int CHUNK_SIZE_BITS = 64;
         constexpr unsigned int CHUNK_SIZE_BYTES = CHUNK_SIZE_BITS / 8;
         constexpr int CHUNKS_PER_BEAT = BEAT_WIDTH / CHUNK_SIZE_BITS;
-        constexpr int CHUNK_INDEX_WIDTH = 3;  // log2(CHUNKS_PER_BEAT)
+        constexpr int CHUNK_INDEX_WIDTH = clog2(CHUNKS_PER_BEAT);
         static_assert(
             (1 << CHUNK_INDEX_WIDTH) == CHUNKS_PER_BEAT,
             "CHUNK_INDEX_WIDTH must be log2(CHUNKS_PER_BEAT)"
@@ -46,6 +59,7 @@ namespace lsp {
             for (int w : widths) sum += w;
             return sum;
         }
+
 
         /** Base case of `packFrom`: nothing left to pack. */
         template<int BW, int Offset>
@@ -74,6 +88,20 @@ namespace lsp {
 
 
     }
+
+    /** A debug struct that can be switched on at comptime. */
+    template<bool Debug> struct lsp_stat_counters_t;
+    template <> struct lsp_stat_counters_t<true> {
+        void countZeroChunkSegment() {
+            zeroChunkSegments++;
+        }
+
+        private:
+        ap_uint<64> zeroChunkSegments = 0;
+    };
+    template <> struct lsp_stat_counters_t<false> {
+        void countZeroChunkSegment() {}
+    };
 
     namespace protocol {
         // PROTOCOL HEADER - Found on every frame
@@ -265,6 +293,13 @@ namespace lsp {
             // Flag to see if the data was read yet
             bool read[sizeof...(Ws)];
 
+            // Initialize all read fields to true, so that data can be overwritten at the start.
+            lsp_segment_set_t() {
+                for (size_t i = 0; i < sizeof...(Ws); i++) {
+                    read[i] = true;
+                }
+            }
+
             /** Write the correct data segment. This is useful to narrow down the size from BEAT width
             to the actual width. Every stream on the user kernel has one matching lsp data segment. */
             void set(const lsp_data_segment_t<BEAT_WIDTH>& data) {
@@ -311,6 +346,16 @@ namespace lsp {
         };
 
 
+        /** Helper to determine the result of a ring buffer update. */
+        enum class lsp_stream_ring_buffer_update_result : unsigned char {
+            SEGMENT_READ,
+            SENDER_BLOCKED,
+            OUTDATED_SEGMENT,
+            BUFFER_FULL,
+            INVALID_CHUNK_BYTEMASK,
+            UNEXPECTED_ERROR
+        };
+
         /**  Ring buffer that can store arriving packets. It has two jobs:
 
         1) FIFO Sizing (FINN internal) takes care of sizing FIFOs so that no performance degradation
@@ -323,10 +368,14 @@ namespace lsp {
         */
         template<size_t StreamIndex, int StreamWidth, size_t Depth>
         struct lsp_stream_ring_buffer_t {
+            static_assert(StreamWidth % 8 == 0, "The stream widths must be multiples full bytes!");
+            static constexpr int PointerWidth = clog2(Depth + 1);
+
             ap_uint<StreamWidth> buffer[Depth];
-            size_t readPointer = 0;
-            size_t writePointer = 0;
-            size_t inWordPointer = 0;
+            ap_uint<PointerWidth> readPointer = 0;
+            ap_uint<PointerWidth> writePointer = 0;
+            ap_uint<PointerWidth> bufferSize = 0;      // Current usage. Not capacity.
+            ap_uint<clog2(StreamWidth + 1)> inWordPointer = 0;
 
             // ap_uint's default constructor leaves the value uninitialized, so `= {}` would not zero it
             lsp_stream_ring_buffer_t() {
@@ -337,20 +386,126 @@ namespace lsp {
 
             /**
             Update the ring buffer with the data.
-            The read/writes are BLOCKING - the credit system should prevent cases
-            in which the receiver cannot accept data.
+            If there is no space in the buffer, this does nothing.
+            The caller should update all ring buffers always from the set,
+            as soon as new data arrives it is buffered. If there is no space the
+            data does not get invalidated.
             */
-            void updateFrom(const lsp_data_segment_t<StreamWidth>& segment) {
+            template<int... Ws>
+            lsp_stream_ring_buffer_update_result updateFrom(lsp_segment_set_t<Ws...>& set) {
+                static_assert(StreamIndex < sizeof...(Ws), "Stream index out of range for segment set.");
+                auto& segment = std::get<StreamIndex>(set.segments);
 
+                // Figure out how wide a pointer into the segments payload needs to be
+                constexpr size_t PAYLOAD_WIDTH = std::remove_reference_t<decltype(segment)>::PAYLOAD_WIDTH;
+                constexpr size_t SegmentPointerWidth = clog2(PAYLOAD_WIDTH + 1);
 
+                // Only append if this segment wasn't read yet
+                if (!set.read[StreamIndex]) {
+                    if (segment.chunks == 0) {
+                        // According to spec this indicates a BLOCKED message from the sender,
+                        // requiring a credit update.
+                        set.read[StreamIndex] = true;
+                        return lsp_stream_ring_buffer_update_result::SENDER_BLOCKED;
+                    }
+                    if (bufferSize != Depth) {
+                        // Calculate the number of bits to read:
+                        // Chunks * CHUNK_SIZE, then a number of bytes determined by the validBytesLastChunk field
+                        size_t bitsToRead = (
+                            (segment.chunks - 1) * constants::CHUNK_SIZE_BITS
+                            + segment.validBytesLastChunk * 8
+                        );
 
-                // TODO
+                        // Some safety checks
+                        if (segment.validBytesLastChunk > 8 || segment.validBytesLastChunk < 1) {
+                            set.read[StreamIndex] = true;
+                            return lsp_stream_ring_buffer_update_result::INVALID_CHUNK_BYTEMASK;
+                        }
+                        if (bitsToRead > PAYLOAD_WIDTH) {
+                            set.read[StreamIndex] = true;
+                            return lsp_stream_ring_buffer_update_result::UNEXPECTED_ERROR;
+                        }
 
+                        // For space computation
+                        const size_t expectedWordsToRead = ((inWordPointer + bitsToRead) + StreamWidth - 1) / StreamWidth;
+                        // Form comptime loop unrolling
+                        constexpr size_t MaxWordsToRead = (PAYLOAD_WIDTH + StreamWidth - 1) / StreamWidth + 1;
 
+                        if (expectedWordsToRead > (Depth - bufferSize)) {
+                            // No space to write all words, so for now return and wait until
+                            // enough words can be written at once.
+                            // IMPORTANT: This should never happen because the credit system should
+                            // prevent the sender from emitting too many frames.
+                            return lsp_stream_ring_buffer_update_result::BUFFER_FULL;
+                        }
 
+                        // We have enough space to write all words, so we can simply advance the pointer
+                        // as much as required.
+                        ap_uint<SegmentPointerWidth> inSegmentPointer = 0;
+                        for (size_t it = 0; it < MaxWordsToRead; it++) {
+#pragma HLS PIPELINE II=1
+                            // If more than the rest of the word is left write exactly that much.
+                            // If less is left just write and advance the pointer.
+                            size_t toWrite = std::min<size_t>(StreamWidth - inWordPointer, bitsToRead);
+                            buffer[writePointer].range(
+                                inWordPointer + toWrite - 1, inWordPointer
+                            ) = segment.payload.range(
+                                inSegmentPointer + toWrite - 1, inSegmentPointer
+                            );
+
+                            // Always move the inSegmentPointer
+                            inSegmentPointer += toWrite;
+
+                            // Only move the writePointer if we crossed a word boundary
+                            if (inWordPointer + toWrite >= StreamWidth) {
+                                // Avoid modulo here (HLS)
+                                if (++writePointer == Depth) {
+                                    writePointer = 0;
+                                }
+
+                                // We can advance without a check because we already
+                                // saw above that there is enough space.
+                                bufferSize++;
+                            }
+
+                            // Always move the inWordPointer, regardless of word boundaries
+                            // Avoid modulo here (HLS)
+                            inWordPointer += toWrite;
+                            if (inWordPointer > StreamWidth - 1) {
+                                inWordPointer -= StreamWidth;
+                            }
+
+                            // Update bits to read
+                            bitsToRead -= toWrite;
+
+                            // Jump out if we are done
+                            if (bitsToRead == 0) {
+                                break;
+                            }
+                        }
+                        // Only if all words in that segment were written do we mark it as read
+                        set.read[StreamIndex] = true;
+                        return lsp_stream_ring_buffer_update_result::SEGMENT_READ;
+                    }
+                    return lsp_stream_ring_buffer_update_result::BUFFER_FULL;
+                }
+                return lsp_stream_ring_buffer_update_result::OUTDATED_SEGMENT;
             }
 
-
+            /** Try to write into the user stream. The write is blocking: we can only continue if
+            there is data, and if it is in order. */
+            template<int D>
+            void tryReadIntoStream(hls::stream<ap_uint<StreamWidth>, D>& stream) {
+                // Only read if the read pointer looks at valid data
+                if (bufferSize > 0) {
+                    stream.write(buffer[readPointer]);
+                    // Increment and wrap, avoid modulo
+                    if (++readPointer == Depth) {
+                        readPointer = 0;
+                    }
+                    bufferSize--;
+                }
+            }
         };
 
     }
