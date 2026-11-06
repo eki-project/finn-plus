@@ -21,6 +21,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - The HLS/TCL code-generation templates moved from `finn.custom_op.fpgadataflow.templates` to files in `src/finn/templates/codegen/`, loaded with `finn.templates.load_codegen_template` (eki-project#299)
 
 ### Fixed
+- `finn build` and `finn auto` exit with code 1 when the build fails, instead of always exiting with 0; the failure was only visible in the log and in `report/metadata_builder.json`. The README describes the current `finn` commands, and the help of `finn settings create` names `finn wizard settings` instead of the non-existent `finn wizard config`
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
 - (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)
 - RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate at the cost of a slightly larger buffer (eki-project#290)
