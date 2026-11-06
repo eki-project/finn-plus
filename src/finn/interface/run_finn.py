@@ -1945,23 +1945,48 @@ def nas_groundtruth(
     default=None,
     help="Directory of a `finn nas groundtruth` run.",
 )
+@click.option(
+    "--outcome-random",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Ground-truth directory of the random feasible candidates (with --outcome-front).",
+)
+@click.option(
+    "--outcome-front",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Ground-truth directory of a search's Pareto front (with --outcome-random).",
+)
 @click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
 def nas_report(
-    sampling: Path | None, search: tuple[Path, ...], groundtruth: Path | None, output_dir: Path
+    sampling: Path | None,
+    search: tuple[Path, ...],
+    groundtruth: Path | None,
+    outcome_random: Path | None,
+    outcome_front: Path | None,
+    output_dir: Path,
 ) -> None:
     """Figures and tables of the NAS experiments."""
-    if sampling is None and not search and groundtruth is None:
-        raise click.UsageError("Give at least one of --sampling, --search, --groundtruth.")
+    if (outcome_random is None) != (outcome_front is None):
+        raise click.UsageError("--outcome-random and --outcome-front go together.")
+    if sampling is None and not search and groundtruth is None and outcome_random is None:
+        raise click.UsageError(
+            "Give at least one of --sampling, --search, --groundtruth, --outcome-random/-front."
+        )
     from rich.markdown import Markdown
 
     from finn.nas.experiments.report import render_all
 
     output_dir = output_dir.expanduser().absolute()
+    outcome = None
+    if outcome_random is not None and outcome_front is not None:
+        outcome = (outcome_random.absolute(), outcome_front.absolute())
     written = render_all(
         output_dir,
         sampling=sampling.absolute() if sampling else None,
         search=[d.absolute() for d in search],
         groundtruth=groundtruth.absolute() if groundtruth else None,
+        outcome=outcome,
     )
     console = Console()
     console.print(Markdown((output_dir / "summary.md").read_text()))

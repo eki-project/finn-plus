@@ -19,12 +19,18 @@ from finn.nas.experiments.report import (
     read_jsonl,
     render_all,
     render_groundtruth,
+    render_outcome,
     render_sampling,
     render_search,
 )
 from finn.nas.experiments.report_search import (
+    accuracy_lut_hypervolume,
     cumulative_distinct_feasible,
+    envelope_at,
+    front_points,
+    load_outcome,
     load_search,
+    upper_envelope,
     variant_name,
     variant_styles,
 )
@@ -321,6 +327,12 @@ class TestSearch:
                 SearchConfig(population_size=pop, budget=12, algorithm="random"),
                 [0.25, 0.0, 0.25],
             ),
+            make_search_dir(
+                root,
+                "nsga2_graded_synflow",
+                SearchConfig(population_size=pop, budget=8, proxy="synflow"),
+                [0.5, 0.5],
+            ),
         ]
 
     def test_figures_and_table(self, tmp_path: Path) -> None:
@@ -337,15 +349,16 @@ class TestSearch:
         # proxy against LUT, so all 7 are on the front.
         row = next(line for line in table.splitlines() if "nsga2 graded" in line)
         assert row.startswith(
-            "| nsga2 graded (graded violation) | 8 / 12 | 66.7 % | 3 | 100.0 % | 7 | "
+            "| nsga2 graded (graded violation) | nwot | 8 / 12 | 66.7 % | 3 | 100.0 % | 7 | "
         )
         assert row.endswith("| 7 | 1 |")
         assert (
-            "| random sampling (baseline) | 4 / 10 | 40.0 % | n/a | n/a | n/a | n/a | 4 | n/a |"
-            in table
+            "| random sampling (baseline) | n/a | 4 / 10 | 40.0 % | n/a | n/a | n/a | n/a | 4 "
+            "| n/a |" in table
         )
         assert "nsga2 discard (discard)" in table
         assert "random (no feedback)" in table
+        assert "| nsga2 graded synflow (graded violation) | synflow | 5 / 8 |" in table
 
     def test_without_baseline_and_single_variant(self, tmp_path: Path) -> None:
         """One variant and no baseline is enough."""
@@ -368,7 +381,13 @@ class TestSearch:
         """Loader (with and without summary), names, cumulative counts and pinned styles."""
         dirs = self._variants(tmp_path)
         runs = [load_search(d) for d in dirs]
-        assert [r.name for r in runs] == ["nsga2_graded", "nsga2_binary", "nsga2_discard", "random"]
+        assert [r.name for r in runs] == [
+            "nsga2_graded",
+            "nsga2_binary",
+            "nsga2_discard",
+            "random",
+            "nsga2_graded_synflow",
+        ]
         assert variant_name(Path("search_nsga2_graded")) == "nsga2_graded"
         assert variant_name(Path("other")) == "other"
         # The discard variant has no summary.json: it is computed from the records.
@@ -376,8 +395,15 @@ class TestSearch:
         assert runs[0].summary["count"] == 12
         assert cumulative_distinct_feasible(runs[0].records)[-1] == 7  # trial 3 duplicates trial 0
         styles = variant_styles(runs)
-        assert len({s[0] for s in styles.values()}) == 4
-        assert styles["random"] == variant_styles(runs[3:])["random"]
+        assert len({s[0] for s in styles.values()}) == 5
+        assert len({s[1] for s in styles.values()}) == 5
+        assert styles["random"] == variant_styles(runs[3:4])["random"]
+        # The synflow run's front is projected onto the nwot plane through its records.
+        own = front_points(runs[4])
+        projected = front_points(runs[4], "nwot")
+        assert len(own) == len(projected) == 4
+        assert own != projected
+        assert front_points(runs[0], "nwot") == front_points(runs[0])
 
 
 @pytest.mark.util
@@ -426,6 +452,61 @@ class TestGroundTruth:
 
 
 @pytest.mark.util
+class TestOutcome:
+    """Outcome report: accuracy per LUT of the search's front vs. random candidates."""
+
+    def test_envelope_and_hypervolume(self) -> None:
+        """Staircase, budget lookup and the dominated area on hand-made points."""
+        points = [(1000.0, 20.0), (1500.0, 15.0), (2000.0, 30.0), (4000.0, 30.0), (8000.0, 40.0)]
+        assert upper_envelope(points, "low") == [(1000.0, 20.0), (2000.0, 30.0), (8000.0, 40.0)]
+        # fps: the best accuracy reachable with at least the given throughput.
+        assert upper_envelope(points, "high") == [(8000.0, 40.0)]
+        envelope = upper_envelope(points, "low")
+        assert envelope_at(envelope, 999) != envelope_at(envelope, 999)  # NaN
+        assert envelope_at(envelope, 1000) == 20.0
+        assert envelope_at(envelope, 5000) == 30.0
+        assert envelope_at(envelope, 1e9) == 40.0
+        # 1000..2000 at 20 %, 2000..8000 at 30 %, 8000..10000 at 40 %.
+        assert accuracy_lut_hypervolume(points, 10000.0) == pytest.approx(
+            1000 * 20 + 6000 * 30 + 2000 * 40
+        )
+        assert accuracy_lut_hypervolume([], 10000.0) == 0.0
+
+    def test_figure_and_table(self, tmp_path: Path) -> None:
+        """Figure files and the per-series numbers of the table."""
+        random_dir = make_groundtruth_dir(tmp_path / "random", n=8)
+        front_dir = make_groundtruth_dir(tmp_path / "front", n=5)
+        out = tmp_path / "out"
+        written = render_outcome(random_dir, front_dir, out)
+        _assert_figures(out, ["outcome_accuracy_vs_lut"])
+        assert out / "outcome_summary.md" in written
+        table = (out / "outcome_summary.md").read_text()
+        # random: 7 usable rows, accuracies 10..40 %, LUTs 1000..1600 (the 1700 row errored);
+        # the envelope reaches 40 % within 2k LUTs and nothing fits in 1k... except row 0.
+        assert (
+            "| random feasible | 7 | 25.0 % | 40.0 % | 1,300 | 10.0 % | 40.0 % | 40.0 % | 40.0 % |"
+            in table
+        )
+        assert (
+            "| search Pareto front | 4 | 20.0 % | 25.0 % | 1,200 | 10.0 % | 25.0 % | 25.0 % "
+            "| 25.0 % |" in table
+        )
+        assert "reference point: 0 % accuracy, 1,600 LUTs" in table
+        series = load_outcome(random_dir, "random", "random feasible")
+        assert len(series.points) == 7 and series.points[0] == (1000.0, 1000.0, pytest.approx(10.0))
+
+    def test_empty(self, tmp_path: Path) -> None:
+        """Two directories without usable rows render placeholders."""
+        random_dir = tmp_path / "random" / "groundtruth_synthetic"
+        random_dir.mkdir(parents=True)
+        front_dir = make_groundtruth_dir(tmp_path / "front", n=1)  # the only row errored
+        out = tmp_path / "out"
+        render_outcome(random_dir, front_dir, out)
+        _assert_figures(out, ["outcome_accuracy_vs_lut"])
+        assert "| random feasible | 0 | n/a |" in (out / "outcome_summary.md").read_text()
+
+
+@pytest.mark.util
 def test_render_all(tmp_path: Path) -> None:
     """The command's entry point renders everything and combines the tables."""
     sampling = make_sampling_dir(tmp_path)
@@ -434,10 +515,18 @@ def test_render_all(tmp_path: Path) -> None:
     )
     groundtruth = make_groundtruth_dir(tmp_path, n=5)
     out = tmp_path / "out"
-    written = render_all(out, sampling=sampling, search=[search], groundtruth=groundtruth)
-    _assert_figures(out, SAMPLING_FIGURES + SEARCH_FIGURES + GROUNDTRUTH_FIGURES)
+    written = render_all(
+        out,
+        sampling=sampling,
+        search=[search],
+        groundtruth=groundtruth,
+        outcome=(groundtruth, groundtruth),
+    )
+    _assert_figures(
+        out, SAMPLING_FIGURES + SEARCH_FIGURES + GROUNDTRUTH_FIGURES + ["outcome_accuracy_vs_lut"]
+    )
     combined = (out / "summary.md").read_text()
     assert combined.startswith("# NAS experiment report")
-    for heading in ("## Sampling", "## Search variants", "## Ground truth"):
+    for heading in ("## Sampling", "## Search variants", "## Ground truth", "## Outcome"):
         assert heading in combined
     assert out / "summary.md" in written

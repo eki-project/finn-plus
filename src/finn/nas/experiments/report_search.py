@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import math
 import matplotlib
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from finn.nas.evaluate import CandidateEvaluation
 from finn.nas.experiments.report import (
+    DOUBLE,
     MARKERS,
     MUTED,
     RC,
@@ -230,59 +232,100 @@ def fig_cumulative_feasible(
     return save_figure(fig, out_dir, "search_cumulative_feasible")
 
 
+def _plot_hypervolume(
+    ax: Axes, runs: Sequence[SearchData], styles: dict[str, tuple[str, str]]
+) -> bool:
+    """Draw the hypervolume histories of ``runs`` (one proxy) on ``ax``; False if none."""
+    histories = [
+        (run, run.summary.get("hypervolume", {}).get("per_generation_2d", []))
+        for run in runs
+        if run.summary.get("hypervolume", {}).get("per_generation_2d")
+    ]
+    if not histories:
+        empty_axes(ax, "no hypervolume history")
+        return False
+    # Hypervolumes are products of a proxy score and a LUT count (1e6..1e8): scale them
+    # to a readable axis instead of matplotlib's detached "1e7" offset text.
+    largest = max(max(ys) for _, ys in histories)
+    exponent = math.floor(math.log10(largest)) if largest > 0 else 0
+    scale = 10.0**exponent if exponent >= 3 else 1.0
+    for run, ys in histories:
+        color, marker = styles[run.name]
+        ax.plot(
+            range(len(ys)),
+            [y / scale for y in ys],
+            color=color,
+            marker=marker,
+            markersize=3.2,
+            markeredgecolor="white",
+            markeredgewidth=0.4,
+            label=run.label,
+        )
+    pair = histories[0][0].summary["hypervolume"].get("objectives_2d", [])
+    unit = f" \u00d7 10$^{{{exponent}}}$" if scale != 1.0 else ""
+    ax.set_xlabel("generation")
+    ax.set_ylabel(f"hypervolume ({' \u00d7 '.join(pair)}{unit})" if pair else f"hypervolume{unit}")
+    # Autoscaled on purpose: the figure compares the variants' progress, and the first
+    # feasible generation already covers most of the volume.
+    ax.xaxis.get_major_locator().set_params(integer=True)
+    return True
+
+
 def fig_hypervolume(
     runs: Sequence[SearchData], out_dir: Path, styles: dict[str, tuple[str, str]]
 ) -> list[Path]:
-    """2-D hypervolume (proxy vs. LUT projection) of the feasible trials up to each generation."""
+    """2-D hypervolume (proxy vs. LUT projection) of the feasible trials up to each generation.
+
+    Hypervolumes of runs with different proxy objectives live on different scales, so every
+    proxy gets its own panel.
+    """
+    groups: dict[str, list[SearchData]] = {}
+    for run in runs:
+        groups.setdefault(run.config.proxy, []).append(run)
+    proxies = list(groups) or ["proxy"]
     with matplotlib.rc_context(RC):
-        fig, ax = figure((SINGLE[0], 2.7))
-        histories = [
-            (run, run.summary.get("hypervolume", {}).get("per_generation_2d", []))
-            for run in runs
-            if run.summary.get("hypervolume", {}).get("per_generation_2d")
-        ]
-        if not histories:
-            empty_axes(ax, "no hypervolume history")
-            return save_figure(fig, out_dir, "search_hypervolume")
-        # Hypervolumes are products of a proxy score and a LUT count (1e6..1e8): scale them
-        # to a readable axis instead of matplotlib's detached "1e7" offset text.
-        largest = max(max(ys) for _, ys in histories)
-        exponent = math.floor(math.log10(largest)) if largest > 0 else 0
-        scale = 10.0**exponent if exponent >= 3 else 1.0
-        for run, ys in histories:
-            color, marker = styles[run.name]
-            ax.plot(
-                range(len(ys)),
-                [y / scale for y in ys],
-                color=color,
-                marker=marker,
-                markersize=3.2,
-                markeredgecolor="white",
-                markeredgewidth=0.4,
-                label=run.label,
+        size = (SINGLE[0], 2.7) if len(proxies) == 1 else (DOUBLE[0], 2.8)
+        fig, axes = figure(size, ncols=len(proxies))
+        axes = [axes] if len(proxies) == 1 else list(axes)
+        drawn = False
+        for ax, proxy in zip(axes, proxies, strict=True):
+            drawn |= _plot_hypervolume(ax, groups.get(proxy, []), styles)
+            ax.set_title(
+                f"Hypervolume of the feasible set ({proxy})"
+                if len(proxies) > 1
+                else "Hypervolume of the feasible set",
+                loc="left",
             )
-        pair = histories[0][0].summary["hypervolume"].get("objectives_2d", [])
-        unit = f" \u00d7 10$^{{{exponent}}}$" if scale != 1.0 else ""
-        ax.set_xlabel("generation")
-        ax.set_ylabel(
-            f"hypervolume ({' \u00d7 '.join(pair)}{unit})" if pair else f"hypervolume{unit}"
-        )
-        # Autoscaled on purpose: the figure compares the variants' progress, and the first
-        # feasible generation already covers most of the volume.
-        ax.xaxis.get_major_locator().set_params(integer=True)
-        legend_below(fig, ax)
-        ax.set_title("Hypervolume of the feasible set", loc="left")
+        if drawn:
+            handles, labels = [], []
+            for ax in axes:
+                h, lbl = ax.get_legend_handles_labels()
+                handles += h
+                labels += lbl
+            fig.legend(handles, labels, loc="outside lower center", ncols=2)
     return save_figure(fig, out_dir, "search_hypervolume")
 
 
-def front_points(run: SearchData) -> list[tuple[float, float]]:
-    """(LUT, proxy score) of the Pareto-front entries with real (non-sentinel) values."""
+def front_points(run: SearchData, proxy: str | None = None) -> list[tuple[float, float]]:
+    """(LUT, proxy score) of the Pareto-front entries with real (non-sentinel) values.
+
+    ``proxy`` selects the score to plot; when it differs from the run's own objective the
+    score is looked up in the run's records (every record carries all proxy scores), so
+    fronts of runs with different proxy objectives can be compared in one plane.
+    """
+    proxy = proxy or run.config.proxy
+    scores: dict[str, float] = {}
+    if proxy != run.config.proxy:
+        for record in run.records:
+            value = (record.proxies or {}).get("scores", {}).get(proxy)
+            if finite(value):
+                scores.setdefault(record.hash, float(value))
     points = []
     for entry in run.summary.get("pareto_front", []):
         lut = (entry.get("resources") or {}).get("LUT")
-        proxy = entry.get("proxy")
-        if finite(lut) and finite(proxy) and not is_sentinel(proxy) and lut > 0:
-            points.append((float(lut), float(proxy)))
+        value = entry.get("proxy") if proxy == run.config.proxy else scores.get(entry.get("hash"))
+        if finite(lut) and finite(value) and not is_sentinel(value) and lut > 0:
+            points.append((float(lut), float(value)))
     return sorted(points)
 
 
@@ -292,8 +335,12 @@ def fig_pareto_fronts(
     baseline: SamplingData | None,
     styles: dict[str, tuple[str, str]],
 ) -> list[Path]:
-    """Draw the final Pareto fronts in the LUT/proxy plane over the feasible baseline samples."""
-    proxy = runs[0].config.proxy if runs else "proxy"
+    """Draw the final Pareto fronts in the LUT/proxy plane over the feasible baseline samples.
+
+    The plane is that of the proxy most of the runs optimize; fronts of runs with another
+    proxy objective are projected onto it (see :func:`front_points`).
+    """
+    proxy = Counter(run.config.proxy for run in runs).most_common(1)[0][0] if runs else "proxy"
     with matplotlib.rc_context(RC):
         fig, ax = figure((SINGLE[0], 2.7))
         drawn = False
@@ -316,7 +363,7 @@ def fig_pareto_fronts(
                 )
                 drawn = True
         for run in runs:
-            points = front_points(run)
+            points = front_points(run, proxy)
             if not points:
                 continue
             color, marker = styles[run.name]
@@ -387,6 +434,7 @@ def search_table(runs: Sequence[SearchData], baseline: SamplingData | None) -> s
         rows.append(
             (
                 run.label,
+                run.config.proxy,
                 f"{s.get('feasible', 0)} / {s.get('count', 0)}",
                 percent(s.get("feasible", 0), s.get("count", 0)),
                 len(generations),
@@ -403,6 +451,7 @@ def search_table(runs: Sequence[SearchData], baseline: SamplingData | None) -> s
         rows.append(
             (
                 "random sampling (baseline)",
+                "n/a",
                 f"{round(rate * n)} / {n}",
                 percent(rate, 1),
                 "n/a",
@@ -416,6 +465,7 @@ def search_table(runs: Sequence[SearchData], baseline: SamplingData | None) -> s
     return "## Search variants\n\n" + markdown_table(
         (
             "variant",
+            "proxy",
             "feasible / trials",
             "rate",
             "generations",
@@ -446,4 +496,198 @@ def render_search_dirs(
     paths += fig_violation(runs, out_dir, styles)
     table = out_dir / "search_summary.md"
     table.write_text(search_table(runs, sampling))
+    return [*paths, table]
+
+
+# --- outcome: trained accuracy of the search's picks vs. random feasible candidates --------
+
+#: LUT budgets at which the envelope accuracy is tabulated.
+LUT_BUDGETS = (1000, 2000, 5000, 10000)
+#: Colors and markers of the two outcome series. Random candidates take the muted color of the
+#: background samples in the search figures; the front takes a slot no variant is pinned to.
+OUTCOME_STYLES = {"random": (MUTED, "o"), "front": (SERIES[6], "s")}
+
+
+@dataclass
+class OutcomeSeries:
+    """Trained candidates of one origin: (LUT, fps, accuracy %) per usable row."""
+
+    name: str
+    label: str
+    directory: Path
+    points: list[tuple[float, float, float]]
+
+    @property
+    def accuracies(self) -> list[float]:
+        """Accuracies in percent."""
+        return [p[2] for p in self.points]
+
+    @property
+    def luts(self) -> list[float]:
+        """Estimated LUTs."""
+        return [p[0] for p in self.points]
+
+
+def load_outcome(directory: str | Path, name: str, label: str) -> OutcomeSeries:
+    """Load the usable rows of a ground-truth directory as an outcome series."""
+    from finn.nas.experiments.report import load_groundtruth
+
+    data = load_groundtruth(directory)
+    points = []
+    for row in data.usable:
+        lut = row.get("estimates", {}).get("LUT")
+        fps = row.get("est_fps")
+        acc = row.get("train", {}).get("best_val_acc")
+        if finite(lut) and lut > 0 and finite(acc):
+            points.append(
+                (float(lut), float(fps) if finite(fps) and fps > 0 else math.nan, 100 * acc)
+            )
+    return OutcomeSeries(name, label, data.directory, points)
+
+
+def upper_envelope(
+    points: Sequence[tuple[float, float]], cheaper: str = "low"
+) -> list[tuple[float, float]]:
+    """Accuracy-vs-cost Pareto staircase: the points that improve on everything cheaper.
+
+    ``cheaper="low"`` (LUTs): the best accuracy reachable with at most ``x``; ``"high"``
+    (fps): the best accuracy reachable with at least ``x``. Returned sorted by ``x`` in the
+    order of increasing cost.
+    """
+    ordered = sorted(points, key=lambda p: p[0] if cheaper == "low" else -p[0])
+    envelope: list[tuple[float, float]] = []
+    best = -math.inf
+    for x, y in ordered:
+        if y > best:
+            envelope.append((x, y))
+            best = y
+    return envelope
+
+
+def envelope_at(envelope: Sequence[tuple[float, float]], budget: float) -> float:
+    """Best accuracy of a LUT envelope within ``budget`` (NaN if nothing fits)."""
+    within = [y for x, y in envelope if x <= budget]
+    return max(within) if within else math.nan
+
+
+def accuracy_lut_hypervolume(points: Sequence[tuple[float, float]], reference_lut: float) -> float:
+    """Area dominated by the (LUT, accuracy) points w.r.t. the reference (``reference_lut``, 0 %).
+
+    LUTs are minimized and accuracy maximized, so the area is the staircase under the upper
+    envelope between each point and the next cheaper-or-equal improvement, up to the
+    reference LUT count. Unit: percent points times LUTs.
+    """
+    envelope = upper_envelope(points, "low")
+    area = 0.0
+    for i, (x, y) in enumerate(envelope):
+        right = envelope[i + 1][0] if i + 1 < len(envelope) else reference_lut
+        area += max(0.0, min(right, reference_lut) - x) * y
+    return area
+
+
+def _plot_outcome_panel(ax: Axes, series: Sequence[OutcomeSeries], axis: str) -> bool:
+    """Scatter plus envelope staircase of every series over LUTs or fps; False if empty."""
+    drawn = False
+    index, cheaper, where = (0, "low", "post") if axis == "lut" else (1, "high", "pre")
+    for s in series:
+        points = [(p[index], p[2]) for p in s.points if finite(p[index])]
+        if not points:
+            continue
+        color, marker = OUTCOME_STYLES.get(s.name, (SERIES[0], "o"))
+        ax.scatter(
+            *zip(*points, strict=True),
+            color=color,
+            marker=marker,
+            s=12,
+            alpha=0.75,
+            edgecolors="white",
+            linewidths=0.4,
+            label=s.label,
+        )
+        envelope = upper_envelope(points, cheaper)
+        if cheaper == "high":
+            envelope = envelope[::-1]
+        ax.step(*zip(*envelope, strict=True), where=where, color=color, linewidth=1.2, zorder=3)
+        drawn = True
+    if not drawn:
+        empty_axes(ax, "no trained candidates")
+        return False
+    ax.set_xscale("log")
+    ax.set_xlabel("estimated LUTs" if axis == "lut" else "estimated throughput (frames/s)")
+    ax.set_ylabel("best val. accuracy (%)")
+    ax.set_ylim(bottom=0)
+    return True
+
+
+def fig_outcome(series: Sequence[OutcomeSeries], out_dir: Path) -> list[Path]:
+    """Trained accuracy vs. LUTs and vs. fps of the random candidates and the search's front."""
+    with matplotlib.rc_context(RC):
+        fig, (ax_lut, ax_fps) = figure((DOUBLE[0], 2.9), ncols=2)
+        drawn = _plot_outcome_panel(ax_lut, series, "lut")
+        _plot_outcome_panel(ax_fps, series, "fps")
+        ax_lut.set_title("Accuracy per LUT (lines: upper envelope)", loc="left")
+        ax_fps.set_title("Accuracy per throughput", loc="left")
+        if drawn:
+            legend_below(fig, ax_lut)
+    return save_figure(fig, out_dir, "outcome_accuracy_vs_lut")
+
+
+def outcome_table(series: Sequence[OutcomeSeries]) -> str:
+    """Per series: n, accuracy statistics, envelope accuracy at LUT budgets, hypervolume."""
+    from finn.nas.experiments.report import _median
+
+    reference = max((max(s.luts) for s in series if s.points), default=0.0)
+    rows = []
+    for s in series:
+        envelope = upper_envelope([(p[0], p[2]) for p in s.points], "low")
+        hv = (
+            accuracy_lut_hypervolume([(p[0], p[2]) for p in s.points], reference)
+            if s.points
+            else math.nan
+        )
+        rows.append(
+            (
+                s.label,
+                len(s.points),
+                percent(_median(s.accuracies), 100) if s.points else "n/a",
+                percent(max(s.accuracies), 100) if s.points else "n/a",
+                fmt(_median(s.luts)) if s.points else "n/a",
+                *[percent(envelope_at(envelope, b), 100) for b in LUT_BUDGETS],
+                fmt(hv),
+                fmt(hv / (100.0 * reference), 3) if reference else "n/a",
+            )
+        )
+    return (
+        "## Outcome: trained accuracy of the search's picks\n\n"
+        + markdown_table(
+            (
+                "series",
+                "n",
+                "median acc.",
+                "max acc.",
+                "median LUTs",
+                *[f"best acc. ≤ {b // 1000}k LUTs" for b in LUT_BUDGETS],
+                "HV (acc. \u00d7 LUT)",
+                "HV normalized",
+            ),
+            rows,
+        )
+        + f"\nHypervolume reference point: 0 % accuracy, {fmt(reference)} LUTs (the largest "
+        "candidate of both series); normalized by 100 % \u00d7 reference LUTs.\n"
+    )
+
+
+def render_outcome_dirs(
+    random_dir: str | Path, front_dir: str | Path, out_dir: str | Path
+) -> list[Path]:
+    """Render the outcome figure and ``outcome_summary.md`` into ``out_dir``."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    series = [
+        load_outcome(random_dir, "random", "random feasible"),
+        load_outcome(front_dir, "front", "search Pareto front"),
+    ]
+    paths = fig_outcome(series, out_dir)
+    table = out_dir / "outcome_summary.md"
+    table.write_text(outcome_table(series))
     return [*paths, table]

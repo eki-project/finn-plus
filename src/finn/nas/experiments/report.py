@@ -270,6 +270,8 @@ def fmt(value: Any, digits: int = 3) -> str:
     """Format a number for a table (``n/a`` for missing or non-finite values)."""
     if not finite(value):
         return "n/a"
+    if abs(value) >= 1e9:  # e.g. synflow hypervolumes: a 21-digit integer is unreadable
+        return f"{value:.{digits}e}"
     if isinstance(value, int) or (float(value).is_integer() and abs(value) >= 1000):
         return f"{int(value):,}"
     # Counts and estimates (LUTs, fps) read best as plain integers with thousands separators;
@@ -809,13 +811,29 @@ def render_search(
     return render_search_dirs(directories, out_dir, baseline)
 
 
+def render_outcome(
+    random_dir: str | Path, front_dir: str | Path, out_dir: str | Path
+) -> list[Path]:
+    """Render trained accuracy per LUT of the search's front vs. random feasible candidates.
+
+    Both inputs are ``finn nas groundtruth`` directories (see ``report_search``).
+    """
+    from finn.nas.experiments.report_search import render_outcome_dirs
+
+    return render_outcome_dirs(random_dir, front_dir, out_dir)
+
+
 def render_all(
     out_dir: str | Path,
     sampling: str | Path | None = None,
     search: Sequence[str | Path] = (),
     groundtruth: str | Path | None = None,
+    outcome: tuple[str | Path, str | Path] | None = None,
 ) -> list[Path]:
-    """Render every report whose input is given and combine the tables into ``summary.md``."""
+    """Render every report whose input is given and combine the tables into ``summary.md``.
+
+    ``outcome`` is the pair (random ground-truth directory, front ground-truth directory).
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
@@ -825,6 +843,8 @@ def render_all(
         paths += render_search(search, out_dir, baseline=sampling)
     if groundtruth is not None:
         paths += render_groundtruth(groundtruth, out_dir)
+    if outcome is not None:
+        paths += render_outcome(outcome[0], outcome[1], out_dir)
     tables = [p.read_text() for p in paths if p.suffix == ".md"]
     combined = out_dir / "summary.md"
     combined.write_text("# NAS experiment report\n\n" + "\n".join(tables))
