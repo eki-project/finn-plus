@@ -43,6 +43,7 @@ import finn.custom_op.fpgadataflow.hls.elementwise_binary_hls as elementwise_bin
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.util.basic import MAX_ALLOWED_AP_INT_W
+from finn.util.exception import FINNFoldingError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 
@@ -116,6 +117,30 @@ class SetFolding(Transformation):
     * the VVAU also supports SIMD ("input window") parallelism next to
       PE ("channels"), but current ConvInpGen limitations require PE to be fully
       unfolded before SIMD is increased
+
+    Besides logging warnings, SetFolding records what it could not achieve in attributes of
+    the transformation instance. They describe the most recent call of apply() (so with
+    apply_to_subgraphs=True the graph that was visited last) and always refer to the requested
+    target_cycles_per_frame, also if the two-pass relaxation folded the model for a lower
+    throughput afterwards:
+
+    * unhandled_op_types: op types of the HLS/RTL nodes that SetFolding does not know how to
+      fold. Their folding attributes, if they have any, are left untouched.
+    * achieved_cycles_per_frame: cycle estimate of the slowest HLS/RTL node after folding
+      towards the requested target (None before the first call of apply()). The requested
+      target was missed if and only if this is larger than target_cycles_per_frame.
+    * any_throughput_target_missed: True if the search for at least one folding attribute
+      ended without reaching the target, which is what the "did not reach the target
+      throughput" warning reports. This is only a hint: it is also set if another folding
+      attribute of the same node (e.g. PE after SIMD of an MVAU, SIMD after PE of a VVAU or
+      the parallel window mode of a sliding window generator) reached the target afterwards,
+      and it is not set for every op type. Use achieved_cycles_per_frame to decide whether
+      the target was met.
+
+    If strict is set, SetFolding raises a FINNFoldingError after folding towards the requested
+    target if unhandled_op_types is not empty or the requested target was missed. The
+    two-pass relaxation, which would only rebalance the model for the lower throughput that
+    was achieved, is not run in this case. Without strict (the default) this is only logged.
     """
 
     def __init__(
@@ -123,12 +148,18 @@ class SetFolding(Transformation):
         target_cycles_per_frame: int = 1000,
         mvau_wwidth_max: int = 36,
         two_pass_relaxation: bool = True,
+        strict: bool = False,
     ) -> None:
         """Initialize the folding target and constraints."""
         super().__init__()
         self.target_cycles_per_frame = target_cycles_per_frame
         self.mvau_wwidth_max = mvau_wwidth_max
         self.two_pass_relaxation = two_pass_relaxation
+        self.strict = strict
+        # Results of the most recent call of apply(), see the class docstring
+        self.unhandled_op_types: list[str] = []
+        self.achieved_cycles_per_frame: int | None = None
+        self.any_throughput_target_missed = False
 
         # REMINDER: The fact that this technically only applies to HLS components should
         # be remembered and considered for an eventual rework.
@@ -188,6 +219,9 @@ class SetFolding(Transformation):
             "Shuffle",
         ]
 
+        # Reset the results of a previous call
+        self.unhandled_op_types = []
+        self.achieved_cycles_per_frame = None
         # Store whether any node does not meet the target throughput and emit a warning at the end.
         self.any_throughput_target_missed = False
         mvau_internal_decoupled_weightstream_max_width_too_large = False
@@ -302,7 +336,12 @@ class SetFolding(Transformation):
                 # also set the folding of the upsteam DW SWU
                 # which must be identical to this node
                 swu_node = model.find_producer(node.input[0])
-                assert swu_node is not None, "Expected producer node for VVAU/Pool input"
+                if swu_node is None:
+                    raise FINNFoldingError(
+                        f"{node.name}: Expected producer node for VVAU/Pool input",
+                        node_name=node.name,
+                        op_type=op_type,
+                    )
                 if swu_node.op_type.startswith("ConvolutionInputGenerator"):
                     swu_node_inst = getCustomOp(swu_node)
                     swu_node_inst.set_nodeattr("SIMD", pe)
@@ -342,9 +381,17 @@ class SetFolding(Transformation):
                     elif op_type == "Pool_hls":
                         ksize = node_inst.get_nodeattr("KernelSize")
                     else:
-                        raise Exception(f"Undefined edge case for {op_type}")
+                        raise FINNFoldingError(
+                            f"{node.name}: Undefined edge case for {op_type}",
+                            node_name=node.name,
+                            op_type=op_type,
+                        )
                     if ksize != 1:  # pointwise vvau/pool lack a SWU
-                        raise Exception("Expected SWU on DW op input, found " + swu_node.op_type)
+                        raise FINNFoldingError(
+                            f"{node.name}: Expected SWU on DW op input, found " + swu_node.op_type,
+                            node_name=node.name,
+                            op_type=op_type,
+                        )
             elif op_type in simd_ops:
                 if op_type.startswith("ConvolutionInputGenerator"):
                     depthwise = node_inst.get_nodeattr("depthwise")
@@ -422,6 +469,8 @@ class SetFolding(Transformation):
                     self.optimize_attribute_val(node_inst, int(max_simd), "SIMD")
             else:
                 log.warning(f"SetFolding doesn't know how to handle op_type {op_type}")
+                if op_type not in self.unhandled_op_types:
+                    self.unhandled_op_types.append(op_type)
 
         # Give a warning if a throughput goal was missed
         if self.any_throughput_target_missed:
@@ -436,6 +485,42 @@ class SetFolding(Transformation):
 
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(AnnotateCycles())
+        # The slowest node tells whether the requested target was met
+        slowest_node = None
+        achieved_cycles = 0
+        for node in model.graph.node:
+            if is_hls_node(node) or is_rtl_node(node):
+                cycles = int(cast("int", getCustomOp(node).get_nodeattr("cycles_estimate")))
+                if cycles > achieved_cycles:
+                    achieved_cycles = cycles
+                    slowest_node = node
+        self.achieved_cycles_per_frame = achieved_cycles
+        if self.strict:
+            problems = []
+            problem_node = None
+            if slowest_node is not None and achieved_cycles > self.target_cycles_per_frame:
+                problems.append(
+                    f"Node {slowest_node.name} missed the target of "
+                    f"{self.target_cycles_per_frame} cycles per frame with an estimate of "
+                    f"{achieved_cycles} cycles"
+                )
+                problem_node = slowest_node
+            if self.unhandled_op_types:
+                problems.insert(
+                    0,
+                    "SetFolding doesn't know how to handle op_type(s) "
+                    + ", ".join(self.unhandled_op_types),
+                )
+                # An op type that cannot be folded is reported with its first node
+                problem_node = next(
+                    node for node in model.graph.node if node.op_type in self.unhandled_op_types
+                )
+            if problem_node is not None:
+                raise FINNFoldingError(
+                    "; ".join(problems),
+                    node_name=problem_node.name,
+                    op_type=problem_node.op_type,
+                )
         if self.two_pass_relaxation:
             perf_dict = model.analysis(dataflow_performance)
             if cast("int", perf_dict["max_cycles"]) > self.target_cycles_per_frame:
