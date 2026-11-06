@@ -10,6 +10,8 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ### Added
 - **NAS oracle** (`finn.nas`): `FinnOracle.evaluate` runs the estimate-only part of the build flow on a Brevitas module or QONNX file in-process (or in a spawned, killable worker) and returns FINN compatibility with a machine-readable failure category plus resource, cycle and throughput estimates, for hardware-aware neural architecture search; `finn nas eval MODEL.onnx` does the same from the command line; see [NAS README](src/finn/nas/README.md)
+- Zero-cost proxies for NAS (`finn.nas.zc`): the NAS-Bench-Suite-Zero measures of NASLib (synflow, snip, grasp, fisher, grad_norm, jacov, nwot, epe_nas, l2_norm, plain, zen) vendored under their Apache-2.0/MIT notices and adapted to Brevitas quantized layers, plus parameter and MAC counts
+- CIFAR-10 data handling and a short quantization-aware training loop for NAS candidates (`finn.nas.data`, `finn.nas.train`)
 - The PYNQ driver validates accelerators on more datasets, so that the CI measures the accuracy of all trained regression models on the board: Google Speech Commands v2 (`speechcommands`, KWS), GTSRB (`gtsrb`), the evaluation split of the RadioML transformer (`radioml_transformer`) and masked token prediction on TinyStories (`tinystories`, language transformer); `scripts/prepare_validation_datasets.py` fetches the new datasets into the dataset directory (eki-project#290)
 
 ### Changed
