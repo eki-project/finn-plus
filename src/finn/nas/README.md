@@ -36,8 +36,13 @@ finn nas eval model.onnx --board Pynq-Z1 --target-fps 3000 -o result.json
 finn nas eval model.onnx --fpga-part xc7z020clg400-1 --folding-config folding.json --strict-codegen
 ```
 
-It prints a summary (compatibility, failure reason, resource table, throughput and latency
-estimates) and optionally writes the complete `EvalResult` as JSON (`-o`). Exactly one of
+`finn nas sample OUTPUT_DIR -n 1000 --board Pynq-Z1 --target-fps 100 --data-root ../datasets/cifar10`
+draws random networks from the search space and evaluates them in parallel worker processes
+(oracle verdict, estimates and zero-cost proxies per network, written as JSON lines; re-running
+with a larger count extends the run).
+
+`finn nas eval` prints a summary (compatibility, failure reason, resource table, throughput and
+latency estimates) and optionally writes the complete `EvalResult` as JSON (`-o`). Exactly one of
 `--target-fps` and `--folding-config` is required, as is one of `--board` and `--fpga-part`.
 `--timeout SECONDS` evaluates in a separate, killable worker process. The exit code is 0 for a
 compatible model, 1 for an incompatible one and 3 if the evaluation itself failed (timeout,

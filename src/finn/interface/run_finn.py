@@ -1278,6 +1278,111 @@ def finn_check() -> None:
     Console().print("[bold green]FINN is ready![/bold green]")
 
 
+def oracle_options(f: Callable) -> Callable[..., Any]:
+    """Add the options that configure the NAS oracle (shared by the ``nas`` commands)."""
+    decorators = [
+        click.option("--fpga-part", default=None, help="FPGA part to estimate for."),
+        click.option(
+            "--board",
+            default=None,
+            help="Board to estimate for (alternative to --fpga-part). Also reports the share "
+            "of the board's resources if the board is known to FINN+.",
+        ),
+        click.option(
+            "--clk-period-ns",
+            type=float,
+            default=10.0,
+            show_default=True,
+            help="Target clock period.",
+        ),
+        click.option(
+            "--target-fps", type=int, default=None, help="Throughput target for the folding."
+        ),
+        click.option(
+            "--folding-config",
+            type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
+            default=None,
+            help="Folding configuration JSON to apply instead of folding towards --target-fps.",
+        ),
+        click.option(
+            "--require-target-met",
+            is_flag=True,
+            help="Treat a throughput target that the folding cannot reach as not compatible.",
+        ),
+        click.option(
+            "--strict-codegen",
+            is_flag=True,
+            help="Also generate the HLS/RTL sources (no synthesis) to trigger the checks that "
+            "FINN+ only performs at code generation time. Slower.",
+        ),
+        click.option(
+            "--timeout",
+            type=float,
+            default=None,
+            help="Evaluate in a separate worker process and stop it after this many seconds.",
+        ),
+        click.option(
+            "--cache",
+            "cache_path",
+            type=click.Path(path_type=Path),
+            default=None,
+            help="SQLite file (or directory) to memoize results in.",
+        ),
+        click.option(
+            "--keep-artifacts",
+            type=click.Choice(["never", "on_failure", "always"]),
+            default="never",
+            show_default=True,
+            help="Keep the per-model working directory (intermediate models).",
+        ),
+    ]
+    for decorator in reversed(decorators):
+        f = decorator(f)
+    return f
+
+
+def make_oracle_config(
+    fpga_part: str | None,
+    board: str | None,
+    clk_period_ns: float,
+    target_fps: int | None,
+    folding_config: Path | None,
+    require_target_met: bool,
+    strict_codegen: bool,
+    timeout: float | None,
+    cache_path: Path | None,
+    keep_artifacts: str,
+    work_dir: Path,
+) -> Any:
+    """Build an ``OracleConfig`` from the ``oracle_options`` values (late import of finn.nas)."""
+    from finn.nas.config import FoldingSpec, OracleConfig
+
+    if fpga_part is None and board is None:
+        raise click.UsageError("Specify the target with --fpga-part or --board.")
+    if (target_fps is None) == (folding_config is None):
+        raise click.UsageError("Specify exactly one of --target-fps and --folding-config.")
+    if folding_config is not None:
+        folding = FoldingSpec(
+            kind="fixed",
+            target_fps=None,
+            folding_config_file=str(folding_config.expanduser().absolute()),
+        )
+    else:
+        folding = FoldingSpec(target_fps=target_fps, require_target_met=require_target_met)
+    return OracleConfig(
+        fpga_part=fpga_part,
+        board=board,
+        synth_clk_period_ns=clk_period_ns,
+        folding=folding,
+        strict_codegen=strict_codegen,
+        isolation="process" if timeout is not None else "inprocess",
+        timeout_s=timeout if timeout is not None else 0.0,
+        work_dir=str(work_dir),
+        keep_artifacts=keep_artifacts,  # type: ignore[arg-type]
+        cache_path=str(cache_path.expanduser().absolute()) if cache_path is not None else None,
+    )
+
+
 @click.group(help="Neural architecture search utilities with FINN+ in the loop.")
 def nas() -> None:
     """Click group collecting the NAS related commands."""
@@ -1296,54 +1401,7 @@ def nas() -> None:
 @skip_dep_update
 @batch
 @output
-@click.option("--fpga-part", default=None, help="FPGA part to estimate for.")
-@click.option(
-    "--board",
-    default=None,
-    help="Board to estimate for (alternative to --fpga-part). Also reports the share of the "
-    "board's resources if the board is known to FINN+.",
-)
-@click.option(
-    "--clk-period-ns", type=float, default=10.0, show_default=True, help="Target clock period."
-)
-@click.option("--target-fps", type=int, default=None, help="Throughput target for the folding.")
-@click.option(
-    "--folding-config",
-    type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
-    default=None,
-    help="Folding configuration JSON to apply instead of folding towards --target-fps.",
-)
-@click.option(
-    "--require-target-met",
-    is_flag=True,
-    help="Treat a throughput target that the folding cannot reach as not compatible.",
-)
-@click.option(
-    "--strict-codegen",
-    is_flag=True,
-    help="Also generate the HLS/RTL sources (no synthesis) to trigger the checks that FINN+ "
-    "only performs at code generation time. Slower.",
-)
-@click.option(
-    "--timeout",
-    type=float,
-    default=None,
-    help="Evaluate in a separate worker process and stop it after this many seconds.",
-)
-@click.option(
-    "--cache",
-    "cache_path",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="SQLite file (or directory) to memoize results in.",
-)
-@click.option(
-    "--keep-artifacts",
-    type=click.Choice(["never", "on_failure", "always"]),
-    default="never",
-    show_default=True,
-    help="Keep the per-model working directory (intermediate models).",
-)
+@oracle_options
 @click.argument(
     "model",
     type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
@@ -1369,10 +1427,6 @@ def nas_eval(
     model: Path,
 ) -> None:
     """Evaluate a model with the NAS oracle."""
-    if fpga_part is None and board is None:
-        raise click.UsageError("Specify the target with --fpga-part or --board.")
-    if (target_fps is None) == (folding_config is None):
-        raise click.UsageError("Specify exactly one of --target-fps and --folding-config.")
     model = model.expanduser().absolute()
     if finn_build_dir is not None:
         finn_build_dir = finn_build_dir.expanduser().absolute()
@@ -1381,6 +1435,19 @@ def nas_eval(
         finn_deps = finn_deps.expanduser().absolute()
     if finn_deps_definitions is not None:
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
+    config = make_oracle_config(
+        fpga_part,
+        board,
+        clk_period_ns,
+        target_fps,
+        folding_config,
+        require_target_met,
+        strict_codegen,
+        timeout,
+        cache_path,
+        keep_artifacts,
+        Path("."),  # replaced below once the settings are known
+    )
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
@@ -1389,33 +1456,157 @@ def nas_eval(
     )
     prepare_finn(settings, True, batch)
     Console().rule(f"[bold cyan]Evaluating [/bold cyan][bold orange1]{model.name}[/bold orange1]")
+    config.work_dir = str(settings.finn_build_dir / "nas_oracle")
 
     # Late import because we need prepare_finn to setup remaining dependencies first
     from finn.nas.cli import evaluate_model
-    from finn.nas.config import FoldingSpec, OracleConfig
 
-    if folding_config is not None:
-        folding = FoldingSpec(
-            kind="fixed",
-            target_fps=None,
-            folding_config_file=str(folding_config.expanduser().absolute()),
-        )
-    else:
-        folding = FoldingSpec(target_fps=target_fps, require_target_met=require_target_met)
-    config = OracleConfig(
-        fpga_part=fpga_part,
-        board=board,
-        synth_clk_period_ns=clk_period_ns,
-        folding=folding,
-        strict_codegen=strict_codegen,
-        isolation="process" if timeout is not None else "inprocess",
-        timeout_s=timeout if timeout is not None else 0.0,
-        work_dir=str(settings.finn_build_dir / "nas_oracle"),
-        keep_artifacts=keep_artifacts,  # type: ignore[arg-type]
-        cache_path=str(cache_path.expanduser().absolute()) if cache_path is not None else None,
-    )
     out_path = output.expanduser().absolute() if output is not None else None
     sys.exit(evaluate_model(model, config, out_path))
+
+
+@click.command(
+    name="sample",
+    help="Draw random networks from the NAS search space, evaluate each with the oracle (and "
+    "the zero-cost proxies), and write the records and a summary into OUTPUT_DIR. Re-running "
+    "with a larger --count extends an earlier run.",
+)
+@finn_deps
+@finn_deps_definitions
+@finn_build_dir
+@num_default_workers
+@skip_dep_update
+@batch
+@oracle_options
+@click.option("--count", "-n", type=int, default=100, show_default=True, help="Samples to draw.")
+@click.option("--seed", type=int, default=0, show_default=True, help="Random seed.")
+@click.option(
+    "--space-config",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="JSON file with search space settings (finn.nas.space.SpaceConfig); the default "
+    "space if omitted.",
+)
+@click.option(
+    "--workers", "-w", type=int, default=4, show_default=True, help="Parallel evaluation processes."
+)
+@click.option(
+    "--proxies/--no-proxies",
+    default=True,
+    show_default=True,
+    help="Also compute the zero-cost proxies (needs --data-root).",
+)
+@click.option(
+    "--data-root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="CIFAR-10 directory (downloaded on first use) for the proxy minibatch.",
+)
+@click.option(
+    "--proxy-batch", type=int, default=64, show_default=True, help="Minibatch size for proxies."
+)
+@click.option(
+    "--eval-timeout",
+    type=float,
+    default=300.0,
+    show_default=True,
+    help="Time limit per candidate inside a worker, in seconds.",
+)
+@click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
+def nas_sample(
+    finn_deps: Path | None,
+    finn_deps_definitions: Path | None,
+    finn_build_dir: Path | None,
+    num_default_workers: int,
+    skip_dep_update: bool,
+    batch: bool,
+    fpga_part: str | None,
+    board: str | None,
+    clk_period_ns: float,
+    target_fps: int | None,
+    folding_config: Path | None,
+    require_target_met: bool,
+    strict_codegen: bool,
+    timeout: float | None,
+    cache_path: Path | None,
+    keep_artifacts: str,
+    count: int,
+    seed: int,
+    space_config: Path | None,
+    workers: int,
+    proxies: bool,
+    data_root: Path | None,
+    proxy_batch: int,
+    eval_timeout: float,
+    output_dir: Path,
+) -> None:
+    """Random-sampling experiment over the NAS search space."""
+    output_dir = output_dir.expanduser().absolute()
+    if proxies and data_root is None:
+        raise click.UsageError("--proxies needs --data-root (or pass --no-proxies).")
+    if finn_build_dir is not None:
+        finn_build_dir = finn_build_dir.expanduser().absolute()
+        finn_build_dir.mkdir(parents=True, exist_ok=True)
+    if finn_deps is not None:
+        finn_deps = finn_deps.expanduser().absolute()
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
+    oracle = make_oracle_config(
+        fpga_part,
+        board,
+        clk_period_ns,
+        target_fps,
+        folding_config,
+        require_target_met,
+        strict_codegen,
+        timeout,
+        cache_path,
+        keep_artifacts,
+        output_dir / "work",
+    )
+    settings = FINNSettings.init(
+        auto_set_environment_vars=True,
+        automatic_dependency_updates=not skip_dep_update,
+        flow_config=output_dir / "dummy.yaml",
+        **get_function_args(),
+    )
+    prepare_finn(settings, True, batch)
+    Console().rule("[bold cyan]Sampling the NAS search space[/bold cyan]")
+
+    # Late imports because we need prepare_finn to setup remaining dependencies first
+    from finn.nas.evaluate import EvaluatorConfig
+    from finn.nas.experiments.sampling import run_sampling
+    from finn.nas.space import SpaceConfig
+
+    space = (
+        SpaceConfig.from_dict(json.loads(space_config.read_text()))
+        if space_config is not None
+        else SpaceConfig()
+    )
+    batch_tensors = None
+    if proxies:
+        from finn.nas.data import load_cifar10
+        from finn.nas.data import proxy_batch as draw_proxy_batch
+
+        dataset = load_cifar10(data_root, device="cpu")
+        batch_tensors = draw_proxy_batch(dataset, proxy_batch, seed=seed)
+    evaluator = EvaluatorConfig(
+        oracle=oracle,
+        compute_proxies=proxies,
+        timeout_s=eval_timeout,
+    )
+    summary = run_sampling(
+        space,
+        evaluator,
+        count,
+        seed,
+        output_dir,
+        n_workers=workers,
+        proxy_batch=batch_tensors,
+        progress=status,
+    )
+    rich.print(summary)
+    sys.exit(0)
 
 
 def main() -> None:
@@ -1442,6 +1633,7 @@ def main() -> None:
     main_group.add_command(run)
     main_group.add_command(finn_check)
     nas.add_command(nas_eval)
+    nas.add_command(nas_sample)
     main_group.add_command(nas)
     try:
         main_group()

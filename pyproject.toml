@@ -79,6 +79,10 @@ pytest-html-merger = { version = "~0.1.0", optional = true }
 pytest-rerunfailures = { version = "~16.6", optional = true }
 pytest-timeout = { version = "~2.4.0", optional = true }
 junitparser = { version = "~5.0.1", optional = true }
+# Neural architecture search (extra "nas", src/finn/nas): the search loop needs optuna and
+# torchvision provides CIFAR-10. Keep in sync with the dev group.
+optuna = { version = "~5.0.0", optional = true }
+torchvision = { version = "~0.27.0", optional = true }
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "~4.2.0"
@@ -97,6 +101,7 @@ pytest-html-merger = "~0.1.0"
 pytest-rerunfailures = "~16.6"
 pytest-timeout = "~2.4.0"
 junitparser = "~5.0.1"
+optuna = "~5.0.0"                                   # NAS search loop (extra "nas")
 
 [tool.poetry.extras]
 test = [
@@ -108,7 +113,13 @@ test = [
     "pytest-timeout",
     "junitparser",
 ]
+nas = [
+    "optuna",
+    "torchvision",
+]
 all = [
+    "optuna",
+    "torchvision",
     "pytest",
     "pytest-xdist",
     "pytest-html",
