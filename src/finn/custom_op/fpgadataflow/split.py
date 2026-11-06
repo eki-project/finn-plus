@@ -163,9 +163,13 @@ class StreamingSplit(HWCustomOp):
         return self.get_output_datatype().bitwidth() * self.simd
 
     def get_number_output_values(self) -> dict[str, int]:
-        """Return number output values, one entry per output stream."""
+        """Return the number of words each output stream produces, one entry per stream.
+
+        This counts all ``numInputVectors`` dimensions, including a leading one
+        that is not 1, times the number of folds of the respective output.
+        """
         return {
-            f"out{i}": int(np.prod(self.get_folded_output_shape(i)[1:-1]))
+            f"out{i}": int(np.prod(self.get_folded_output_shape(i)[:-1]))
             for i in range(len(self.onnx_node.output))
         }
 
