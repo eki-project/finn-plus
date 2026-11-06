@@ -1278,6 +1278,146 @@ def finn_check() -> None:
     Console().print("[bold green]FINN is ready![/bold green]")
 
 
+@click.group(help="Neural architecture search utilities with FINN+ in the loop.")
+def nas() -> None:
+    """Click group collecting the NAS related commands."""
+
+
+@click.command(
+    name="eval",
+    help="Check whether an exported (Q)ONNX model is FINN-compatible and estimate its resources "
+    "and throughput, without any synthesis. Exit code: 0 compatible, 1 not compatible, "
+    "3 the evaluation itself failed.",
+)
+@finn_deps
+@finn_deps_definitions
+@finn_build_dir
+@num_default_workers
+@skip_dep_update
+@batch
+@output
+@click.option("--fpga-part", default=None, help="FPGA part to estimate for.")
+@click.option(
+    "--board",
+    default=None,
+    help="Board to estimate for (alternative to --fpga-part). Also reports the share of the "
+    "board's resources if the board is known to FINN+.",
+)
+@click.option(
+    "--clk-period-ns", type=float, default=10.0, show_default=True, help="Target clock period."
+)
+@click.option("--target-fps", type=int, default=None, help="Throughput target for the folding.")
+@click.option(
+    "--folding-config",
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Folding configuration JSON to apply instead of folding towards --target-fps.",
+)
+@click.option(
+    "--require-target-met",
+    is_flag=True,
+    help="Treat a throughput target that the folding cannot reach as not compatible.",
+)
+@click.option(
+    "--strict-codegen",
+    is_flag=True,
+    help="Also generate the HLS/RTL sources (no synthesis) to trigger the checks that FINN+ "
+    "only performs at code generation time. Slower.",
+)
+@click.option(
+    "--timeout",
+    type=float,
+    default=None,
+    help="Evaluate in a separate worker process and stop it after this many seconds.",
+)
+@click.option(
+    "--cache",
+    "cache_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="SQLite file (or directory) to memoize results in.",
+)
+@click.option(
+    "--keep-artifacts",
+    type=click.Choice(["never", "on_failure", "always"]),
+    default="never",
+    show_default=True,
+    help="Keep the per-model working directory (intermediate models).",
+)
+@click.argument(
+    "model",
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
+)
+def nas_eval(
+    finn_deps: Path | None,
+    finn_deps_definitions: Path | None,
+    finn_build_dir: Path | None,
+    num_default_workers: int,
+    skip_dep_update: bool,
+    batch: bool,
+    output: Path | None,
+    fpga_part: str | None,
+    board: str | None,
+    clk_period_ns: float,
+    target_fps: int | None,
+    folding_config: Path | None,
+    require_target_met: bool,
+    strict_codegen: bool,
+    timeout: float | None,
+    cache_path: Path | None,
+    keep_artifacts: str,
+    model: Path,
+) -> None:
+    """Evaluate a model with the NAS oracle."""
+    if fpga_part is None and board is None:
+        raise click.UsageError("Specify the target with --fpga-part or --board.")
+    if (target_fps is None) == (folding_config is None):
+        raise click.UsageError("Specify exactly one of --target-fps and --folding-config.")
+    model = model.expanduser().absolute()
+    if finn_build_dir is not None:
+        finn_build_dir = finn_build_dir.expanduser().absolute()
+        finn_build_dir.mkdir(parents=True, exist_ok=True)
+    if finn_deps is not None:
+        finn_deps = finn_deps.expanduser().absolute()
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
+    settings = FINNSettings.init(
+        auto_set_environment_vars=True,
+        automatic_dependency_updates=not skip_dep_update,
+        flow_config=model,
+        **get_function_args(),
+    )
+    prepare_finn(settings, True, batch)
+    Console().rule(f"[bold cyan]Evaluating [/bold cyan][bold orange1]{model.name}[/bold orange1]")
+
+    # Late import because we need prepare_finn to setup remaining dependencies first
+    from finn.nas.cli import evaluate_model
+    from finn.nas.config import FoldingSpec, OracleConfig
+
+    if folding_config is not None:
+        folding = FoldingSpec(
+            kind="fixed",
+            target_fps=None,
+            folding_config_file=str(folding_config.expanduser().absolute()),
+        )
+    else:
+        folding = FoldingSpec(target_fps=target_fps, require_target_met=require_target_met)
+    config = OracleConfig(
+        fpga_part=fpga_part,
+        board=board,
+        synth_clk_period_ns=clk_period_ns,
+        folding=folding,
+        strict_codegen=strict_codegen,
+        isolation="process" if timeout is not None else "inprocess",
+        timeout_s=timeout if timeout is not None else 0.0,
+        work_dir=str(settings.finn_build_dir / "nas_oracle"),
+        keep_artifacts=keep_artifacts,  # type: ignore[arg-type]
+        cache_path=str(cache_path.expanduser().absolute()) if cache_path is not None else None,
+    )
+    out_path = output.expanduser().absolute() if output is not None else None
+    sys.exit(evaluate_model(model, config, out_path))
+
+
 def main() -> None:
     """Clicks entrypoint function."""
     # May replace the process image, so keep it first to not redo any work.
@@ -1301,6 +1441,8 @@ def main() -> None:
     main_group.add_command(test)
     main_group.add_command(run)
     main_group.add_command(finn_check)
+    nas.add_command(nas_eval)
+    main_group.add_command(nas)
     try:
         main_group()
     except FINNValidationError as e:
