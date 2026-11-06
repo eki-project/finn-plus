@@ -43,9 +43,8 @@ from qonnx.custom_op.base import CustomOp
 from finn.custom_op.fpgadataflow._registry import make_registry
 
 # Dictionary of registered custom-op implementations (keyed by class name) and the
-# decorator that fills it. qonnx.custom_op.registry reads ``custom_op`` to resolve
-# nodes carrying this package's name as their ONNX domain.
-custom_op, register_custom_op = make_registry(CustomOp)
+# decorator that fills it and registers each op with qonnx for this package's domain.
+custom_op, register_custom_op = make_registry(CustomOp, __name__)
 
 # flake8: noqa: E402, F401
 # ruff: noqa: E402, F401
@@ -87,8 +86,3 @@ import finn.custom_op.fpgadataflow.thresholding
 import finn.custom_op.fpgadataflow.unsqueeze
 import finn.custom_op.fpgadataflow.upsampler
 import finn.custom_op.fpgadataflow.vectorvectoractivation
-
-# qonnx.custom_op.registry.get_ops_in_domain discovers ops by scanning the package
-# namespace, not the custom_op dictionary, so expose every registered class as a
-# package attribute (as the explicit imports of the old hand-maintained lists did).
-globals().update(custom_op)

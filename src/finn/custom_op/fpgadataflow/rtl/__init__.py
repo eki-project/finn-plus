@@ -33,13 +33,14 @@ Every ``*_rtl`` module in this package decorates its op class(es) with
 op resolvable via ``qonnx.custom_op.registry``. There is no hand-maintained
 list of ops."""
 
+from finn.custom_op.fpgadataflow import rtlbackend
 from finn.custom_op.fpgadataflow._registry import make_registry
-from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 
 # Dictionary of registered custom-op implementations (keyed by class name) and the
-# decorator that fills it. qonnx.custom_op.registry reads ``custom_op`` to resolve
-# nodes carrying this package's name as their ONNX domain.
-custom_op, register_custom_op = make_registry(RTLBackend)
+# decorator that fills it and registers each op with qonnx for this package's domain.
+# The base class is reached through its module so that it is not bound in this
+# package's namespace, where get_ops_in_domain would list it as an op.
+custom_op, register_custom_op = make_registry(rtlbackend.RTLBackend, __name__)
 
 # flake8: noqa: E402, F401
 # ruff: noqa: E402, F401
@@ -67,8 +68,3 @@ import finn.custom_op.fpgadataflow.rtl.streamingdatawidthconverter_rtl
 import finn.custom_op.fpgadataflow.rtl.streamingfifo_rtl
 import finn.custom_op.fpgadataflow.rtl.thresholding_rtl
 import finn.custom_op.fpgadataflow.rtl.vectorvectoractivation_rtl
-
-# qonnx.custom_op.registry.get_ops_in_domain discovers ops by scanning the package
-# namespace, not the custom_op dictionary, so expose every registered class as a
-# package attribute (as the explicit imports of the old hand-maintained lists did).
-globals().update(custom_op)
