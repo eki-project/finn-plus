@@ -216,10 +216,10 @@ from finn.util.fpgadataflow import is_mlo, warn_hls_rtl_dsp_conflict
 from finn.util.logging import log
 from finn.util.slurmutil import detect_slurm_hosts, get_local_cores, parse_hosts
 from finn.util.verification import nodewise_verification
-from finn.xsi import SimEngine
 
 if TYPE_CHECKING:
     from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
+    from finn.xsi import SimEngine
 
 
 BuildDataflowStep = Callable[..., ModelWrapper]
@@ -370,7 +370,7 @@ def verify_step(
     cfg: DataflowBuildConfig,
     step_name: str,
     need_parent: bool,
-    rtlsim_pre_hook: Callable[[SimEngine], None] | None = None,
+    rtlsim_pre_hook: "Callable[[SimEngine], None] | None" = None,
 ) -> None:
     """Verify a build step by running simulation and comparing results.
 
