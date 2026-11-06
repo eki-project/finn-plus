@@ -12,7 +12,10 @@
 
 #define AP_WIDTH(x) (decltype(x)::width)
 
+constexpr size_t MAX_ETHERNET_HEADER_LENGTH_BYTES = 22;
+
 namespace lsp {
+    constexpr size_t CURRENT_VERSION = 0;
 
     /** Ceiling of log2(n): the number of bits needed to tell n different values apart
     * (clog2(1) == 0). To store the value n itself, use clog2(n + 1). */
@@ -124,12 +127,30 @@ namespace lsp {
                 return header;
             }
 
-            /** Unpack a header from its packed representation. Inverse of `pack()`. */
+            /** Unpack a header from its packed representation. Inverse of `pack()`.
+            Expects header to start at bit 0. */
             static lsp_header_t unpack(const ap_uint<WIDTH>& bits) {
                 lsp_header_t header;
-                // TODO
+                constexpr size_t versionOffset = 0;
+                constexpr size_t frameTypeOffset = versionOffset + AP_WIDTH(version);
+                constexpr size_t flagsOffset = frameTypeOffset + AP_WIDTH(frameType);
+                constexpr size_t fsnOffset = flagsOffset + AP_WIDTH(flags);
+                constexpr size_t payloadChunksOffset = fsnOffset + AP_WIDTH(frameSequenceNumber);
+                constexpr size_t reservedOffset = payloadChunksOffset + AP_WIDTH(payloadChunks);
+                header.version = bits.range(frameTypeOffset-1, versionOffset);
+                header.frameType = bits.range(flagsOffset-1, frameTypeOffset);
+                header.flags = bits.range(fsnOffset-1, flagsOffset);
+                header.frameSequenceNumber = bits.range(payloadChunksOffset-1, fsnOffset);
+                header.payloadChunks = bits.range(reservedOffset-1, payloadChunksOffset);
+                header._reserved = bits.range(WIDTH-1, reservedOffset);
                 return header;
             }
+
+            // Check that the version can be stored in the header
+            static_assert(
+                clog2(CURRENT_VERSION)+1 <= AP_WIDTH(version),
+                "Cannot accommodate version number in protocol header!"
+            );
         };
 
         // Enforce that the fields fill exactly WIDTH bits
@@ -144,6 +165,8 @@ namespace lsp {
             >() == lsp_header_t::WIDTH,
             "Header fields must fill exactly WIDTH bits"
         );
+
+
     }
 
     namespace data {
@@ -384,6 +407,11 @@ namespace lsp {
                 }
             }
 
+            /** Return the available credits (free spaces in the buffer). */
+            ap_uint<PointerWidth> getAvailableCredits() const {
+                return Depth - bufferSize;
+            }
+
             /**
             Update the ring buffer with the data.
             If there is no space in the buffer, this does nothing.
@@ -507,6 +535,34 @@ namespace lsp {
                 }
             }
         };
+
+        /** Ring buffer depths (in words) per stream, in stream index order. A separate type, because a
+        template cannot take the depths and the widths as two non-type packs side by side. */
+        template<size_t... Depths>
+        using lsp_ring_depths_t = std::index_sequence<Depths...>;
+
+        /** Implementation of lsp_stream_ring_buffers_t: pairs the stream widths with their indices
+        and depths. */
+        template<typename Indices, typename Depths, int... StreamWidths>
+        struct _lsp_stream_ring_buffers;
+        template<size_t... StreamIndices, size_t... Depths, int... StreamWidths>
+        struct _lsp_stream_ring_buffers<
+            std::index_sequence<StreamIndices...>, lsp_ring_depths_t<Depths...>, StreamWidths...
+        > {
+            static_assert(
+                sizeof...(Depths) == sizeof...(StreamWidths),
+                "Exactly one ring buffer depth per stream is required"
+            );
+            using type = std::tuple<lsp_stream_ring_buffer_t<StreamIndices, StreamWidths, Depths>...>;
+        };
+
+        /** One ring buffer per stream: element I is the ring buffer for stream index I with the
+        I-th width and the I-th depth, i.e. the stream index is the position in `StreamWidths`.
+        `Depths` is an lsp_ring_depths_t. */
+        template<typename Depths, int... StreamWidths>
+        using lsp_stream_ring_buffers_t = typename _lsp_stream_ring_buffers<
+            std::make_index_sequence<sizeof...(StreamWidths)>, Depths, StreamWidths...
+        >::type;
 
     }
 
