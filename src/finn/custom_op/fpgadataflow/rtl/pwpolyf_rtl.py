@@ -10,7 +10,8 @@ from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, cast
 
-from finn.custom_op.fpgadataflow.pwpolyf import NodeAttrTypes, PWPolyF
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.pwpolyf import PWPolyF
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.general.pwpolyfunction import (

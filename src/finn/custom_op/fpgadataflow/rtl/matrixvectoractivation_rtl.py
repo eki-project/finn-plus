@@ -39,7 +39,8 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, Literal, cast
 
-from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU, NodeAttrTypes
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import get_dsp_block, get_dsp_datapath_limits

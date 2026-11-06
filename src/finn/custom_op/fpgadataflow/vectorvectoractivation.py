@@ -50,7 +50,7 @@ from qonnx.util.basic import (
 from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
@@ -58,14 +58,6 @@ from finn.util.settings import get_settings
 
 if TYPE_CHECKING:
     from onnx import GraphProto
-
-# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
-# their (dtype, required, default[, allowed_values]) specification tuples
-NodeAttrTypes = dict[
-    str,
-    tuple[str, bool, int | float | str | bool | np.ndarray | list]
-    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
-]
 
 
 @register_custom_op
@@ -909,22 +901,12 @@ class VVAU(HWCustomOp):
             self.instantiate_ip(cmd)
 
             # Instantiate a streamer and connect it to the IP
-            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
             axi_dir = str(Path(get_settings().finn_rtllib) / "axi/hdl") + "/"
             ms_rtllib_dir = str(Path(get_settings().finn_rtllib) / "memstream/hdl") + "/"
-            file_suffix = "_memstream_wrapper.v"
-            # automatically find memstream verilog component in code generation directory
-            strm_tmpl = next(
-                (f.name for f in Path(code_gen_dir).iterdir() if f.name.endswith(file_suffix)),
-                None,
-            )
-            if strm_tmpl is None:
-                raise FINNInternalError(
-                    f"{node_name}: could not find a *{file_suffix} file in {code_gen_dir}"
-                )
-            strm_tmpl_name = strm_tmpl[:-2]
+            strm_tmpl = self.find_ipgen_file("_memstream_wrapper.v")
+            strm_tmpl_name = strm_tmpl.stem
             sourcefiles = [
-                str(Path(code_gen_dir) / strm_tmpl),
+                str(strm_tmpl),
                 axi_dir + "axilite.sv",
                 ms_rtllib_dir + "memstream_axi.sv",
                 ms_rtllib_dir + "memstream.sv",

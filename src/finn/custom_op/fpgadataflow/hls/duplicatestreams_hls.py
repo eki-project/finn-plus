@@ -31,9 +31,10 @@
 import numpy as np
 from typing import TYPE_CHECKING
 
-from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams, NodeAttrTypes
+from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 
 if TYPE_CHECKING:
     from onnx import GraphProto, NodeProto

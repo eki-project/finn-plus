@@ -37,19 +37,11 @@ from qonnx.util.basic import qonnx_make_model, roundup_to_integer_multiple
 from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.exception import FINNInternalError
 
 if TYPE_CHECKING:
     from onnx import GraphProto
-
-# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
-# their (dtype, required, default[, allowed_values]) specification tuples
-NodeAttrTypes = dict[
-    str,
-    tuple[str, bool, int | float | str | bool | np.ndarray | list]
-    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
-]
 
 
 @register_custom_op

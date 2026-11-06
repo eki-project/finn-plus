@@ -15,7 +15,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import get_by_name, qonnx_make_model, roundup_to_integer_multiple
 from typing import TYPE_CHECKING, cast
 
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -31,13 +31,6 @@ BaseNodeAttrValue = int | float | str | bool | npt.NDArray | list[str | int | fl
 # ``set_nodeattr`` on this op additionally accepts a graph value for the ``body_*``
 # attributes (as a ``ModelWrapper`` or a raw ``GraphProto``).
 SetNodeAttrValue = ModelWrapper | GraphProto | BaseNodeAttrValue
-# Shape of the dict returned by ``get_nodeattr_types``: attribute name ->
-# (dtype, required, default[, allowed_values]). Must match the base classes.
-NodeAttrTypes = dict[
-    str,
-    tuple[str, bool, int | float | str | bool | npt.NDArray | list]
-    | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
-]
 
 
 @register_custom_op

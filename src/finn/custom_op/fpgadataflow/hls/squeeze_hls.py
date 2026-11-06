@@ -9,7 +9,8 @@ from onnx import GraphProto
 
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.squeeze import NodeAttrTypes, Squeeze
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.squeeze import Squeeze
 
 
 @register_custom_op

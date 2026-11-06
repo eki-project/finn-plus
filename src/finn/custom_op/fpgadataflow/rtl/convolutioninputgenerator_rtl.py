@@ -43,10 +43,8 @@ from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Literal, cast
 
-from finn.custom_op.fpgadataflow.convolutioninputgenerator import (
-    ConvolutionInputGenerator,
-    NodeAttrTypes,
-)
+from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.exception import FINNInternalError, FINNUserError

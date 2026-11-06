@@ -10,6 +10,7 @@ from typing import cast
 
 from finn.core.onnx_exec import execute_onnx
 from finn.custom_op.fpgadataflow import register_custom_op
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.util.exception import FINNInternalError, FINNUserError
 
 # Value types accepted/returned by the base ``get_nodeattr``/``set_nodeattr``.
@@ -17,13 +18,6 @@ BaseNodeAttrValue = int | float | str | bool | npt.NDArray | list[str | int | fl
 # ``set_nodeattr`` on this op additionally accepts a graph value for the ``body``
 # attribute (as a ``ModelWrapper`` or a raw ``GraphProto``).
 SetNodeAttrValue = ModelWrapper | GraphProto | BaseNodeAttrValue
-# Shape of the dict returned by ``get_nodeattr_types``: attribute name ->
-# (dtype, required, default[, allowed_values]). Must match the base class.
-NodeAttrTypes = dict[
-    str,
-    tuple[str, bool, int | float | str | bool | npt.NDArray | list]
-    | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
-]
 
 
 @register_custom_op

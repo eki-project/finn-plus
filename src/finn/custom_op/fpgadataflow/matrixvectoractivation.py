@@ -52,7 +52,7 @@ from qonnx.util.basic import (
 from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.basic import fifo_rtl_files, is_versal
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -64,13 +64,6 @@ if TYPE_CHECKING:
 
     from finn.transformation.fpgadataflow.loop_rolling import LoopBodyInputType
 
-# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
-# their (dtype, required, default[, allowed_values]) specification tuples
-NodeAttrTypes = dict[
-    str,
-    tuple[str, bool, int | float | str | bool | np.ndarray | list]
-    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
-]
 
 # AXI bus width (DATA_BITS in fetch_weights.sv) used for the external memory weight image
 _FETCH_WEIGHTS_DATA_BITS = 256
@@ -81,28 +74,6 @@ _FETCH_WEIGHTS_DATA_BITS = 256
 # (optional) input 2 is the thresholds tensor, shape (o_size, n_thres)
 # output 0 is the output tensor, shape (.., o_size) = (..., MH)
 # the ... here can be any shape (representing groups of vectors)
-
-
-def _find_codegen_file(code_gen_dir: str, file_suffix: str, node_name: str) -> str:
-    """Find the generated file ending in ``file_suffix`` in ``code_gen_dir``.
-
-    Args:
-        code_gen_dir: Directory to search.
-        file_suffix: Filename suffix to look for.
-        node_name: Name of the node (for the error message).
-
-    Returns:
-        The name (without directory) of the matching file.
-    """
-    strm_tmpl = next(
-        (f.name for f in Path(code_gen_dir).iterdir() if f.name.endswith(file_suffix)),
-        None,
-    )
-    if strm_tmpl is None:
-        raise FINNInternalError(
-            f"{node_name}: could not find a *{file_suffix} file in {code_gen_dir}"
-        )
-    return strm_tmpl
 
 
 @register_custom_op
@@ -1261,7 +1232,6 @@ class MVAU(HWCustomOp):
 
             # Instantiate either the HLS or RTL IP depending on operator
             self.instantiate_ip(cmd)
-            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
             rtllib = Path(get_settings().finn_rtllib)
             win_name = ""
 
@@ -1277,11 +1247,9 @@ class MVAU(HWCustomOp):
 
                     # dynamic loader
                     # automatically find dynamic load verilog component in code generation dir
-                    strm_tmpl = _find_codegen_file(
-                        code_gen_dir, "_dynamic_load_wrapper.v", node_name
-                    )
+                    strm_tmpl = self.find_ipgen_file("_dynamic_load_wrapper.v")
                     sourcefiles = [
-                        str(Path(code_gen_dir) / strm_tmpl),
+                        str(strm_tmpl),
                         str(rtllib / "dynload" / "hdl" / "dynamic_load.sv"),
                     ]
                     strm_inst = node_name + "_wdynld"
@@ -1308,13 +1276,11 @@ class MVAU(HWCustomOp):
 
                     # instantiate a fetch weights component and connect it to the IP
                     # automatically find fetch weights verilog component in code generation dir
-                    strm_tmpl = _find_codegen_file(
-                        code_gen_dir, "_fetch_weights_wrapper.v", node_name
-                    )
+                    strm_tmpl = self.find_ipgen_file("_fetch_weights_wrapper.v")
                     fwg_rtllib_dir = rtllib / "fetch_weights"
                     dwc_rtllib_dir = rtllib / "dwc" / "hdl"
                     sourcefiles = [
-                        str(Path(code_gen_dir) / strm_tmpl),
+                        str(strm_tmpl),
                         str(rtllib / "skid" / "skid.sv"),
                         str(fwg_rtllib_dir / "fetch_weights.sv"),
                         str(fwg_rtllib_dir / "local_weight_buffer.sv"),
@@ -1358,10 +1324,10 @@ class MVAU(HWCustomOp):
                 case "internal_decoupled":
                     # instantiate a streamer and connect it to the IP
                     # automatically find memstream verilog component in code generation dir
-                    strm_tmpl = _find_codegen_file(code_gen_dir, "_memstream_wrapper.v", node_name)
+                    strm_tmpl = self.find_ipgen_file("_memstream_wrapper.v")
                     ms_rtllib_dir = rtllib / "memstream" / "hdl"
                     sourcefiles = [
-                        str(Path(code_gen_dir) / strm_tmpl),
+                        str(strm_tmpl),
                         str(rtllib / "axi" / "hdl" / "axilite.sv"),
                         str(ms_rtllib_dir / "memstream_axi.sv"),
                         str(ms_rtllib_dir / "memstream.sv"),
@@ -1376,7 +1342,7 @@ class MVAU(HWCustomOp):
                     )
 
             cmd += [f"add_files -norecurse {f}" for f in sourcefiles]
-            strm_tmpl_name = strm_tmpl[:-2]
+            strm_tmpl_name = strm_tmpl.stem
             cmd.append(
                 f"create_bd_cell -type hier -reference {strm_tmpl_name} /{node_name}/{strm_inst}"
             )

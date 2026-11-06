@@ -31,13 +31,12 @@
 
 import math
 import numpy as np
-import numpy.typing as npt
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import TYPE_CHECKING, Any, cast
 
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
@@ -45,13 +44,6 @@ if TYPE_CHECKING:
     from onnx import GraphProto, NodeProto
     from qonnx.core.modelwrapper import ModelWrapper
 
-# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
-# their (dtype, required, default[, allowed_values]) specification tuples
-NodeAttrTypes = dict[
-    str,
-    tuple[str, bool, int | float | str | bool | npt.NDArray | list]
-    | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
-]
 
 # the IODMA inerfaces a memory-mapped AXI interface and an AXI stream
 # direction "in": pulls data from AXI-MM to AXI stream
