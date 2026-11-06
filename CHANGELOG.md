@@ -26,7 +26,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - Kernels were only pinned to their SLR for the Aurora transceiver, so the SLR assignment of a `vitis_floorplan_file` never reached placement; every kernel with an SLR is now pinned
 - A second `[vivado]` line added to a v++ link configuration was glued onto the first
 - The LUT estimate of the RTL MVAU was always 0; it now counts the weights held in LUTRAM, the adder tree and the accumulator
-- The weight-stream and AXI-Lite command registers of `memstream` and `axilite` replicate at synthesis (`MAX_FANOUT`), which were the worst paths of mobilenetv1 at 200 MHz
+- The read and output-tap pointers of `memstream` replicate at synthesis (`MAX_FANOUT`): they drive the address pins of every block RAM and the tap select of every output bit
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
 - (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)
 - RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate at the cost of a slightly larger buffer (eki-project#290)
