@@ -44,7 +44,6 @@ from qonnx.util.basic import (
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.basic import fifo_rtl_files, is_versal
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
-from finn.util.exception import FINNUserError
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
@@ -362,20 +361,32 @@ class MVAU(HWCustomOp):
         normal_output_shape = tuple(vecs + [mh])
         return normal_output_shape
 
+    def _check_pe_folding(self) -> None:
+        """Raise a FINNFoldingError unless PE divides MH."""
+        mh = self.get_nodeattr("MH")
+        pe = self.get_nodeattr("PE")
+        if mh % pe != 0:
+            raise self._folding_error(f"MH ({mh}) must be divisable by PE (currently {pe}).")
+
+    def _check_simd_folding(self) -> None:
+        """Raise a FINNFoldingError unless SIMD divides MW."""
+        mw = self.get_nodeattr("MW")
+        simd = self.get_nodeattr("SIMD")
+        if mw % simd != 0:
+            raise self._folding_error(f"MW ({mw}) must be divisable by SIMD (currently {simd}).")
+
+    def check_folding(self) -> None:
+        """Check the folding: PE must divide MH and SIMD must divide MW."""
+        self._check_pe_folding()
+        self._check_simd_folding()
+
     def calc_wmem(self):
         """Calculates and returns WMEM."""
         mw = self.get_nodeattr("MW")
         mh = self.get_nodeattr("MH")
         pe = self.get_nodeattr("PE")
         simd = self.get_nodeattr("SIMD")
-        if mh % pe != 0:
-            raise FINNUserError(
-                f"{self.onnx_node.name}: MH ({mh}) must be divisable by PE (currently {pe})."
-            )
-        if mw % simd != 0:
-            raise FINNUserError(
-                f"{self.onnx_node.name}: MW ({mw}) must be divisable by SIMD (currently {simd})."
-            )
+        self.check_folding()
         wmem = mw * mh // (pe * simd)
         return wmem
 
@@ -633,7 +644,7 @@ class MVAU(HWCustomOp):
         mh = self.get_nodeattr("MH")
         pe = self.get_nodeattr("PE")
         tmem = mh // pe
-        assert mh % pe == 0, "Requirement MH divisable by PE is violated."
+        self._check_pe_folding()
         assert (
             orig_thres_matrix.ndim == 2
         ), """Threshold matrix dimension is
@@ -691,8 +702,7 @@ class MVAU(HWCustomOp):
             mh,
         ), """Weights matrix doesn't
         have expected shape (mw, mh)"""
-        assert mw % simd == 0, "Requirement MH divisable by SIMD is violated."
-        assert mh % pe == 0, "Requirement MH divisable by PE is violated."
+        # MW % SIMD == 0 and MH % PE == 0 were already checked by calc_wmem() above
         # start by transposing the original weight matrix, since ONNX and
         # finn-hlslib use different assumptions
         # ONNX uses (in_features, out_features) and matmul(x, W)

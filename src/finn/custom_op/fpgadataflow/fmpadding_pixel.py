@@ -91,12 +91,20 @@ class FMPadding_Pixel(HWCustomOp):
         oshape = (1, odim_h, odim_w, num_ch)
         return oshape
 
+    def check_folding(self) -> None:
+        """Check the folding: SIMD must divide NumChannels."""
+        ifm_ch = self.get_nodeattr("NumChannels")
+        simd = self.get_nodeattr("SIMD")
+        if ifm_ch % simd != 0:
+            raise self._folding_error(
+                f"SIMD must divide input channels (SIMD = {simd}, NumChannels = {ifm_ch})"
+            )
+
     def get_folded_input_shape(self, ind=0):
         """Return folded input shape."""
         normal_ishape = list(self.get_normal_input_shape())
-        ifm_ch = self.get_nodeattr("NumChannels")
         simd = self.get_nodeattr("SIMD")
-        assert ifm_ch % simd == 0, "SIMD must divide input channels"
+        self.check_folding()
         fold = int(normal_ishape[-1] / simd)
         folded_ishape = normal_ishape[:-1] + [fold, simd]
         return tuple(folded_ishape)
@@ -104,9 +112,8 @@ class FMPadding_Pixel(HWCustomOp):
     def get_folded_output_shape(self, ind=0):
         """Return folded output shape."""
         normal_oshape = list(self.get_normal_output_shape())
-        ifm_ch = self.get_nodeattr("NumChannels")
         simd = self.get_nodeattr("SIMD")
-        assert ifm_ch % simd == 0, "SIMD must divide input channels"
+        self.check_folding()
         fold = int(normal_oshape[-1] / simd)
         folded_oshape = normal_oshape[:-1] + [fold, simd]
         return tuple(folded_oshape)

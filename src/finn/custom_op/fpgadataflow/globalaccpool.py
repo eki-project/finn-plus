@@ -64,12 +64,19 @@ class GlobalAccPool(HWCustomOp):
         ishape = tuple(vecs + [ch])
         return ishape
 
+    def check_folding(self) -> None:
+        """Check the folding: PE must divide NumChannels."""
+        ch = self.get_nodeattr("NumChannels")
+        pe = self.get_nodeattr("PE")
+        if ch % pe != 0:
+            raise self._folding_error(f"PE must divide NumChannels (PE = {pe}, NumChannels = {ch})")
+
     def get_folded_input_shape(self, ind=0):
         """Return folded input shape."""
         ch = self.get_nodeattr("NumChannels")
         pe = self.get_nodeattr("PE")
         vecs = list(self.get_nodeattr("numInputVectors"))
-        assert ch % pe == 0, "PE must divide NumChannels"
+        self.check_folding()
         folds = int(ch / pe)
         folded_ishape = tuple(vecs + [folds, pe])
         return folded_ishape
@@ -89,7 +96,7 @@ class GlobalAccPool(HWCustomOp):
         ch = self.get_nodeattr("NumChannels")
         pe = self.get_nodeattr("PE")
         unfolded_shape = list(self.get_normal_output_shape())
-        assert ch % pe == 0, "PE must divide NumChannels"
+        self.check_folding()
         folds = int(ch / pe)
         oshape = tuple(unfolded_shape[:-1] + [folds, pe])
         return oshape

@@ -296,6 +296,31 @@ class VVAU(HWCustomOp):
         out_width = o_bits * self.get_nodeattr("PE")
         return out_width
 
+    def _check_simd_folding(self) -> None:
+        """Raise a FINNFoldingError unless SIMD divides the kernel size (k_h * k_w)."""
+        k_h, k_w = self.get_nodeattr("Kernel")
+        simd = self.get_nodeattr("SIMD")
+        if (k_h * k_w) % simd != 0:
+            raise self._folding_error(
+                "Requirement kernel (k_h * k_w) divisable by SIMD is violated. "
+                f"(k_h * k_w = {k_h * k_w}, SIMD = {simd})"
+            )
+
+    def _check_pe_folding(self) -> None:
+        """Raise a FINNFoldingError unless PE divides Channels."""
+        ch = self.get_nodeattr("Channels")
+        pe = self.get_nodeattr("PE")
+        if ch % pe != 0:
+            raise self._folding_error(
+                f"Requirement Channels divisable by PE is violated. (Channels = {ch}, PE = {pe})"
+            )
+
+    def check_folding(self) -> None:
+        """Check the folding: SIMD must divide the kernel size (k_h * k_w) and PE must
+        divide Channels."""
+        self._check_simd_folding()
+        self._check_pe_folding()
+
     def get_folded_input_shape(self, ind=0):
         """Get the folded input shape for hardware implementation.
 
@@ -314,9 +339,8 @@ class VVAU(HWCustomOp):
         simd = self.get_nodeattr("SIMD")
         pe = self.get_nodeattr("PE")
         kernel_2 = k_h * k_w
-        assert kernel_2 % simd == 0, "Requirement kernel (k_h * k_w) divisable by SIMD is violated."
+        self.check_folding()
         sf = kernel_2 // simd
-        assert ch % pe == 0, "Requirement Channels divisable by PE is violated."
         nf = ch // pe
 
         if ind == 0:
@@ -607,7 +631,7 @@ class VVAU(HWCustomOp):
         ch = self.get_nodeattr("Channels")
         pe = self.get_nodeattr("PE")
         tmem = self.calc_tmem()
-        assert ch % pe == 0, "Requirement Channels divisable by PE is violated."
+        self._check_pe_folding()
         assert (
             orig_thres_matrix.ndim == 2
         ), """Threshold matrix dimension is

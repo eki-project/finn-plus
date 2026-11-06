@@ -78,12 +78,19 @@ class LabelSelect(HWCustomOp):
         ishape = tuple(vecs + [nlabels])
         return ishape
 
+    def check_folding(self) -> None:
+        """Check the folding: PE must divide Labels."""
+        nlabels = self.get_nodeattr("Labels")
+        pe = self.get_nodeattr("PE")
+        if nlabels % pe != 0:
+            raise self._folding_error(f"PE must divide Labels (PE = {pe}, Labels = {nlabels})")
+
     def get_folded_input_shape(self, ind=0):
         """Return folded input shape."""
         nlabels = self.get_nodeattr("Labels")
         pe = self.get_nodeattr("PE")
         vecs = list(self.get_nodeattr("numInputVectors"))
-        assert nlabels % pe == 0, "PE must divide Labels"
+        self.check_folding()
         folds = int(nlabels / pe)
         folded_ishape = tuple(vecs + [folds, pe])
         return folded_ishape

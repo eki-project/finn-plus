@@ -93,12 +93,25 @@ class ConvolutionInputGenerator(HWCustomOp):
         ishape = (1, ifm_dim_h, ifm_dim_w, ifm_ch)
         return ishape
 
+    def _check_simd_folding(self) -> None:
+        """Raise a FINNFoldingError unless SIMD divides IFMChannels."""
+        ifm_ch = self.get_nodeattr("IFMChannels")
+        simd = self.get_nodeattr("SIMD")
+        if ifm_ch % simd != 0:
+            raise self._folding_error(
+                f"SIMD must divide IFMChannels (SIMD = {simd}, IFMChannels = {ifm_ch})"
+            )
+
+    def check_folding(self) -> None:
+        """Check the folding: SIMD must divide IFMChannels."""
+        self._check_simd_folding()
+
     def get_folded_input_shape(self, ind=0):
         """Return folded input shape."""
         ifm_dim_h, ifm_dim_w = self.get_nodeattr("IFMDim")
         ifm_ch = self.get_nodeattr("IFMChannels")
         simd = self.get_nodeattr("SIMD")
-        assert ifm_ch % simd == 0, "SIMD must divide IFMChannels"
+        self._check_simd_folding()
         wf = int(ifm_ch / simd)
         folded_ishape = (1, ifm_dim_h, ifm_dim_w, wf, simd)
         return folded_ishape
@@ -127,7 +140,7 @@ class ConvolutionInputGenerator(HWCustomOp):
         pad = 0
         ofm_dim_h = compute_conv_output_dim(ifm_dim_h, k_h, stride_h, pad, dilation_h)
         ofm_dim_w = compute_conv_output_dim(ifm_dim_w, k_w, stride_w, pad, dilation_w)
-        assert ifm_ch % simd == 0, "SIMD must divide IFMChannels"
+        self._check_simd_folding()
         if self.use_parallel_window_output():
             wf = int((ifm_ch) // simd)
             folded_oshape = (1, ofm_dim_h, ofm_dim_w, wf, k_h * k_w * simd)
@@ -177,8 +190,7 @@ class ConvolutionInputGenerator(HWCustomOp):
         the sliding window function"""
         ibits = self.get_input_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
-        ifm_ch = self.get_nodeattr("IFMChannels")
-        assert ifm_ch % simd == 0, "SIMD must divide IFMChannels"
+        self._check_simd_folding()
         in_width = simd * ibits
         return in_width
 

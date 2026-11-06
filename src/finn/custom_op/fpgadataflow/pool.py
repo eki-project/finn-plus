@@ -108,12 +108,20 @@ class Pool(HWCustomOp):
         ishape = (batch_size, *odims, k_prod * ifm_ch)
         return ishape
 
+    def check_folding(self) -> None:
+        """Check the folding: PE must divide Channels."""
+        ifm_ch = self.get_nodeattr("Channels")
+        pe = self.get_nodeattr("PE")
+        if ifm_ch % pe != 0:
+            raise self._folding_error(
+                f"PE must divide input channels (PE = {pe}, Channels = {ifm_ch})"
+            )
+
     def get_folded_input_shape(self, ind=0):
         """Return shape of the folded input tensor."""
         normal_ishape = list(self.get_normal_input_shape())
-        ifm_ch = self.get_nodeattr("Channels")
         pe = self.get_nodeattr("PE")
-        assert ifm_ch % pe == 0, "PE must divide input channels"
+        self.check_folding()
         fold = int(normal_ishape[-1] / pe)
         folded_ishape = normal_ishape[:-1] + [fold, pe]
         return tuple(folded_ishape)
@@ -131,7 +139,7 @@ class Pool(HWCustomOp):
         normal_oshape = list(self.get_normal_output_shape())
         ifm_ch = self.get_nodeattr("Channels")
         pe = self.get_nodeattr("PE")
-        assert ifm_ch % pe == 0, "PE must divide input channels"
+        self.check_folding()
         fold = int(ifm_ch / pe)
         folded_oshape = normal_oshape[:-1] + [fold, pe]
         return tuple(folded_oshape)
