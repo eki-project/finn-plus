@@ -42,7 +42,7 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 from finn.custom_op.fpgadataflow.hls import custom_op as hls_variants
 from finn.custom_op.fpgadataflow.rtl import custom_op as rtl_variants
 from finn.util.basic import get_dsp_block, get_dsp_datapath_limits, is_versal
-from finn.util.exception import FINNUserError
+from finn.util.exception import FINNConfigurationError, FINNUnsupportedOpError, FINNUserError
 from finn.util.logging import log
 
 
@@ -107,8 +107,10 @@ def _determine_impl_style(node, fpgapart, model):
             return "hls"
         # if there is neither an rtl nor hls variant
         # throw error
-        raise Exception(
-            f"""Node {node.name} with optype {optype} has no hw implementation variant)"""
+        raise FINNUnsupportedOpError(
+            f"""Node {node.name} with optype {optype} has no hw implementation variant)""",
+            node_name=node.name,
+            op_type=optype,
         )
 
     # check if user setting can be fulfilled
@@ -127,10 +129,12 @@ def _determine_impl_style(node, fpgapart, model):
             log.warning(warn_str)
             return "rtl"
         else:
-            raise Exception(
+            raise FINNUnsupportedOpError(
                 """Node {} with optype {} has no hw implementation variant)""".format(
                     node.name, optype
-                )
+                ),
+                node_name=node.name,
+                op_type=optype,
             )
     elif impl_style == "rtl":
         if optype == "MVAU":
@@ -210,10 +214,12 @@ def _determine_impl_style(node, fpgapart, model):
             )
             log.warning(warn_str)
             return "hls"
-        raise Exception(
-            f"""Node {node.name} with optype {optype} has no hw implementation variant)"""
+        raise FINNUnsupportedOpError(
+            f"""Node {node.name} with optype {optype} has no hw implementation variant)""",
+            node_name=node.name,
+            op_type=optype,
         )
-    raise Exception(
+    raise FINNConfigurationError(
         f"""Invalid value for attribute preferred_impl_style! Is currently set to: {impl_style}
             has to be set to one of the following value ("hls", "rtl")"""
     )
