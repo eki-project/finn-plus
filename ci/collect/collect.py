@@ -1229,10 +1229,9 @@ if __name__ == "__main__":
 
             if best_search_order is None:
                 print(
-                    f"No valid search order with fifo_sizing_report.json found in {lfs_base_dir}."
+                    "ERROR: No valid search order with fifo_sizing_report.json found in "
+                    f"{lfs_base_dir}."
                 )
-                folding_config_path = None
-                fifo_config_path = None
             else:
                 print(
                     f"Selecting search order '{best_search_order}' with "
@@ -1245,12 +1244,8 @@ if __name__ == "__main__":
                 fifo_config_path = str(
                     lfs_base_dir / best_search_order / "both" / "fifo_config.json"
                 )
-
-            if (
-                folding_config_path is not None
-                and Path(folding_config_path).is_file()
-                and Path(fifo_config_path).is_file()
-            ):
+                # No check that the two files exist: a follow-up build that fails on a
+                # missing config is preferred over a follow-up run that is silently dropped
                 print(
                     f"Creating follow-up experiment config using folding config "
                     f"{folding_config_path} "
