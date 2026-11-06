@@ -403,6 +403,9 @@ def _run_stages(
         timings["estimate"] = time.perf_counter() - t0
         return ("estimate", exc, model, None, None, None, None)
     timings["estimate"] = time.perf_counter() - t0
+    if outcome.target_cycles is not None and result.max_cycles is not None:
+        # The precise criterion: the slowest layer needs more cycles per frame than the target.
+        result.throughput_target_missed = result.max_cycles > outcome.target_cycles
 
     if result.throughput_target_missed and policy.require_target_met:
         return (

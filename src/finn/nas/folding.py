@@ -66,8 +66,9 @@ class TargetFpsFolding:
         )
         model = model.transform(transform, apply_to_subgraphs=True)
         model = model.transform(GiveUniqueNodeNamesRecursive())
-        # The flag is set during the first pass; the relaxed second pass (if any) targets the
-        # achievable throughput, so it reflects whether *our* target was reachable.
+        # SetFolding's any_throughput_target_missed flag is only a hint (it is also set when a
+        # later attribute meets the target after all, and not set for every unmet node), so the
+        # pipeline re-derives the verdict from the achieved cycle count after estimation.
         target_met = not getattr(transform, "any_throughput_target_missed", False)
         return FoldingOutcome(
             model=model,

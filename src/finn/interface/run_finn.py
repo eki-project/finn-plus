@@ -1919,6 +1919,56 @@ def nas_groundtruth(
     sys.exit(0)
 
 
+@click.command(
+    name="report",
+    help="Render the figures (PDF and PNG) and markdown tables of the NAS experiments into "
+    "OUTPUT_DIR from any subset of a sampling run, search runs and a ground-truth run. The "
+    "sampling run is also the baseline of the search figures. Running experiments are rendered "
+    "on their partial records; re-run the command to refresh.",
+)
+@click.option(
+    "--sampling",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Directory of a `finn nas sample` run.",
+)
+@click.option(
+    "--search",
+    "search",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    multiple=True,
+    help="Directory of a `finn nas search` run (repeatable, one per variant).",
+)
+@click.option(
+    "--groundtruth",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Directory of a `finn nas groundtruth` run.",
+)
+@click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
+def nas_report(
+    sampling: Path | None, search: tuple[Path, ...], groundtruth: Path | None, output_dir: Path
+) -> None:
+    """Figures and tables of the NAS experiments."""
+    if sampling is None and not search and groundtruth is None:
+        raise click.UsageError("Give at least one of --sampling, --search, --groundtruth.")
+    from rich.markdown import Markdown
+
+    from finn.nas.experiments.report import render_all
+
+    output_dir = output_dir.expanduser().absolute()
+    written = render_all(
+        output_dir,
+        sampling=sampling.absolute() if sampling else None,
+        search=[d.absolute() for d in search],
+        groundtruth=groundtruth.absolute() if groundtruth else None,
+    )
+    console = Console()
+    console.print(Markdown((output_dir / "summary.md").read_text()))
+    status(f"{len(written)} files written to {output_dir}")
+    sys.exit(0)
+
+
 def main() -> None:
     """Clicks entrypoint function."""
     # May replace the process image, so keep it first to not redo any work.
@@ -1946,6 +1996,7 @@ def main() -> None:
     nas.add_command(nas_sample)
     nas.add_command(nas_search)
     nas.add_command(nas_groundtruth)
+    nas.add_command(nas_report)
     main_group.add_command(nas)
     try:
         main_group()
