@@ -32,6 +32,7 @@ import numpy as np
 from abc import abstractmethod
 from numpy.typing import NDArray
 
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
 # contains the amount of available FPGA resources for several
@@ -252,7 +253,8 @@ class Platform:
 
     def map_device_to_slr(self, idx: int) -> tuple[int, int]:
         """Map a global SLR index to (local_slr, device_id)."""
-        assert idx <= self.nslr * self.ndevices
+        if not (idx <= self.nslr * self.ndevices):
+            raise FINNInternalError("SLR index exceeds the number of SLRs on the platform")
         return (idx % self.nslr, idx // self.nslr)
 
 

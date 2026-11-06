@@ -53,6 +53,14 @@ if TYPE_CHECKING:
 
 import finn.xsi as finnxsi
 
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | npt.NDArray | list]
+    | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
+]
+
 
 class HWCustomOp(CustomOp):
     """HWCustomOp class all custom ops that can be implemented with either
@@ -71,13 +79,7 @@ class HWCustomOp(CustomOp):
         super().__init__(onnx_node, **kwargs)
         self.code_gen_dict = {}
 
-    def get_nodeattr_types(
-        self,
-    ) -> dict[
-        str,
-        tuple[str, bool, int | float | str | bool | np.ndarray | list]
-        | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
-    ]:
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return node attribute types for HWCustomOp.
 
         Returns:
@@ -341,10 +343,16 @@ class HWCustomOp(CustomOp):
 
         """
 
-    def get_number_output_values(self) -> int:
+    def get_number_output_values(self) -> int | dict[str, int]:
         """Get the number of expected output values.
 
         Member function of HWCustomOp class that must be implemented by every node.
+
+        Returns a single ``int`` for nodes with one output stream. Nodes with
+        multiple output streams must instead return a ``{"out<i>": count}`` dict,
+        one entry per stream, as required by the multi-I/O RTL simulation
+        back-end (see ``finn.xsi.rtlsim_multi_io``). Consumers that need a scalar
+        for a specific stream should call ``get_number_output_values_for_stream``.
 
         """
         folded_oshape = self.get_folded_output_shape()
@@ -354,6 +362,24 @@ class HWCustomOp(CustomOp):
                 "since folded output shape is not defined."
             )
         return int(np.prod(folded_oshape[:-1]))
+
+    def get_number_output_values_for_stream(self, ind: int = 0) -> int:
+        """Get the expected output value count for a single output stream.
+
+        Resolves the per-stream scalar regardless of whether
+        ``get_number_output_values`` returns a plain ``int`` (single-output
+        nodes) or a ``{"out<i>": count}`` dict (multi-output nodes).
+        """
+        num_output_values = self.get_number_output_values()
+        if isinstance(num_output_values, dict):
+            key = f"out{ind}"
+            if key not in num_output_values:
+                raise FINNInternalError(
+                    f"{self.onnx_node.name}: no output stream {key!r} in "
+                    f"get_number_output_values() result {num_output_values}"
+                )
+            return int(num_output_values[key])
+        return int(num_output_values)
 
     @abstractmethod
     def get_input_datatype(self, ind: int = 0) -> BaseDataType:
@@ -412,6 +438,37 @@ class HWCustomOp(CustomOp):
         """
         out_width = self.get_outstream_width(ind=ind)
         return roundup_to_integer_multiple(out_width, 8)
+
+    def find_ipgen_file(self, file_suffix: str) -> Path:
+        """Return the generated file in ``code_gen_dir_ipgen`` whose name ends in ``file_suffix``.
+
+        Generated wrappers (memstream, dynamic load, fetch weights) are found by
+        suffix rather than rebuilt from the node name: inside a FINNLoop body the
+        node is renamed between HDL generation (files carry the loop-prefixed name)
+        and IPI time. If several files match, the one named after the node wins;
+        any other ambiguity is an error instead of a filesystem-order pick.
+
+        Args:
+            file_suffix: File name suffix to look for, e.g. ``"_memstream_wrapper.v"``.
+
+        Returns:
+            Path to the matching file.
+
+        Raises:
+            FINNInternalError: If no file matches, or several match and none of them
+                is named after the node.
+        """
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
+        matches = sorted(p for p in code_gen_dir.iterdir() if p.name.endswith(file_suffix))
+        if len(matches) == 1:
+            return matches[0]
+        own_file = code_gen_dir / f"{self.onnx_node.name}{file_suffix}"
+        if own_file in matches:
+            return own_file
+        raise FINNInternalError(
+            f"{self.onnx_node.name}: expected one *{file_suffix} file in {code_gen_dir}, "
+            f"found {[p.name for p in matches]}"
+        )
 
     def adapt_for_loop_body(self, input_types: "list[LoopBodyInputType]") -> None:
         """Called by LoopRolling transformation to allow operators to adapt their
