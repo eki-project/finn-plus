@@ -36,20 +36,12 @@ from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
     from onnx import GraphProto
-
-# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
-# their (dtype, required, default[, allowed_values]) specification tuples
-NodeAttrTypes = dict[
-    str,
-    tuple[str, bool, int | float | str | bool | np.ndarray | list]
-    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
-]
 
 
 @register_custom_op
@@ -171,9 +163,13 @@ class StreamingSplit(HWCustomOp):
         return self.get_output_datatype().bitwidth() * self.simd
 
     def get_number_output_values(self) -> dict[str, int]:
-        """Return number output values, one entry per output stream."""
+        """Return the number of words each output stream produces, one entry per stream.
+
+        This counts all ``numInputVectors`` dimensions, including a leading one
+        that is not 1, times the number of folds of the respective output.
+        """
         return {
-            f"out{i}": int(np.prod(self.get_folded_output_shape(i)[1:-1]))
+            f"out{i}": int(np.prod(self.get_folded_output_shape(i)[:-1]))
             for i in range(len(self.onnx_node.output))
         }
 

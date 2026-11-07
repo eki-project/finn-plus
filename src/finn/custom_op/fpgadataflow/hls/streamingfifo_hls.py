@@ -36,7 +36,8 @@ from typing import cast
 
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.streamingfifo import NodeAttrTypes, StreamingFIFO
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
 from finn.util.exception import FINNInternalError
 
 

@@ -53,8 +53,8 @@ from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 
 
-def make_dupstreams_modelwrapper(ch, pe, idim, idt, n_dupl, impl_style):
-    shape = [1, idim, idim, ch]
+def make_dupstreams_modelwrapper(ch, pe, num_vecs, idt, n_dupl, impl_style):
+    shape = [*num_vecs, ch]
     inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, shape)
     out_names = []
     out_vi = []
@@ -73,7 +73,7 @@ def make_dupstreams_modelwrapper(ch, pe, idim, idt, n_dupl, impl_style):
         NumOutputStreams=n_dupl,
         PE=pe,
         inputDataType=idt.name,
-        numInputVectors=[1, idim, idim],
+        numInputVectors=num_vecs,
         preferred_impl_style=impl_style,
         cpp_interface="hls_vector",
         hls_style="freerunning",
@@ -101,8 +101,8 @@ def prepare_inputs(input_tensor, idt):
 @pytest.mark.parametrize("ch", [64])
 # folding
 @pytest.mark.parametrize("fold", [-1, 2, 1])
-# image dimension
-@pytest.mark.parametrize("imdim", [7])
+# number of input vectors: image with batch 1, and shapes whose first dimension is not 1
+@pytest.mark.parametrize("num_vecs", [[1, 7, 7], [2, 8], [8]])
 # amount of duplication
 @pytest.mark.parametrize("n_dupl", [2, 3])
 # execution mode
@@ -111,7 +111,7 @@ def prepare_inputs(input_tensor, idt):
 @pytest.mark.parametrize("impl_style", ["hls"])
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
-def test_fpgadataflow_duplicatestreams(idt, ch, fold, imdim, n_dupl, exec_mode, impl_style):
+def test_fpgadataflow_duplicatestreams(idt, ch, fold, num_vecs, n_dupl, exec_mode, impl_style):
     if fold == -1:
         pe = 1
     else:
@@ -119,9 +119,9 @@ def test_fpgadataflow_duplicatestreams(idt, ch, fold, imdim, n_dupl, exec_mode, 
     assert ch % pe == 0
 
     # generate input data
-    x = gen_finn_dt_tensor(idt, (1, imdim, imdim, ch))
+    x = gen_finn_dt_tensor(idt, (*num_vecs, ch))
 
-    model = make_dupstreams_modelwrapper(ch, pe, imdim, idt, n_dupl, impl_style)
+    model = make_dupstreams_modelwrapper(ch, pe, num_vecs, idt, n_dupl, impl_style)
 
     # prepare input data and execute
     input_dict = prepare_inputs(x, idt)
@@ -162,6 +162,29 @@ def test_fpgadataflow_duplicatestreams(idt, ch, fold, imdim, n_dupl, exec_mode, 
         exp_cycles = exp_cycles_dict[node.name]
         assert np.isclose(exp_cycles, cycles_rtlsim, atol=10)
         assert exp_cycles != 0
+
+
+# number of input vectors, including shapes whose first dimension is not 1
+@pytest.mark.parametrize("num_vecs", [[1], [1, 7, 7], [4], [2, 8], [2, 2, 8]])
+# PE
+@pytest.mark.parametrize("pe", [1, 4, 32])
+# amount of duplication
+@pytest.mark.parametrize("n_dupl", [2, 3])
+@pytest.mark.fpgadataflow
+def test_fpgadataflow_duplicatestreams_number_output_values(num_vecs, pe, n_dupl):
+    """Each output stream is expected to produce every word of the input."""
+    ch = 32
+    idt = DataType["INT4"]
+    model = make_dupstreams_modelwrapper(ch, pe, num_vecs, idt, n_dupl, "hls")
+    inst = getCustomOp(model.graph.node[0])
+    num_words = int(np.prod(num_vecs)) * (ch // pe)
+    assert inst.get_number_output_values() == {f"out{i}": num_words for i in range(n_dupl)}
+    assert inst.get_exp_cycles() == num_words
+    # The abstraction layer passes such inputs through unchanged
+    x = gen_finn_dt_tensor(idt, (*num_vecs, ch))
+    output_dict = oxe.execute_onnx(model, {"inp": x})
+    for i in range(n_dupl):
+        assert (output_dict[f"outp{i}"] == x).all()
 
 
 # Test scenarios with different numbers of successors and global outputs
@@ -222,10 +245,12 @@ def test_infer_duplicatestreams(split_source, num_successors, num_global_outputs
         for i in range(num_successors):
             const_val = gen_finn_dt_tensor(idt, shape)
             const_values_list.append(const_val)
-            const = helper.make_tensor(f"const{i+1}", TensorProto.FLOAT, shape, const_val.flatten())
+            const = helper.make_tensor(
+                f"const{i + 1}", TensorProto.FLOAT, shape, const_val.flatten()
+            )
             initializers.append(const)
 
-            add_node = helper.make_node("Add", ["add0_out", f"const{i+1}"], [f"out{i}"])
+            add_node = helper.make_node("Add", ["add0_out", f"const{i + 1}"], [f"out{i}"])
             nodes.append(add_node)
 
             out_info = helper.make_tensor_value_info(f"out{i}", TensorProto.FLOAT, shape)

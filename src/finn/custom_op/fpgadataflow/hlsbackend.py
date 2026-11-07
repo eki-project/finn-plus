@@ -29,7 +29,6 @@
 """HLS backend implementation for FINN custom operations."""
 
 import numpy as np
-import numpy.typing as npt
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -38,7 +37,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, Literal, cast
 
 from finn import xsi as finnxsi
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.templates import get_templates_folder, load_codegen_template
 from finn.util.basic import MAX_ALLOWED_AP_INT_W, CppBuilder, launch_process_helper, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
@@ -57,13 +56,7 @@ class HLSBackend(HWCustomOp, ABC):
     custom node should have. Some as abstract methods, these have to be filled
     when writing a new HLS custom op node."""
 
-    def get_nodeattr_types(
-        self,
-    ) -> dict[
-        str,
-        tuple[str, bool, int | float | str | bool | npt.NDArray | list]
-        | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
-    ]:
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return dictionary of node attribute types and properties."""
         super_types = super().get_nodeattr_types()
         super_types.update(

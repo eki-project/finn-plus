@@ -10,7 +10,8 @@ from qonnx.core.datatype import DataType
 from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from finn.custom_op.fpgadataflow.requant import NodeAttrTypes, Requant
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.requant import Requant
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import fifo_rtl_files, get_dsp_block, make_build_dir
@@ -535,7 +536,6 @@ class Requant_rtl(Requant, RTLBackend):
         """
         node_name = self.onnx_node.name
         top_module = cast("str", self.get_nodeattr("gen_top_module"))
-        code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
 
         cmd = []
 
@@ -595,21 +595,9 @@ class Requant_rtl(Requant, RTLBackend):
         core_port = "s_params_V"
         ext_pin = "in1_V"
 
-        # Discover the generated wrapper by suffix rather than reconstructing
-        # from node_name: inside a FINNLoop body the node is renamed between
-        # generate_hdl (files carry the loop-prefixed name) and ipi time, so
-        # the module name lives in gen_top_module / the filename, not in
-        # self.onnx_node.name (mirrors MVAU's code_generation_ipi).
-        file_suffix = suffix + "_memstream_wrapper.v"
-        matches = [f.name for f in Path(code_gen_dir).iterdir() if f.name.endswith(file_suffix)]
-        if not matches:
-            raise FINNInternalError(
-                f"Requant decoupled: could not find {file_suffix} in {code_gen_dir}"
-            )
-        wrapper_fname = matches[-1]
-        wrapper_file = str(Path(code_gen_dir) / wrapper_fname)
+        wrapper_file = self.find_ipgen_file(suffix + "_memstream_wrapper.v")
         cmd.append(f"add_files -norecurse {wrapper_file}")
-        strm_mod = wrapper_fname[:-2]
+        strm_mod = wrapper_file.stem
         strm_inst = node_name + suffix + "_wstrm"
         cmd.append(f"create_bd_cell -type hier -reference {strm_mod} /{node_name}/{strm_inst}")
         cmd.append(

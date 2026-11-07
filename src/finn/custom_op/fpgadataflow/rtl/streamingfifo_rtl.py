@@ -39,9 +39,10 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import cast
 
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
-from finn.custom_op.fpgadataflow.streamingfifo import NodeAttrTypes, StreamingFIFO
+from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
 from finn.util.basic import fifo_rtl_files
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log

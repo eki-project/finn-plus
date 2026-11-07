@@ -13,17 +13,14 @@ from pathlib import Path
 # Typing helpers
 from typing import TYPE_CHECKING, cast
 
-from finn.custom_op.fpgadataflow.attention_heads import (
-    MergeMultiHeads,
-    NodeAttrTypes,
-    SplitMultiHeads,
-)
+from finn.custom_op.fpgadataflow.attention_heads import MergeMultiHeads, SplitMultiHeads
 
 # The generic HW custom operator version of the operator as a base class
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 
 # Base class for specializing HW operators as implemented via HLS
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 
 # FINN internal error raised for broken compiler invariants
 from finn.util.exception import FINNInternalError

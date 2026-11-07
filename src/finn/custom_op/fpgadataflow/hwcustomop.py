@@ -54,6 +54,14 @@ if TYPE_CHECKING:
 
 import finn.xsi as finnxsi
 
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | npt.NDArray | list]
+    | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
+]
+
 
 class HWCustomOp(CustomOp):
     """HWCustomOp class all custom ops that can be implemented with either
@@ -72,13 +80,7 @@ class HWCustomOp(CustomOp):
         super().__init__(onnx_node, **kwargs)
         self.code_gen_dict = {}
 
-    def get_nodeattr_types(
-        self,
-    ) -> dict[
-        str,
-        tuple[str, bool, int | float | str | bool | np.ndarray | list]
-        | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
-    ]:
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return node attribute types for HWCustomOp.
 
         Returns:
@@ -445,6 +447,37 @@ class HWCustomOp(CustomOp):
     def calc_wmem(self) -> int:
         """Calculate and returns the WMEM."""
         raise NotImplementedError()
+
+    def find_ipgen_file(self, file_suffix: str) -> Path:
+        """Return the generated file in ``code_gen_dir_ipgen`` whose name ends in ``file_suffix``.
+
+        Generated wrappers (memstream, dynamic load, fetch weights) are found by
+        suffix rather than rebuilt from the node name: inside a FINNLoop body the
+        node is renamed between HDL generation (files carry the loop-prefixed name)
+        and IPI time. If several files match, the one named after the node wins;
+        any other ambiguity is an error instead of a filesystem-order pick.
+
+        Args:
+            file_suffix: File name suffix to look for, e.g. ``"_memstream_wrapper.v"``.
+
+        Returns:
+            Path to the matching file.
+
+        Raises:
+            FINNInternalError: If no file matches, or several match and none of them
+                is named after the node.
+        """
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
+        matches = sorted(p for p in code_gen_dir.iterdir() if p.name.endswith(file_suffix))
+        if len(matches) == 1:
+            return matches[0]
+        own_file = code_gen_dir / f"{self.onnx_node.name}{file_suffix}"
+        if own_file in matches:
+            return own_file
+        raise FINNInternalError(
+            f"{self.onnx_node.name}: expected one *{file_suffix} file in {code_gen_dir}, "
+            f"found {[p.name for p in matches]}"
+        )
 
     def generate_hdl_memstream(
         self,

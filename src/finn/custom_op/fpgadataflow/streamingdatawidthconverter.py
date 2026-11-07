@@ -34,7 +34,7 @@ from qonnx.core.datatype import BaseDataType, DataType
 from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
@@ -42,13 +42,6 @@ if TYPE_CHECKING:
     from onnx import GraphProto
     from qonnx.core.modelwrapper import ModelWrapper
 
-# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
-# their (dtype, required, default[, allowed_values]) specification tuples
-NodeAttrTypes = dict[
-    str,
-    tuple[str, bool, int | float | str | bool | np.ndarray | list]
-    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
-]
 
 # does not do anything at the ONNX node-by-node level, and input-output
 # tensor shapes are the same. performs data width conversion at the rtlsim level

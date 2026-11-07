@@ -31,9 +31,10 @@
 import numpy as np
 from typing import TYPE_CHECKING
 
-from finn.custom_op.fpgadataflow.globalaccpool import GlobalAccPool, NodeAttrTypes
+from finn.custom_op.fpgadataflow.globalaccpool import GlobalAccPool
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.util.exception import FINNInternalError
 
 if TYPE_CHECKING:

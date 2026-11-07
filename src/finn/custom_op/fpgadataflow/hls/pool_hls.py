@@ -33,7 +33,8 @@ from onnx import GraphProto, NodeProto
 
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.pool import NodeAttrTypes, Pool
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.pool import Pool
 from finn.util.exception import FINNUserError
 
 

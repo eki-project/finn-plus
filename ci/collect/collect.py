@@ -17,18 +17,20 @@ from dvclive import Live
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
+# Metric selection/aggregation config, shipped next to this script
+COLLECT_CFG_PATH = Path(__file__).resolve().parent / "collect.yaml"
 
-def delete_dir_contents(directory: str) -> None:
+
+def delete_dir_contents(directory: str | Path) -> None:
     """Delete all contents of a directory."""
-    for filename in [_p.name for _p in Path(directory).iterdir()]:
-        file_path = str(Path(directory) / filename)
+    for entry in Path(directory).iterdir():
         try:
-            if Path(file_path).is_file() or Path(file_path).is_symlink():
-                Path(file_path).unlink()
-            elif Path(file_path).is_dir():
-                shutil.rmtree(file_path)
-        except Exception as e:
-            print(f"Failed to delete {file_path}. Reason: {e}")
+            if entry.is_file() or entry.is_symlink():
+                entry.unlink()
+            elif entry.is_dir():
+                shutil.rmtree(entry)
+        except Exception as e:  # noqa: PERF203  (one failure must not stop the cleanup)
+            print(f"Failed to delete {entry}. Reason: {e}")
 
 
 def retry(fn: Callable[[], Any], description: str, attempts: int = 4, base_delay: int = 10) -> Any:
@@ -63,40 +65,12 @@ def open_json_report(run_id: int, report_name: str, is_followup: bool = False) -
     """Open JSON report from build or measurement artifacts."""
     # TODO: handle followup setting better
     # look in both, build & measurement, artifacts
-    if is_followup:
-        path1 = str(
-            Path("build_artifacts_followup")
-            / "runs_output"
-            / f"run_{run_id}"
-            / "reports"
-            / report_name
-        )
-        path2 = str(
-            Path("measurement_artifacts_followup")
-            / "runs_output"
-            / f"run_{run_id}"
-            / "reports"
-            / report_name
-        )
-    else:
-        path1 = str(
-            Path("build_artifacts") / "runs_output" / f"run_{run_id}" / "reports" / report_name
-        )
-        path2 = str(
-            Path("measurement_artifacts")
-            / "runs_output"
-            / f"run_{run_id}"
-            / "reports"
-            / report_name
-        )
-    if Path(path1).is_file():
-        with Path(path1).open() as f:
-            report = json.load(f)
-        return report
-    if Path(path2).is_file():
-        with Path(path2).open() as f:
-            report = json.load(f)
-        return report
+    suffix = "_followup" if is_followup else ""
+    for artifacts_dir in (f"build_artifacts{suffix}", f"measurement_artifacts{suffix}"):
+        path = Path(artifacts_dir) / "runs_output" / f"run_{run_id}" / "reports" / report_name
+        if path.is_file():
+            with path.open() as f:
+                return json.load(f)
     return None
 
 
@@ -110,20 +84,20 @@ def classify_run(params: dict) -> str:
     return "live_fifo_followup"
 
 
-def generate_power_report(rails_names: list[str], experiment_reports_path: str) -> dict | None:
+def generate_power_report(rails_names: list[str], experiment_reports_path: Path) -> dict | None:
     """Average the per-rail power measurements found under the given report path."""
-    if not Path(experiment_reports_path).is_dir():
+    if not experiment_reports_path.is_dir():
         return None
-    for filename in [_p.name for _p in Path(experiment_reports_path).iterdir()]:
+    for report_dir in experiment_reports_path.iterdir():
         power_measurements = [
             m
-            for m in [_p.name for _p in (Path(experiment_reports_path) / filename).iterdir()]
-            if m.startswith(filename) and m.endswith(".json")
+            for m in report_dir.iterdir()
+            if m.name.startswith(report_dir.name) and m.name.endswith(".json")
         ]
         if power_measurements:
             per_file_averages = []
             for file in power_measurements:
-                with (Path(experiment_reports_path) / filename / file).open() as f:
+                with file.open() as f:
                     report = json.load(f)
                 rails = report.get("rails", [])
                 per_file_averages.append(
@@ -422,38 +396,31 @@ class ExperimentMetricsLogger:
     experiment: changing them only affects future runs, never experiments already pushed.
     """
 
-    def __init__(self, dvc_logger: "DVCLoggerHelper", collect_cfg_path: str) -> None:
+    def __init__(self, dvc_logger: "DVCLoggerHelper", collect_cfg_path: Path) -> None:
         """Initialize with a DVC logger and the collection config path."""
         self.dvc_logger = dvc_logger
-        with Path(collect_cfg_path).open() as f:
+        with collect_cfg_path.open() as f:
             self.collect_cfg = yaml.safe_load(f)
 
-    def retrieve_experiment_reports(self, report_path: str) -> dict:
+    def retrieve_experiment_reports(self, report_path: Path) -> dict:
         """Return the experiment reports found under the given path, keyed by file name."""
         metrics = self.collect_cfg.get("Metrics", {})
         experiment_files = list(metrics.keys())
-        exp_reports = {exp: [] for exp in experiment_files}
+        exp_reports: dict[str, list[Path]] = {exp: [] for exp in experiment_files}
 
-        if not Path(report_path).is_dir():
+        if not report_path.is_dir():
             return {k: [] for k in exp_reports}
 
-        for foldername in [_p.name for _p in Path(report_path).iterdir()]:
-            files = [_p.name for _p in (Path(report_path) / foldername).iterdir()]
-            folders = [
-                f
-                for f in files
-                if (Path(report_path) / foldername / f).is_dir() and f.startswith("exp_itr_")
+        for folder in report_path.iterdir():
+            exp_itr_dirs = [
+                d for d in folder.iterdir() if d.is_dir() and d.name.startswith("exp_itr_")
             ]
-            for exp_itr in folders:
-                path = str(Path(report_path) / foldername / exp_itr)
-                for file in [_p.name for _p in Path(path).iterdir()]:
-                    if file in experiment_files:
-                        exp_reports[file].append(str(Path(path) / file))
+            for exp_itr_dir in exp_itr_dirs:
+                for file in exp_itr_dir.iterdir():
+                    if file.name in experiment_files:
+                        exp_reports[file.name].append(file)
 
-        exp_reports = {
-            k: [json.loads(Path(p).read_text()) for p in v] for k, v in exp_reports.items()
-        }
-        return exp_reports
+        return {k: [json.loads(p.read_text()) for p in v] for k, v in exp_reports.items()}
 
     def _extract_fn_from_cfg(self, metric: dict, path: list | None = None) -> tuple[dict, list]:
         """Return a map of metric path -> aggregation function from the config."""
@@ -594,10 +561,10 @@ class ExperimentComparator:
         "verify_steps",
     }
 
-    def __init__(self, dvc_logger: "DVCLoggerHelper", collect_cfg_path: str) -> None:
+    def __init__(self, dvc_logger: "DVCLoggerHelper", collect_cfg_path: Path) -> None:
         """Initialize with a DVC logger and the collection config path."""
         self.dvc_logger = dvc_logger
-        with Path(collect_cfg_path).open() as f:
+        with collect_cfg_path.open() as f:
             self.collect_cfg = yaml.safe_load(f)
 
     def _normalize_params(
@@ -928,12 +895,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    if args.followup:
-        run_dir_list = [
-            _p.name for _p in (Path("build_artifacts_followup") / "runs_output").iterdir()
-        ]
-    else:
-        run_dir_list = [_p.name for _p in (Path("build_artifacts") / "runs_output").iterdir()]
+    artifacts_suffix = "_followup" if args.followup else ""
+    build_artifacts_dir = Path(f"build_artifacts{artifacts_suffix}")
+    measurement_artifacts_dir = Path(f"measurement_artifacts{artifacts_suffix}")
+    run_dir_list = [p.name for p in (build_artifacts_dir / "runs_output").iterdir()]
     print("Looking for runs in build artifacts")
     run_ids = []
     for run_dir in run_dir_list:
@@ -1198,11 +1163,8 @@ if __name__ == "__main__":
             )
 
             # power measurement
-            experiment_reports_path = str(
-                Path("measurement_artifacts_followup" if args.followup else "measurement_artifacts")
-                / "runs_output"
-                / f"run_{run_id}"
-                / "reports"
+            experiment_reports_path = (
+                measurement_artifacts_dir / "runs_output" / f"run_{run_id}" / "reports"
             )
             power = generate_power_report(
                 ["0V85_power", "3V3_power", "total_power"], experiment_reports_path
@@ -1212,10 +1174,7 @@ if __name__ == "__main__":
                     dvc_logger.log_metric(prefix="measurement/power/", name=name, value=value)
 
             # measurement metric logging
-            collect_cfg_path = str(
-                Path(str(Path(str(Path(__file__).resolve())).parent)) / "collect.yaml"
-            )
-            exp = ExperimentMetricsLogger(dvc_logger, collect_cfg_path)
+            exp = ExperimentMetricsLogger(dvc_logger, COLLECT_CFG_PATH)
             exp_reports = exp.retrieve_experiment_reports(experiment_reports_path)
             exp_metrics = exp.remove_ignored_metrics_and_apply_fn(exp_reports)
             exp.log_metrics(exp_metrics)
@@ -1226,30 +1185,13 @@ if __name__ == "__main__":
             # ARTIFACTS
             # Log build reports as they come from GitLab artifacts,
             # but copy them to a central dir first so all runs share the same path
-            if args.followup:
-                run_report_dir1 = str(
-                    Path("build_artifacts_followup") / "runs_output" / f"run_{run_id}" / "reports"
-                )
-                run_report_dir2 = str(
-                    Path("measurement_artifacts_followup")
-                    / "runs_output"
-                    / f"run_{run_id}"
-                    / "reports"
-                )
-            else:
-                run_report_dir1 = str(
-                    Path("build_artifacts") / "runs_output" / f"run_{run_id}" / "reports"
-                )
-                run_report_dir2 = str(
-                    Path("measurement_artifacts") / "runs_output" / f"run_{run_id}" / "reports"
-                )
             dvc_report_dir = "reports"
             Path(dvc_report_dir).mkdir(parents=True, exist_ok=True)
             delete_dir_contents(dvc_report_dir)
-            if Path(run_report_dir1).is_dir():
-                shutil.copytree(run_report_dir1, dvc_report_dir, dirs_exist_ok=True)
-            if Path(run_report_dir2).is_dir():
-                shutil.copytree(run_report_dir2, dvc_report_dir, dirs_exist_ok=True)
+            for artifacts_dir in (build_artifacts_dir, measurement_artifacts_dir):
+                run_report_dir = artifacts_dir / "runs_output" / f"run_{run_id}" / "reports"
+                if run_report_dir.is_dir():
+                    shutil.copytree(run_report_dir, dvc_report_dir, dirs_exist_ok=True)
             dvc_logger.log_artifact(dvc_report_dir)
 
             # Save microbenchmark results in a list per DUT for later aggregation
@@ -1262,7 +1204,7 @@ if __name__ == "__main__":
         # Prepare benchmarking config for follow-up runs after live FIFO-sizing
         if run_kind == "live_fifo":
             # Choose the search order with the lowest fifo_size_total_kB
-            lfs_base_dir = str(
+            lfs_base_dir = (
                 Path("measurement_artifacts")
                 / "runs_output"
                 / f"run_{run_id}"
@@ -1272,13 +1214,13 @@ if __name__ == "__main__":
             )
             best_search_order = None
             best_fifo_size = float("inf")
-            if Path(lfs_base_dir).is_dir():
-                for search_order in [_p.name for _p in Path(lfs_base_dir).iterdir()]:
-                    sizing_report_path = str(
-                        Path(lfs_base_dir) / search_order / "both" / "fifo_sizing_report.json"
+            if lfs_base_dir.is_dir():
+                for search_order in [p.name for p in lfs_base_dir.iterdir()]:
+                    sizing_report_path = (
+                        lfs_base_dir / search_order / "both" / "fifo_sizing_report.json"
                     )
-                    if Path(sizing_report_path).is_file():
-                        with Path(sizing_report_path).open() as f:
+                    if sizing_report_path.is_file():
+                        with sizing_report_path.open() as f:
                             sizing_report = json.load(f)
                         fifo_size = sizing_report.get("fifo_size_total_kB", float("inf"))
                         if fifo_size < best_fifo_size:
@@ -1287,27 +1229,23 @@ if __name__ == "__main__":
 
             if best_search_order is None:
                 print(
-                    f"No valid search order with fifo_sizing_report.json found in {lfs_base_dir}."
+                    "ERROR: No valid search order with fifo_sizing_report.json found in "
+                    f"{lfs_base_dir}."
                 )
-                folding_config_path = None
-                fifo_config_path = None
             else:
                 print(
                     f"Selecting search order '{best_search_order}' with "
                     f"fifo_size_total_kB={best_fifo_size:.2f}"
                 )
+                # str: the paths go into the JSON follow-up config
                 folding_config_path = str(
-                    Path(lfs_base_dir) / best_search_order / "both" / "folding_config.json"
+                    lfs_base_dir / best_search_order / "both" / "folding_config.json"
                 )
                 fifo_config_path = str(
-                    Path(lfs_base_dir) / best_search_order / "both" / "fifo_config.json"
+                    lfs_base_dir / best_search_order / "both" / "fifo_config.json"
                 )
-
-            if (
-                folding_config_path is not None
-                and Path(folding_config_path).is_file()
-                and Path(fifo_config_path).is_file()
-            ):
+                # No check that the two files exist: a follow-up build that fails on a
+                # missing config is preferred over a follow-up run that is silently dropped
                 print(
                     f"Creating follow-up experiment config using folding config "
                     f"{folding_config_path} "
@@ -1328,11 +1266,8 @@ if __name__ == "__main__":
                 follow_up_bench_cfg.append(configuration)
 
         # Always aggregate/compare/plot metrics, but only enforce the result for standard builds
-        collect_cfg_path = str(
-            Path(str(Path(str(Path(__file__).resolve())).parent)) / "collect.yaml"
-        )
         try:
-            comp = ExperimentComparator(dvc_logger, collect_cfg_path)
+            comp = ExperimentComparator(dvc_logger, COLLECT_CFG_PATH)
             metrics = comp.aggregate_metrics_across_reports()
         except Exception as e:
             print(f"ERROR: Metric aggregation raised an exception for run {run_id}: {e}")
@@ -1358,20 +1293,17 @@ if __name__ == "__main__":
     for dut in microbench_result_data:
         if None not in microbench_result_data[dut]:
             # dut_dir = os.path.join("ci", "benchmark_data", dut) TODO
-            dut_dir = str(Path(os.environ.get("LOCAL_BENCHMARK_DIR_STORE")) / dut)
-            Path(dut_dir).mkdir(parents=True, exist_ok=True)
-            dut_json_path = str(
-                Path(dut_dir)
-                / (
-                    date.today().strftime("%Y-%m-%d")
-                    + "_"
-                    + os.environ.get("CI_COMMIT_SHORT_SHA")
-                    + "_"
-                    + os.environ.get("CI_PIPELINE_ID")
-                    + "_"
-                    + str(len(microbench_result_data[dut]))
-                    + ".json"
-                )
+            dut_dir = Path(os.environ.get("LOCAL_BENCHMARK_DIR_STORE")) / dut
+            dut_dir.mkdir(parents=True, exist_ok=True)
+            dut_json_path = dut_dir / (
+                date.today().strftime("%Y-%m-%d")
+                + "_"
+                + os.environ.get("CI_COMMIT_SHORT_SHA")
+                + "_"
+                + os.environ.get("CI_PIPELINE_ID")
+                + "_"
+                + str(len(microbench_result_data[dut]))
+                + ".json"
             )
             dut_json = {
                 "dut": dut,
@@ -1382,7 +1314,7 @@ if __name__ == "__main__":
                 "runs": microbench_result_data[dut],
             }
             print(f"Saving microbenchmark results for {dut} to {dut_json_path}")
-            with Path(dut_json_path).open("w") as f:
+            with dut_json_path.open("w") as f:
                 json.dump(dut_json, f, indent=2)
 
     # Save aggregated benchmarking config for follow-up job to working dir

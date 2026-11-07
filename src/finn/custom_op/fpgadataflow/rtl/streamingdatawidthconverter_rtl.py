@@ -33,12 +33,10 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import cast
 
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
-from finn.custom_op.fpgadataflow.streamingdatawidthconverter import (
-    NodeAttrTypes,
-    StreamingDataWidthConverter,
-)
+from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
 from finn.util.settings import get_settings
 
 # finn-rtllib/dwc/hdl sources, referenced in place

@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING, Any, cast
 import finn.core.onnx_exec as oxe
 import finn.xsi as finnxsi
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.templates import load_codegen_template
@@ -71,13 +71,6 @@ BaseNodeAttrValue = int | float | str | bool | npt.NDArray | list[str | int | fl
 # ``set_nodeattr`` on this op additionally accepts a graph value for the ``body``
 # attribute (as a ``ModelWrapper`` or a raw ``GraphProto``).
 SetNodeAttrValue = ModelWrapper | GraphProto | BaseNodeAttrValue
-# Shape of the dict returned by ``get_nodeattr_types``: attribute name ->
-# (dtype, required, default[, allowed_values]). Must match the base classes.
-NodeAttrTypes = dict[
-    str,
-    tuple[str, bool, int | float | str | bool | npt.NDArray | list]
-    | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
-]
 
 
 def collect_ip_dirs(model: ModelWrapper, ipstitch_path: str) -> list[str]:

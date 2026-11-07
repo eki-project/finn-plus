@@ -19,7 +19,8 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, cast
 
-from finn.custom_op.fpgadataflow.layernorm import LayerNorm, NodeAttrTypes
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.layernorm import LayerNorm
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import fifo_rtl_files

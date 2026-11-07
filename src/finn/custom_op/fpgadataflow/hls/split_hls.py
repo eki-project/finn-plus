@@ -33,7 +33,8 @@ from onnx import GraphProto, NodeProto
 
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.split import NodeAttrTypes, StreamingSplit
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.split import StreamingSplit
 
 
 @register_custom_op

@@ -28,14 +28,20 @@
 
 """Shared custom-op registry used by the three fpgadataflow ONNX domains.
 
-``qonnx.custom_op.registry`` resolves a node's ``domain`` by importing the module
-of that name and reading its ``custom_op`` dictionary. Each domain package
-therefore owns one such dictionary plus a decorator that fills it; this module
-builds both so the three packages do not each re-implement them.
+Each domain package owns a ``custom_op`` dictionary plus a decorator that fills
+it; this module builds both so the three packages do not each re-implement them.
+
+The decorator also adds every op to qonnx's own registry with
+``add_op_to_domain``. ``getCustomOp`` and ``is_custom_op`` would find an op
+through the dictionary alone, but ``get_ops_in_domain`` never reads it: it lists
+the qonnx registry plus the classes in the package namespace. Registering there
+lists an op no matter when it is registered (e.g. by a plugin or a test after
+the package was imported).
 """
 
 from collections.abc import Callable
 from qonnx.custom_op.base import CustomOp
+from qonnx.custom_op.registry import add_op_to_domain
 from typing import TypeVar
 
 from finn.util.exception import FINNInternalError
@@ -44,7 +50,7 @@ _OpT = TypeVar("_OpT", bound=CustomOp)
 
 
 def make_registry(
-    base_cls: type[CustomOp],
+    base_cls: type[CustomOp], domain: str
 ) -> tuple[dict[str, type[CustomOp]], Callable[[type[_OpT]], type[_OpT]]]:
     """Create a custom-op dictionary and the decorator that registers into it.
 
@@ -52,20 +58,23 @@ def make_registry(
         base_cls: Class every registered op must subclass. This is what
             distinguishes the domains from one another: ``CustomOp`` for the
             abstract layers, ``HLSBackend`` / ``RTLBackend`` for the backends.
+        domain: ONNX domain the ops belong to, i.e. the ``__name__`` of the
+            package that owns the registry.
 
     Returns:
         A ``(custom_op, register_custom_op)`` pair. ``custom_op`` maps class name
-        to class and is the dictionary qonnx reads; ``register_custom_op`` is a
-        pass-through decorator that inserts a class into it.
+        to class; ``register_custom_op`` is a pass-through decorator that inserts
+        a class into it and into qonnx's registry for ``domain``.
 
     """
     custom_op: dict[str, type[CustomOp]] = {}
 
     def register_custom_op(cls: type[_OpT]) -> type[_OpT]:
-        """Register ``cls`` into the ``custom_op`` dictionary by its name."""
+        """Register ``cls`` by its name in ``custom_op`` and in qonnx's registry."""
         if not issubclass(cls, base_cls):
             raise FINNInternalError(f"{cls} must subclass {base_cls}")
         custom_op[cls.__name__] = cls
+        add_op_to_domain(domain, cls)
         # Pass through the class unmodified so this can be used as a decorator
         return cls
 

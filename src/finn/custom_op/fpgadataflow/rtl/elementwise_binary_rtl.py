@@ -16,7 +16,8 @@ from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import elementwise_binary
-from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation, NodeAttrTypes
+from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.transformation.fpgadataflow.loop_rolling import LoopBodyInputType
@@ -328,24 +329,14 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
             )
         else:
             # const or MLO mode: use memstream wrapper
-            code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
             runtime_writable = self.get_nodeattr("runtime_writeable_weights") == 1
 
             axi_dir = Path(get_settings().finn_rtllib) / "axi/hdl"
             ms_rtllib_dir = Path(get_settings().finn_rtllib) / "memstream/hdl"
-            file_suffix = "_memstream_wrapper.v"
-
-            strm_tmpl = None
-            for fname in code_gen_dir.iterdir():
-                if fname.name.endswith(file_suffix):
-                    strm_tmpl = fname.name
-
-            if strm_tmpl is None:
-                raise FINNInternalError(f"No memstream wrapper found in {code_gen_dir}")
-
-            strm_tmpl_name = strm_tmpl[:-2]
+            strm_tmpl = self.find_ipgen_file("_memstream_wrapper.v")
+            strm_tmpl_name = strm_tmpl.stem
             sourcefiles = [
-                str(code_gen_dir / strm_tmpl),
+                str(strm_tmpl),
                 str(axi_dir / "axilite.sv"),
                 str(ms_rtllib_dir / "memstream_axi.sv"),
                 str(ms_rtllib_dir / "memstream.sv"),

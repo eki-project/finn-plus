@@ -41,9 +41,10 @@ from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, cast
 
 import finn.custom_op.fpgadataflow.elementwise_binary as elementwise_binary
-from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation, NodeAttrTypes
+from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.util.basic import get_vivado_version, is_versal
 from finn.util.data_packing import (
     npy_to_rtlsim_input,
@@ -913,20 +914,12 @@ class ElementwiseBinaryOperation_hls(
         ip_vlnv = cast("str", self.get_nodeattr("ip_vlnv"))
         cmd.append(f"create_bd_cell -type ip -vlnv {ip_vlnv} /{node_name}/{node_name}")
         # instantiate a streamer and connect it to the IP
-        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
         axi_dir = Path(get_settings().finn_rtllib) / "axi/hdl"
         ms_rtllib_dir = Path(get_settings().finn_rtllib) / "memstream/hdl"
-        file_suffix = "_memstream_wrapper.v"
-        # automatically find memstream verilog component in code generation directory
-        strm_tmpl = None
-        for fname in code_gen_dir.iterdir():
-            if fname.name.endswith(file_suffix):
-                strm_tmpl = fname.name
-        if strm_tmpl is None:
-            raise FINNInternalError(f"No memstream wrapper found in {code_gen_dir}")
-        strm_tmpl_name = strm_tmpl[:-2]
+        strm_tmpl = self.find_ipgen_file("_memstream_wrapper.v")
+        strm_tmpl_name = strm_tmpl.stem
         sourcefiles = [
-            str(code_gen_dir / strm_tmpl),
+            str(strm_tmpl),
             str(axi_dir / "axilite.sv"),
             str(ms_rtllib_dir / "memstream_axi.sv"),
             str(ms_rtllib_dir / "memstream.sv"),

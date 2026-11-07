@@ -6,9 +6,10 @@
 import numpy as np
 from typing import TYPE_CHECKING
 
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtl.crop_rtl import Crop_rtl
-from finn.custom_op.fpgadataflow.selecttoken import NodeAttrTypes, SelectToken
+from finn.custom_op.fpgadataflow.selecttoken import SelectToken
 from finn.util.exception import FINNInternalError, FINNUserError
 
 if TYPE_CHECKING:

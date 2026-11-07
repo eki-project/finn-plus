@@ -46,7 +46,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.thresholding import NodeAttrTypes, Thresholding
+from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.thresholding import Thresholding
 from finn.util.basic import get_vivado_version, is_versal
 from finn.util.data_packing import (
     npy_to_rtlsim_input,
@@ -755,23 +756,13 @@ class Thresholding_hls(Thresholding, HLSBackend):
                 f"{self.get_nodeattr('ip_vlnv')} /{node_name}/{node_name}"
             )
             # instantiate a streamer and connect it to the IP
-            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
             finn_rtllib = Path(get_settings().finn_rtllib)
             axi_dir = finn_rtllib / "axi/hdl"
             ms_rtllib_dir = finn_rtllib / "memstream/hdl"
-            file_suffix = "_memstream_wrapper.v"
-            # automatically find memstream verilog component in code generation directory
-            code_gen_path = Path(code_gen_dir)
-            strm_tmpl = next(
-                (f.name for f in code_gen_path.iterdir() if f.name.endswith(file_suffix)), None
-            )
-            if strm_tmpl is None:
-                raise FINNInternalError(
-                    f"{self.onnx_node.name}: no '*{file_suffix}' file found in {code_gen_dir}"
-                )
-            strm_tmpl_name = strm_tmpl[:-2]
+            strm_tmpl = self.find_ipgen_file("_memstream_wrapper.v")
+            strm_tmpl_name = strm_tmpl.stem
             sourcefiles = [
-                code_gen_path / strm_tmpl,
+                strm_tmpl,
                 axi_dir / "axilite.sv",
                 ms_rtllib_dir / "memstream_axi.sv",
                 ms_rtllib_dir / "memstream.sv",

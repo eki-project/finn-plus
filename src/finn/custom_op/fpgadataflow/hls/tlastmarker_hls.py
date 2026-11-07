@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.exception import FINNInternalError
 
 if TYPE_CHECKING:
@@ -59,19 +59,9 @@ class TLastMarker_hls(HLSBackend, HWCustomOp):
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(
-        self,
-    ) -> dict[
-        str,
-        tuple[str, bool, int | float | str | bool | npt.NDArray | list]
-        | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
-    ]:
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs: dict[
-            str,
-            tuple[str, bool, int | float | str | bool | npt.NDArray | list]
-            | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
-        ] = {
+        my_attrs: NodeAttrTypes = {
             # normal shape of input/output
             "normal_shape": ("ints", True, []),
             # FINN DataTypes for inputs/outputs
