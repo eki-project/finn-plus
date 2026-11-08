@@ -1,0 +1,72 @@
+{
+    "status": "ok",
+    "verification": "success",
+    "estimate": {
+        "resources": {
+            "LUT": 21508.0,
+            "DSP": 1165.0,
+            "BRAM_18K": 366.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 1110198,
+            "max_cycles": 65536,
+            "max_cycles_node_name": "ScaledDotProductAttention_hls_0",
+            "estimated_throughput_fps": 1525.87890625,
+            "estimated_latency_ns": 11101980.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 59304.0,
+            "FF": 29115.0,
+            "DSP": 90.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 216.0,
+            "URAM": 0.0
+        }
+    },
+    "empirical_estimate": {
+        "resources": {
+            "LUT": 74740.0,
+            "DSP": 1165.0,
+            "BRAM_18K": 366.0,
+            "URAM": 0.0
+        },
+        "power": {
+            "power": 1231.8777189718828
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 103081,
+            "FF": 103792,
+            "SRL": 10806,
+            "DSP": 1255,
+            "BRAM_18K": 80,
+            "BRAM_36K": 157,
+            "URAM": 10
+        }
+    },
+    "time": {
+        "export": 1,
+        "step_qonnx_to_finn": 0,
+        "step_tidy_up": 2,
+        "step_streamline": 12,
+        "step_convert_to_hw": 2,
+        "step_minimize_bit_width_initial": 2,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_set_folding": 0,
+        "step_minimize_bit_width": 16,
+        "step_generate_estimate_reports": 0,
+        "step_generate_hardware": 5552,
+        "step_create_stitched_ip": 42,
+        "step_measure_rtlsim_performance": 0,
+        "step_out_of_context_synthesis": 0,
+        "step_synthesize_bitfile": 3141,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 8770
+    }
+}
