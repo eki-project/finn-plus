@@ -1,5 +1,5 @@
 {
-  "Defaults": {},
+  "Defaults": {"ram_cascade_height": [0, ["ElementwiseAdd_hls", "MVAU_hls", "NodeContainer", "Thresholding_hls"]]},
   "FMPadding_rtl_0": {
     "SIMD": 2
   },

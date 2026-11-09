@@ -11,6 +11,7 @@ from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.custom_op.fpgadataflow.memstream import MemStreamOp
 from finn.custom_op.fpgadataflow.requant import Requant
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
@@ -55,7 +56,7 @@ def _clog2(n: int) -> int:
 
 
 @register_custom_op
-class Requant_rtl(Requant, RTLBackend):
+class Requant_rtl(Requant, RTLBackend, MemStreamOp):
     """RTL backend for Requant operation using finn-rtllib/requant."""
 
     def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
@@ -67,6 +68,7 @@ class Requant_rtl(Requant, RTLBackend):
         my_attrs: NodeAttrTypes = {}
         my_attrs.update(Requant.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
+        my_attrs.update(MemStreamOp.get_nodeattr_types(self))
         my_attrs.update(
             {
                 # memory mode for the scale/bias parameters
@@ -443,7 +445,6 @@ class Requant_rtl(Requant, RTLBackend):
 
         pe = self.pe
         num_channels = self.num_channels
-        cf = num_channels // pe
         k = self.get_input_datatype(0).bitwidth()
         n = self.get_output_datatype().bitwidth()
 
@@ -484,11 +485,14 @@ class Requant_rtl(Requant, RTLBackend):
         self.generate_hdl_memstream(
             fpgapart,
             name=node_name + "_params",
-            depth=cf,
             width=info["params_stream_width"],
             init_file=str(code_gen_path / "params_memblock.dat"),
             ram_style="auto",
         )
+
+    def memstream_depth(self) -> int:
+        """Return the parameter words of the memstream: one per channel fold."""
+        return self.num_channels // self.pe
 
     def get_rtl_file_list(self, abspath: bool = False) -> list[str]:
         """Return list of RTL files needed for this node."""
