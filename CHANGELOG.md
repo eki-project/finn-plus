@@ -9,20 +9,36 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 
 ### Added
+- Reset pipeline for the Alveo and Zynq hardware kernels (`reset_pipeline_stages`, default 2): every dataflow node takes its reset from a `reset_pipe` cell of its own, fed by one kernel-level stage replicated per 16 loads, instead of one register driving every node across the device
+- Optional AXI-stream register slices in front of every node input another node drives (`stream_register_slices`): Vivado's auto-pipelined slice, which the placer pipelines as far as each stream's length needs; on mobilenetv1 (U55C) 3-8 % higher clock frequency than a fully registered slice for 8 % more LUTs and registers
+- `vitis_opt_strategy` PERFORMANCE and PERFORMANCE_BEST also set the Vivado implementation directives of the link and synthesise the kernels with retiming
 - The PYNQ driver validates accelerators on more datasets, so that the CI measures the accuracy of all trained regression models on the board: Google Speech Commands v2 (`speechcommands`, KWS), GTSRB (`gtsrb`), the evaluation split of the RadioML transformer (`radioml_transformer`) and masked token prediction on TinyStories (`tinystories`, language transformer); `scripts/prepare_validation_datasets.py` fetches the new datasets into the dataset directory (eki-project#290)
 
 ### Changed
 - Pin `onnx-passes` to 0.4.1 (eki-project#288)
 - The transformer regression models are the current `main` of finn-transformers (`3a21c22`: radioml, vision and language reach 71 %, 66 % and 67 % top-1 instead of 39 %, 26 % and 39 %), with their build configuration adjusted to the wider models: throughput targets of 95000 fps for radioml and 1000 fps for language, and threshold stage memories of at least 8192 entries in BRAM for all transformer models (eki-project#290)
 - The CIFAR validation of the PYNQ driver normalizes the images for every accelerator with a float input, not only for CIFAR-100 (override with the `normalize` kwarg of `validate`) (eki-project#290)
+- All fpgadataflow custom ops are documented, fully type-annotated and lint-clean. They register themselves with the `@register_custom_op` decorator instead of hand-maintained lists. Invalid configurations raise `FINNUserError` and broken invariants raise `FINNInternalError` instead of `AssertionError`/`Exception` (eki-project#299)
+- `FMPadding_Pixel` is renamed to `InputDilation` (`InputDilation_hls`); models that still contain `FMPadding_Pixel` nodes have to be regenerated (eki-project#299)
+- `ReplicateStream` and `InferReplicateStream` are removed; `DuplicateStreams` covers the same functionality (eki-project#299)
+- The HLS/TCL code-generation templates moved from `finn.custom_op.fpgadataflow.templates` to files in `src/finn/templates/codegen/`, loaded with `finn.templates.load_codegen_template` (eki-project#299)
 
 ### Fixed
 - The HLS attention operator (`ScaledDotProductAttention_hls`) deadlocked in hardware and in RTL simulation when it processed more than four keys in parallel (`KVLen / SeqFold > 4`), e.g. in the RadioML transformer: HLS silently implemented the softmax as a stalling instead of a flushable pipeline, which blocks on its own internal buffer. attention-hlslib is pinned to a version with the fix (eki-project#281)
+- Alveo links with Vivado 2023.1, 2023.2 and 2024.2 placed and routed the kernel clock at 100 MHz whatever `synth_clk_period_ns` asked for (the clock-wizard solver v++ uses finds no solution there); the link now re-creates the kernel clock at the requested frequency before `opt_design`
+- The XDC of the Vitis kernels was silently dropped at link time (`Designutils 20-1275`); it is now written relative to the kernel's block design and scoped to it
+- Kernels pinned to an SLR took the kernel reset of SLR0 across the SLR boundary; each now takes the reset of its own SLR, and `opt_design` replicates wide control nets per hierarchy
+- Kernels were only pinned to their SLR for the Aurora transceiver, so the SLR assignment of a `vitis_floorplan_file` never reached placement; every kernel with an SLR is now pinned
+- A second `[vivado]` line added to a v++ link configuration was glued onto the first
+- The LUT estimate of the RTL MVAU was always 0; it now counts the weights held in LUTRAM, the adder tree and the accumulator
+- The read and output-tap pointers of `memstream` replicate at synthesis (`MAX_FANOUT`): they drive the address pins of every block RAM and the tap select of every output bit
+- `finn build` and `finn auto` exit with code 1 when the build fails, instead of always exiting with 0; the failure was only visible in the log and in `report/metadata_builder.json`. The README describes the current `finn` commands, and the help of `finn settings create` names `finn wizard settings` instead of the non-existent `finn wizard config`
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
 - (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)
 - RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate at the cost of a slightly larger buffer (eki-project#290)
 - The simulation-based FIFO sizing (`distributed_sim`) sporadically failed the final validation with a timeout for short simulations such as fully unrolled MLPs. When the simulation was stopped, the layers that were not the output layer kept simulating a few cycles, and how many depended on timing. Their cycle counts set the cycle limit and were checked against it, and those extra cycles were also counted in the measured FIFO occupancy. Now the simulation stops cleanly, the cycle limit comes from the output layer and only the output layer enforces it, so cycle counts and occupancies are the same in every run (eki-project#291)
 - The simulation-based FIFO sizing (`distributed_sim`) never finished for some double-pumped RTL MVAUs (`pumpedCompute`), e.g. with `SIMD == MW`. The C++ simulation released the reset just before a rising edge that `ap_clk` and `ap_clk2x` share, so the pumped compute core came out of reset in the wrong phase and, depending on the core's pipeline depth, dropped every output. The reset is now released right after the edge, as in the Python simulation and in hardware (eki-project#273)
+- `DuplicateStreams` and `StreamingSplit` reported too few expected output words for inputs whose first dimension is not 1 (e.g. `[seq, dim]` tensors or a batch), so their RTL simulation timed out for such shapes (eki-project#299)
 
 ## 1.6.1 - 01.10.2026
 

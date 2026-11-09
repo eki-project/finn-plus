@@ -1,5 +1,7 @@
 """Build-flow steps for multi-DNN model construction and collapsing."""
+
 import json
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.general import GiveUniqueNodeNames
 
@@ -16,20 +18,23 @@ from finn.transformation.multi_dnn.multi_dnn_wrapper_transformations import (
     MultiDNNWrapperExposeIO,
 )
 from finn.transformation.multi_dnn.nodecontainer_transformations import NameNodeContainerNodes
+from finn.util.exception import FINNUserError
 
 
-def _resolve_multi_dnn_mode(cfg: DataflowBuildConfig):
+def _resolve_multi_dnn_mode(cfg: DataflowBuildConfig) -> tuple[str, dict | None]:
     """Read the generation mode and kwargs from the multi-DNN config JSON."""
-    with open(cfg.multi_dnn_config_path, "r") as fp_json:
+    with Path(cfg.multi_dnn_config_path).open() as fp_json:
         multi_dnn_config = json.load(fp_json)
     gen = multi_dnn_config.get("Generation")
     return gen["mode"], gen.get("kwargs", None)
 
 
-def step_apply_multi_dnn(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_apply_multi_dnn(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Apply the appropriate multi-DNN transformation (Parallel, SelectableWeights, or PR)."""
     mode, kwargs = _resolve_multi_dnn_mode(cfg)
     if mode == "Parallel":
+        combine_inputs_channelwise = None
+        combine_outputs_channelwise = None
         if kwargs is not None:
             combine_inputs_channelwise = kwargs.get("combine_inputs_channelwise", None)
             combine_outputs_channelwise = kwargs.get("combine_outputs_channelwise", None)
@@ -45,23 +50,27 @@ def step_apply_multi_dnn(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(ApplyPartialReconfiguration(**kwargs))
         model = model.transform(MultiDNNWrapperExposeIO())
     else:
-        raise Exception("This Mode is not implemented")
+        raise FINNUserError(f"Unknown multi-DNN generation mode {mode!r}")
 
     return model
 
 
-def step_collapse_multi_dnn(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_collapse_multi_dnn(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Collapse all DNNContainer subgraphs and specialize the resulting concat/split nodes."""
     model = model.transform(CollapseModels())
     model = model.transform(InferSplitIntoSplitMultiHeads())
     model = model.transform(InferConcatLayer())
-    model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))  # For Concat and Split
+    # For Concat and Split
+    model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))  # noqa: SLF001
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(NameNodeContainerNodes())
     return model
 
 
-def step_maximize_concat_split_simd(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_maximize_concat_split_simd(
+    model: ModelWrapper,
+    cfg: DataflowBuildConfig,  # noqa: ARG001
+) -> ModelWrapper:
     """Set SIMD on StreamingConcat_hls nodes to match surrounding MVAU parallelism.
 
     The Parallel multi-DNN flow inserts SplitMultiHeads_hls (already fully
