@@ -31,6 +31,7 @@ from finn.builder.custom_step_library.resnet import (
     step_resnet_streamline,
     step_resnet_tidy,
 )
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.transformation.fpgadataflow.convert_to_hw.binary_matrix_vector_activation import (
     InferBinaryMatrixVectorActivation,
 )
@@ -526,6 +527,10 @@ def get_model(  # noqa
     return modelwrapper, cfg
 
 
+# Registered in the abstract fpgadataflow domain when this testing module is imported.
+# Going through the decorator (not a direct custom_op[...] write) also registers it
+# with qonnx, so get_ops_in_domain lists it like every other op.
+@register_custom_op
 class TestingNode(CustomOp):
     """A CustomOp purely for testing graph related functionality."""
 
@@ -582,9 +587,3 @@ class TestingNode(CustomOp):
 
     def verify_node(self):  # noqa
         pass
-
-
-# Register test node when importing this testing module
-from finn.custom_op.fpgadataflow import custom_op  # noqa
-
-custom_op["TestingNode"] = TestingNode
