@@ -26,6 +26,7 @@ from finn.transformation.fpgadataflow.multifpga.create_multi_sdp import (
 from finn.transformation.qonnx.give_unique_node_names_recursive import GiveUniqueNodeNamesRecursive
 from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import get_submodel, set_device_id
+from tests.fpgadataflow.multifpga.utils import TestingNode  # noqa: F401  (registers the op)
 from tests.fpgadataflow.test_set_folding import make_multi_fclayer_model
 
 

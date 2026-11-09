@@ -16,6 +16,7 @@ from qonnx.util.basic import get_by_name, qonnx_make_model, roundup_to_integer_m
 from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
+from finn.custom_op.fpgadataflow.memstream import MemStreamOp
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -34,7 +35,7 @@ SetNodeAttrValue = ModelWrapper | GraphProto | BaseNodeAttrValue
 
 
 @register_custom_op
-class NodeContainer(RTLBackend, HWCustomOp):
+class NodeContainer(RTLBackend, MemStreamOp):
     """Container node holding several DNN bodies that share one hardware instance.
 
     Some functions are (partially) copied from FINNLoop.
@@ -63,7 +64,7 @@ class NodeContainer(RTLBackend, HWCustomOp):
             "tuser_width": ("i", False, 0),
             **b,
         }
-        my_attrs.update(HWCustomOp.get_nodeattr_types(self))
+        my_attrs.update(MemStreamOp.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
 
@@ -261,19 +262,32 @@ class NodeContainer(RTLBackend, HWCustomOp):
         inst = cast("HWCustomOp", getCustomOp(node))
         return inst.get_outstream_width(ind=ind)
 
+    def _get_reference_memstream_op(self) -> MemStreamOp:
+        """Return the reference node, whose memstream holds the parameters of all bodies."""
+        inst = getCustomOp(self._get_reference_node())
+        if not isinstance(inst, MemStreamOp):
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: reference node {inst.onnx_node.name} has no memstream"
+            )
+        return inst
+
+    def memstream_depth(self) -> int:
+        """Return the reference body's memstream depth; all bodies share its shape."""
+        return self._get_reference_memstream_op().memstream_depth()
+
     def generate_hdl_memstream(
         self,
         fpgapart: str,
         pumped_memory: int = 0,
         name: str | None = None,
-        depth: int | None = None,
         width: int | None = None,
         init_file: str | None = None,
         ram_style: str | None = None,
     ) -> None:
         """Delegate memstream HDL generation to the reference node's implementation."""
-        inst = cast("HWCustomOp", getCustomOp(self._get_reference_node()))
+        inst = self._get_reference_memstream_op()
         inst.set_nodeattr("bodies", self.num_bodies)
+        inst.set_nodeattr("ram_cascade_height", self.get_nodeattr("ram_cascade_height"))
         inst.set_nodeattr("code_gen_dir_ipgen", self.code_gen_dir_ipgen)
         if pumped_memory in inst.get_nodeattr_types():
             pumped_memory = cast("int", inst.get_nodeattr("pumpedMemory"))
@@ -281,7 +295,6 @@ class NodeContainer(RTLBackend, HWCustomOp):
             fpgapart,
             pumped_memory,
             name=name,
-            depth=depth,
             width=width,
             init_file=init_file,
             ram_style=ram_style,

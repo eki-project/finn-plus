@@ -9,6 +9,9 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 
 ### Added
+- Reset pipeline for the Alveo and Zynq hardware kernels (`reset_pipeline_stages`, default 2): every dataflow node takes its reset from a `reset_pipe` cell of its own, fed by one kernel-level stage replicated per 16 loads, instead of one register driving every node across the device
+- Optional AXI-stream register slices in front of every node input another node drives (`stream_register_slices`): Vivado's auto-pipelined slice, which the placer pipelines as far as each stream's length needs; on mobilenetv1 (U55C) 3-8 % higher clock frequency than a fully registered slice for 8 % more LUTs and registers
+- `vitis_opt_strategy` PERFORMANCE and PERFORMANCE_BEST also set the Vivado implementation directives of the link and synthesise the kernels with retiming
 - The PYNQ driver validates accelerators on more datasets, so that the CI measures the accuracy of all trained regression models on the board: Google Speech Commands v2 (`speechcommands`, KWS), GTSRB (`gtsrb`), the evaluation split of the RadioML transformer (`radioml_transformer`) and masked token prediction on TinyStories (`tinystories`, language transformer); `scripts/prepare_validation_datasets.py` fetches the new datasets into the dataset directory (eki-project#290)
 
 ### Changed
@@ -22,6 +25,13 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - The whole `src/` tree is ruff-clean and passes pyright without errors, and `src/` no longer uses `assert` for error handling: invalid inputs raise `FINNUserError`, broken invariants `FINNInternalError`. ruff (`ruff-check` pre-commit hook on `src/`) replaces flake8, and the docstring check GitHub action is removed since ruff's pydocstyle rules cover it (eki-project#300)
 
 ### Fixed
+- Alveo links with Vivado 2023.1, 2023.2 and 2024.2 placed and routed the kernel clock at 100 MHz whatever `synth_clk_period_ns` asked for (the clock-wizard solver v++ uses finds no solution there); the link now re-creates the kernel clock at the requested frequency before `opt_design`
+- The XDC of the Vitis kernels was silently dropped at link time (`Designutils 20-1275`); it is now written relative to the kernel's block design and scoped to it
+- Kernels pinned to an SLR took the kernel reset of SLR0 across the SLR boundary; each now takes the reset of its own SLR, and `opt_design` replicates wide control nets per hierarchy
+- Kernels were only pinned to their SLR for the Aurora transceiver, so the SLR assignment of a `vitis_floorplan_file` never reached placement; every kernel with an SLR is now pinned
+- A second `[vivado]` line added to a v++ link configuration was glued onto the first
+- The LUT estimate of the RTL MVAU was always 0; it now counts the weights held in LUTRAM, the adder tree and the accumulator
+- The read and output-tap pointers of `memstream` replicate at synthesis (`MAX_FANOUT`): they drive the address pins of every block RAM and the tap select of every output bit
 - `finn build` and `finn auto` exit with code 1 when the build fails, instead of always exiting with 0; the failure was only visible in the log and in `report/metadata_builder.json`. The README describes the current `finn` commands, and the help of `finn settings create` names `finn wizard settings` instead of the non-existent `finn wizard config`
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
 - (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)

@@ -45,7 +45,10 @@ from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, Literal, cast
 
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
-from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
+from finn.transformation.fpgadataflow.create_stitched_ip import (
+    CreateStitchedIP,
+    stitched_ip_library_repos,
+)
 from finn.transformation.fpgadataflow.floorplan import Floorplan
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
@@ -81,9 +84,18 @@ def _build_sdp_kernel(args: tuple[str, str, str, float, bool]) -> None:
 
     Args:
         args: tuple of (sdp_node_name, dataflow_model_filename, fpga_part,
-              period_ns, enable_instrumentation)
+              period_ns, enable_instrumentation, reset_pipeline_stages,
+              stream_register_slices)
     """
-    sdp_node_name, dataflow_model_filename, fpga_part, period_ns, enable_instrumentation = args
+    (
+        sdp_node_name,
+        dataflow_model_filename,
+        fpga_part,
+        period_ns,
+        enable_instrumentation,
+        reset_pipeline_stages,
+        stream_register_slices,
+    ) = args
     prefix = sdp_node_name + "_"
     kernel_model = ModelWrapper(dataflow_model_filename)
 
@@ -131,6 +143,8 @@ def _build_sdp_kernel(args: tuple[str, str, str, float, bool]) -> None:
                     period_ns,
                     f"sdp_{pr_container_inst.onnx_node.name}_{body_idx}",
                     run_synth=False,
+                    reset_pipeline_stages=reset_pipeline_stages,
+                    stream_register_slices=stream_register_slices,
                 )
             )
             body_model.set_metadata_prop("platform", "zynq-iodma")
@@ -153,7 +167,14 @@ def _build_sdp_kernel(args: tuple[str, str, str, float, bool]) -> None:
     # Do not try to parallelize HLSSynthIP here (mp.pool within an mp.pool not allowed)
     kernel_model = kernel_model.transform(HLSSynthIP(num_workers=1))
     kernel_model = kernel_model.transform(
-        CreateStitchedIP(fpga_part, period_ns, sdp_node_name, run_synth=False)
+        CreateStitchedIP(
+            fpga_part,
+            period_ns,
+            sdp_node_name,
+            run_synth=False,
+            reset_pipeline_stages=reset_pipeline_stages,
+            stream_register_slices=stream_register_slices,
+        )
     )
     kernel_model.set_metadata_prop("platform", "zynq-iodma")
     kernel_model.save(dataflow_model_filename)
@@ -179,7 +200,6 @@ def _require_metadata_prop(model: ModelWrapper, key: str) -> str:
 def collect_ip_dirs(model: ModelWrapper, ipstitch_path: str | None) -> list[str]:
     """Collect list of all IP directories required by the design."""
     ip_dirs = []
-    need_memstreamer = False
     for node in model.graph.node:
         node_inst = getCustomOp(node)
         if node.op_type == "NodeContainer":
@@ -202,10 +222,6 @@ def collect_ip_dirs(model: ModelWrapper, ipstitch_path: str | None) -> list[str]
             ip_dir_value = cast("str", node_inst.get_nodeattr("ip_path"))
             _require_ip_dir(node, ip_dir_value)
             ip_dirs += [ip_dir_value]
-        if (
-            node.op_type.startswith("MVAU") or node.op_type == "Thresholding_hls"
-        ) and node_inst.get_nodeattr("mem_mode") == "internal_decoupled":
-            need_memstreamer = True
         if node.op_type == "FINNLoop":
             loop_body = cast("ModelWrapper", node_inst.get_nodeattr("body"))
             loop_body_ipstitch_path = loop_body.get_metadata_prop("vivado_stitch_proj")
@@ -213,10 +229,9 @@ def collect_ip_dirs(model: ModelWrapper, ipstitch_path: str | None) -> list[str]
                 raise FINNError(f"No stitched IPI design found for the body of {node.name}")
             ip_dirs += collect_ip_dirs(loop_body, loop_body_ipstitch_path)
     ip_dirs += [ipstitch_path + "/ip"] if ipstitch_path else []
-    if need_memstreamer:
-        # add RTL streamer IP
-        ip_dirs.append("$::env(FINN_RTLLIB)/memstream")
-    return ip_dirs
+    # cores the stitched block design took from finn-rtllib (memstream, reset_pipe, ...)
+    ip_dirs += stitched_ip_library_repos(model)
+    return list(dict.fromkeys(ip_dirs))
 
 
 class MakeZYNQProject(Transformation):
@@ -1776,8 +1791,25 @@ class ZynqBuild(Transformation):
         instrumentation_avg_n: int = 64,
         live_fifo_sizing: bool = False,
         partition_model_dir: Path | str | None = None,
+        reset_pipeline_stages: int = 0,
+        stream_register_slices: bool = False,
     ) -> None:
-        """Initialize ZynqBuild with platform and build settings."""
+        """Initialize ZynqBuild with platform and build settings.
+
+        Args:
+            platform: Target board name.
+            period_ns: Target clock period.
+            enable_debug: Whether to insert debug cores.
+            enable_instrumentation: Whether to add the instrumentation wrapper.
+            instrumentation_no_dma: Whether instrumentation runs without DMA.
+            instrumentation_avg_n: Instrumentation averaging window.
+            live_fifo_sizing: Whether this is a live FIFO-sizing build.
+            partition_model_dir: Where to write SDP child models.
+            reset_pipeline_stages: Reset stages in front of every node, passed on to the
+                kernels (see `CreateStitchedIP`).
+            stream_register_slices: Register slice in front of every node input another
+                node drives (`DataflowBuildConfig.stream_register_slices`).
+        """
         super().__init__()
         self.fpga_part = pynq_part_map[platform]
         self.axi_port_width = pynq_native_port_width[platform]
@@ -1788,6 +1820,8 @@ class ZynqBuild(Transformation):
         self.instrumentation_no_dma = instrumentation_no_dma
         self.instrumentation_avg_n = instrumentation_avg_n
         self.live_fifo_sizing = live_fifo_sizing
+        self.reset_pipeline_stages = reset_pipeline_stages
+        self.stream_register_slices = stream_register_slices
         self.partition_model_dir = (
             str(partition_model_dir) if partition_model_dir is not None else None
         )
@@ -1843,6 +1877,8 @@ class ZynqBuild(Transformation):
                 self.fpga_part,
                 self.period_ns,
                 self.enable_instrumentation,
+                self.reset_pipeline_stages,
+                self.stream_register_slices,
             )
             for sdp_node in sdp_nodes
         ]
