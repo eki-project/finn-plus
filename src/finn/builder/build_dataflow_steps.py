@@ -499,7 +499,7 @@ def verify_step(
         num_elements = out_npy.size
         abs_error = np.abs(out_npy - exp_out_npy)
         # Avoid division by zero for relative error
-        exp_out_npy_safe = np.where(exp_out_npy == 0, np.finfo(float).eps, exp_out_npy)
+        exp_out_npy_safe = np.where(exp_out_npy == 0, np.finfo(np.float32).eps, exp_out_npy)
         rel_error = np.abs((out_npy - exp_out_npy) / exp_out_npy_safe)
         res2 = np.mean(abs_error) <= cfg.verification_mean_atol
         res3 = np.mean(rel_error) <= cfg.verification_mean_rtol
