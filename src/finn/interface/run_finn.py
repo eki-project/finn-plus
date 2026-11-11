@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import finn.util.settings
 import finn.xsi
-from finn.interface import IS_POSIX
+from finn.interface import DEBUG, IS_POSIX
 from finn.interface.interface_utils import (
     NullablePath,
     error,
@@ -32,8 +32,8 @@ from finn.interface.interface_utils import (
 )
 from finn.interface.manage_deps import DependencyUpdater
 from finn.interface.manage_tests import resolve_tests_dir, run_test
-from finn.interface.settings import FINNSettings
-from finn.util.exception import FINNUserError, FINNValidationError
+from finn.interface.settings import FINN_ROOT, FINNSettings
+from finn.util.exception import FINNUserError
 from finn.util.multiprocessing import configure_start_method
 
 if TYPE_CHECKING:
@@ -149,8 +149,8 @@ def skip_dep_update(f: Callable) -> Callable[..., Any]:
         "--skip-dep-update",
         "-s",
         is_flag=True,
-        help="Whether to skip the dependency update. Can be changed in settings via"
-        "AUTOMATIC_DEPENDENCY_UPDATES: false",
+        help="Skip the dependency update for this run. To skip it by default, set "
+        "AUTOMATIC_DEPENDENCY_UPDATES to false in the settings file or the environment.",
     )(f)
 
 
@@ -333,6 +333,13 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         "wizard and use the predefined "
         "default values. Otherwise follow the next instructions.[/bold green]\n"
     )
+    console.print(
+        "[italic grey46]FINN+ reads its settings from the first of these files that exists: "
+        f"$FINN_SETTINGS, settings.yaml in the FINN+ root ({FINN_ROOT}), or "
+        "~/.finn/settings.yaml. A settings file is optional, and ~/.finn/ is only the "
+        "default for installed packages. In a development checkout you can keep the "
+        "settings.yaml in the repository root instead.[/italic grey46]\n"
+    )
     do_setup = Confirm.ask("Continue?")
     if not do_setup:
         return
@@ -416,7 +423,8 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         return
     where = Path(
         Prompt.ask(
-            "Where do you want to save these settings?",
+            "Where do you want to save these settings? (FINN+ finds them at $FINN_SETTINGS, "
+            "in the FINN+ root or in ~/.finn/)",
             default=str(settings.get_path()),
         )
     )
@@ -621,7 +629,21 @@ def main_group(version: bool) -> None:
     if version:
         from importlib.metadata import version as package_version
 
-        print("FINN+ " + package_version("finn-plus") + "\n")
+        finn_version = package_version("finn-plus")
+        if finn_version == "0.0.0" and (FINN_ROOT / ".git").exists():
+            # Development installs without poetry-dynamic-versioning keep the placeholder
+            # version of pyproject.toml, so describe the checked-out commit instead
+            try:
+                described = subprocess.run(
+                    ["git", "-C", str(FINN_ROOT), "describe", "--tags", "--always", "--dirty"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.strip()
+                finn_version = f"{described} (development installation)"
+            except (OSError, subprocess.CalledProcessError):
+                pass
+        print("FINN+ " + finn_version + "\n")
         sys.exit()
     else:
         ctx = click.get_current_context()
@@ -712,7 +734,7 @@ def _build(
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=not skip_dep_update,
+        automatic_dependency_updates=False if skip_dep_update else None,
         **get_function_args(),
     )
     prepare_finn(settings, accept_defaults or batch, batch)
@@ -893,7 +915,7 @@ def run(
     finn_deps_definitions: Path | None,
     finn_build_dir: Path | None,
     skip_dep_update: bool,
-    num_workers: int,
+    num_default_workers: int,
     script: Path,
     batch: bool,
 ) -> None:
@@ -911,7 +933,7 @@ def run(
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=not skip_dep_update,
+        automatic_dependency_updates=False if skip_dep_update else None,
         flow_config=script,
         **get_function_args(),
     )
@@ -989,7 +1011,6 @@ def _settings_wizard_wrapper() -> None:
     """Use both by 'finn wizard settings' and 'finn settings create'."""
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=not skip_dep_update,
         **get_function_args(),
         flow_config=Path(),
         finn_build_dir=Path("FINN_TMP"),
@@ -1030,7 +1051,6 @@ def bench(
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=True,
         flow_config=finn_build_dir / "dummy.yaml",
         **get_function_args(),
     )
@@ -1102,7 +1122,7 @@ def test(
         finn_build_dir.mkdir(parents=True, exist_ok=True)
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=not skip_dep_update,
+        automatic_dependency_updates=False if skip_dep_update else None,
         flow_config=finn_build_dir / "dummy.yaml",
         **get_function_args(),
     )
@@ -1180,7 +1200,6 @@ def deps_edit(finn_deps_definitions: Path | None) -> None:
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=True,
         flow_config=Path(),
         **get_function_args(),
     )
@@ -1195,7 +1214,6 @@ def deps_show(finn_deps_definitions: Path | None) -> None:
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=True,
         flow_config=Path(),
         **get_function_args(),
     )
@@ -1227,18 +1245,6 @@ def settings() -> None:
     pass
 
 
-def _command_get_settings() -> FINNSettings:
-    """Return a settings instance for use in config commands."""
-    settings = FINNSettings.init(
-        auto_set_environment_vars=True, automatic_dependency_updates=False, flow_config=Path()
-    )
-    prepare_finn(settings, True, create_build_dir=False)
-    if not settings.settingsfile_exists():
-        warning("Could not resolve settings file.")
-        sys.exit(1)
-    return settings
-
-
 @click.command("show", help="List the settings files contents")
 def config_show() -> None:
     """List all settings found in the current settings file."""
@@ -1261,6 +1267,7 @@ def config_show() -> None:
 def config_edit() -> None:
     """Edit the settings in an editor."""
     settings = FINNSettings.init(None, False, Path(), True)
+    settings.get_path().absolute().parent.mkdir(parents=True, exist_ok=True)
     edit_file(settings.get_path().absolute())
 
 
@@ -1275,7 +1282,9 @@ def config_create() -> None:
 )
 def finn_check() -> None:
     """Start FINN and close it after loading the environment."""
-    settings = FINNSettings.init(auto_set_environment_vars=False, flow_config=Path())
+    settings = FINNSettings.init(
+        auto_set_environment_vars=False, automatic_dependency_updates=False, flow_config=Path()
+    )
     prepare_finn(settings, True, create_build_dir=False)
     Console().print("[bold green]FINN is ready![/bold green]")
 
@@ -1305,8 +1314,10 @@ def main() -> None:
     main_group.add_command(finn_check)
     try:
         main_group()
-    except FINNValidationError as e:
-        error(str(e))
+    except FINNUserError as e:
+        if DEBUG:
+            raise
+        error(f"{e}\n(Set FINN_DEBUG=1 to show the full stack trace.)")
         sys.exit(1)
 
 

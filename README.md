@@ -102,8 +102,9 @@ finn test                             # Run the test suite of a repository check
   Resuming loads the intermediate model of the preceding step from `<output_dir>/intermediate_models`.
 - `finn build` exits with a non-zero code if the build fails. The build log is written to `<output_dir>/build_dataflow.log`.
 - The settings (temporary build directory, dependency location, number of workers, automatic dependency updates) are read from `$FINN_SETTINGS`, from `settings.yaml` in the FINN+ installation root, or from `~/.finn/settings.yaml`, in this order.
+  A settings file is optional, and `~/.finn/` is only the default for installed packages; in a development checkout, `settings.yaml` can live in the repository root.
   If no settings file exists, the first start runs a setup wizard; pass `--accept-defaults` (or `--batch` for non-interactive use) to use the defaults instead.
-  Command-line options such as `--build-path` and environment variables such as `FINN_BUILD_DIR` override the settings file.
+  Command-line options such as `--build-path` and environment variables such as `FINN_BUILD_DIR` or `AUTOMATIC_DEPENDENCY_UPDATES` override the settings file.
 - The Xilinx tools are found through the environment, so source the `settings64.sh` of Vivado/Vitis before running `finn`.
 
 > [!NOTE]

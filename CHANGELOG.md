@@ -32,6 +32,11 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - The LUT estimate of the RTL MVAU was always 0; it now counts the weights held in LUTRAM, the adder tree and the accumulator
 - The read and output-tap pointers of `memstream` replicate at synthesis (`MAX_FANOUT`): they drive the address pins of every block RAM and the tap select of every output bit
 - `finn build` and `finn auto` exit with code 1 when the build fails, instead of always exiting with 0; the failure was only visible in the log and in `report/metadata_builder.json`. The README describes the current `finn` commands, and the help of `finn settings create` names `finn wizard settings` instead of the non-existent `finn wizard config`
+- `FINN_SETTINGS` pointing to a directory, and other user errors while loading the settings, print a short error message instead of a stack trace, unless `FINN_DEBUG=1` is set (eki-project#315)
+- The settings wizard and the README no longer suggest that the settings have to live in `~/.finn/`, and FINN+ no longer creates `~/.finn/` when it only reads settings (eki-project#315)
+- `finn --version` shows the `git describe` output instead of 0.0.0 in development installations (eki-project#315)
+- `AUTOMATIC_DEPENDENCY_UPDATES` from the settings file or the environment was always overridden by the CLI; only `--skip-dep-update` overrides it now, and `finn check` no longer updates dependencies, as its help says (eki-project#315)
+- `finn run` failed with a `TypeError` on every call (eki-project#315)
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
 - (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)
 - RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate at the cost of a slightly larger buffer (eki-project#290)
