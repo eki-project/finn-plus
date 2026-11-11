@@ -236,7 +236,8 @@ reads the database via `OTUS_BENCHMARK_DIR_STORE`. Layout:
 `DONE` markers signal completed runs; GitLab artifacts only carry configs, summaries and
 `run_index.json`. If the variable is unset, everything falls back to `build_artifacts/` in the
 working directory as before. The `Exchange Cleanup` job deletes the pipeline's bitstreams
-(unless `KEEP_EXCHANGE_DEPLOY=1`) and pipeline directories older than
+(unless `KEEP_EXCHANGE_DEPLOY=1`) once the measurement jobs have passed, so a failed or
+cancelled `Measurement` can still be retried on them, and pipeline directories older than
 `EXCHANGE_RETENTION_DAYS` (default 14). Prerequisite on the share: the exchange root must be
 writable from all three runners.
 `ci/exchange_cleanup.py --dry-run` previews what would be removed.

@@ -569,7 +569,10 @@ QoR End2End Report:
 
 # Retention for the exchange directory: remove this pipeline's deployment packages (the
 # reports are kept) and pipeline directories older than EXCHANGE_RETENTION_DAYS. Runs as the
-# cluster user, which owns the large files.
+# cluster user, which owns the large files. The packages are only removed once the
+# measurements have passed: a failed or cancelled Measurement job can then still be retried
+# on them, and the stale sweep of a later pipeline removes them eventually. (In a
+# re-collection pipeline neither measurement job exists and only the stale sweep runs.)
 Exchange Cleanup:
   id_tokens:
     CI_JOB_JWT:
@@ -578,7 +581,12 @@ Exchange Cleanup:
   tags:
     - otus_login
   rules:
-    - when: always
+    - when: on_success
+  needs:
+    - job: Measurement
+      optional: true
+    - job: Measurement (Follow-up)
+      optional: true
   extends: .n2_setup_general
   script:
     - |
