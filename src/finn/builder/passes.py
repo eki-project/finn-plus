@@ -4,13 +4,25 @@ import numpy as np
 import onnx_ir as ir
 from onnx_passes.ops import DOMAIN as PASSES_DOMAIN
 from onnx_passes.ops.qonnx import DOMAIN as QONNX_DOMAIN
+from onnx_passes.passes import (
+    canonicalize,
+    fold_constants,
+    inline,
+    lower,
+    multithreshold,
+    reorder,
+    unbroadcast,
+)
 from onnx_passes.passes.base import RewriteRule, Sequential
 from onnx_passes.passes.config import Config as PassesConfig
 from onnx_passes.passes.config import LoggingConfig, VerifyConfig
+from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.infer_datatypes import InferDataTypes
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, VerificationStepType
+from finn.util.exception import FINNFrontendExportError
 
 
 class ExportIm2ColToFINN_v1(RewriteRule):
@@ -52,6 +64,37 @@ class ExportIm2ColToFINN_v1(RewriteRule):
         )
 
 
+def multithreshold_export_blocker(thresholds: ir.Value, weights: ir.Value) -> str | None:
+    """Explain why a MultiThreshold cannot be exported to QONNX, None if it can.
+
+    The QONNX MultiThreshold has per-channel thresholds of shape (C, N) and
+    implicit unit step weights, whereas the ONNX Passes variant allows arbitrary
+    broadcastable threshold shapes and explicit, arbitrary step weights. The
+    reason is used both as the match condition of the export rule and for the
+    error message if such an operator remains in the model.
+    """
+    if thresholds.shape is None or thresholds.shape.is_dynamic():
+        return f"thresholds {thresholds.name!r} have no static shape"
+
+    if np.any(np.asarray(thresholds.shape[:-2]) != 1):
+        return (
+            f"thresholds {thresholds.name!r} of shape {tuple(thresholds.shape)} are not"
+            " per-channel, i.e., have leading dimensions other than 1"
+        )
+
+    if (tensor := ir.convenience.get_const_tensor(weights)) is None:
+        return f"step weights {weights.name!r} are not constant"
+
+    if not np.all(tensor.numpy() == 1):
+        values = ", ".join(map(str, np.unique(tensor.numpy())[:8]))
+        return (
+            f"step weights {weights.name!r} of shape {tuple(tensor.shape)} are not all 1"
+            f" (values: {values})"
+        )
+
+    return None
+
+
 class ExportMultiThresholdToFINN_v1(RewriteRule):
     """Export ONNX Passes MultiThreshold operator to QONNX custom operator."""
 
@@ -63,16 +106,7 @@ class ExportMultiThresholdToFINN_v1(RewriteRule):
     @staticmethod
     def check(context, x, thresholds, weights):
         """Accept only static, per-channel thresholds with unit step weights."""
-        if thresholds.shape is None or thresholds.shape.is_dynamic():
-            return False
-
-        if np.any(np.asarray(thresholds.shape[:-2]) != 1):
-            return False
-
-        if (weights := ir.convenience.get_const_tensor(weights)) is not None:
-            return np.all(weights.numpy() == 1)
-
-        return False
+        return multithreshold_export_blocker(thresholds, weights) is None
 
     @staticmethod
     def rewrite(op, x, thresholds, weights):
@@ -110,15 +144,53 @@ class ExportLayoutConverterToFINN_v1(RewriteRule):
         return op.Transpose(x, perm=perm)
 
 
-from onnx_passes.passes import (
-    canonicalize,
-    fold_constants,
-    inline,
-    lower,
-    multithreshold,
-    reorder,
-    unbroadcast,
-)
+def _export_blocker(node: ir.Node) -> str:
+    """Explain why a node from the ONNX Passes domain was not exported to QONNX."""
+    inputs = node.inputs
+
+    if node.op_type == "MultiThreshold" and len(inputs) == 3 and all(inputs):
+        return multithreshold_export_blocker(inputs[1], inputs[2]) or "unknown reason"
+
+    if node.op_type == "Im2Col" and len(inputs) == 1 and inputs[0] is not None:
+        if inputs[0].shape is None or inputs[0].shape.is_dynamic():
+            return f"input {inputs[0].name!r} has no static shape"
+        return "unknown reason"
+
+    return "no export rule for this operator"
+
+
+def assert_exported(model: ir.Model, save_to: Path | None = None):
+    """Ensure no operators from the ONNX Passes domain remain in the model.
+
+    QONNX and FINN do not know this domain, the first transformation touching
+    such a node, usually the QONNX datatype inference, fails with an obscure
+    "Op not found in domain" error. Instead, raise a FINNFrontendExportError
+    naming every remaining node and the reason why its export rule did not
+    fire. If save_to is given, the model is saved there before raising.
+    """
+    remaining = [node for node in model.graph.all_nodes() if node.domain == PASSES_DOMAIN]
+
+    if not remaining:
+        return
+
+    lines = []
+
+    for node in remaining:
+        outputs = ", ".join(repr(out.name) for out in node.outputs if out is not None)
+        lines.append(f"  {node.op_type} {node.name!r} (outputs {outputs}): {_export_blocker(node)}")
+
+    message = (
+        f"{len(remaining)} operator(s) from the ONNX Passes domain {PASSES_DOMAIN!r} remain in"
+        " the model after the frontend passes and cannot be handed over to QONNX/FINN:\n"
+        + "\n".join(lines)
+    )
+
+    if save_to is not None:
+        save_to.parent.mkdir(parents=True, exist_ok=True)
+        ir.save(model, save_to)
+        message += f"\nThe model as left by the passes is saved at {save_to}"
+
+    raise FINNFrontendExportError(message)
 
 
 class FINNPasses_v1(Sequential):
@@ -152,9 +224,6 @@ class FINNPasses_v1(Sequential):
         ExportMultiThresholdToFINN_v1,
         ExportLayoutConverterToFINN_v1,
     ]
-
-
-from qonnx.transformation.infer_datatypes import InferDataTypes
 
 
 def _infer_qonnx_datatypes(model: ModelWrapper):
@@ -203,8 +272,6 @@ def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
     # proto representation wrapped as QONNX ModelWrapper
     result = FINNPasses_v1(config).call(model)
 
-    model = ModelWrapper(ir.to_proto(result.model))
-
     if state := result.model.meta["passes"]:
         total, modified_by, verified_by = (
             state.counter,
@@ -215,6 +282,18 @@ def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
         print(
             f"Applied {total} passes (model modified by {modified_by}," f" verified {verified_by})"
         )
+
+    # Fail with a clear error if any operator from the ONNX Passes domain
+    # survived the export rules: QONNX cannot process these and FINN would fail
+    # on the first transformation touching them
+    save_to = None
+
+    if cfg.save_intermediate_models:
+        save_to = Path(cfg.output_dir) / "intermediate_models" / "step_passes_frontend_failed.onnx"
+
+    assert_exported(result.model, save_to)
+
+    model = ModelWrapper(ir.to_proto(result.model))
 
     # Annotate integer-valued constant tensors with QONNX type annotations for
     # further processing by FINN
