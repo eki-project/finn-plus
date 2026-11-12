@@ -38,7 +38,6 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - The settings wizard and the README no longer suggest that the settings have to live in `~/.finn/`, and FINN+ no longer creates `~/.finn/` when it only reads settings (eki-project#315)
 - `finn --version` shows the `git describe` output instead of 0.0.0 in development installations (eki-project#315)
 - `AUTOMATIC_DEPENDENCY_UPDATES` from the settings file or the environment was always overridden by the CLI; only `--skip-dep-update` overrides it now, and `finn check` no longer updates dependencies, as its help says (eki-project#315)
-- `finn run` failed with a `TypeError` on every call (eki-project#315)
 - Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
 - (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)
 - RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate at the cost of a slightly larger buffer (eki-project#290)
