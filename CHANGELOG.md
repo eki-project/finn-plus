@@ -67,6 +67,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - (Xilinx) Datatype minimization for more layers: `Lookup` minimizes its embedding datatype and `GlobalAccPool` its output datatype (Xilinx#1701); `Pool` minimizes its accumulator/output datatype (`AccPool`/`AvgPool`; `AccumBits` of `QuantAvgPool`) and passes the input datatype through for `MaxPool` when datatypes change after conversion (Xilinx#1697, Xilinx#1701, eki-project#259)
 
 ### Fixed
+- `finn run` crashed on start with `run() got an unexpected keyword argument 'num_default_workers'`; the deprecated command accepts the `--num-workers` option again
 - ImageNet validation in the Pynq driver could count a first image in place of a last one at the end of a pass, making the reported top-1 accuracy vary by single images between runs of the same bitfile (eki-project#263)
 - Runtime-writable weights were never written on the CI board because the driver looked for `runtime_weights/` relative to the working directory and skipped the load silently when it was missing; the weight directory is now resolved next to `settings.json` and a missing directory is an error for accelerators with runtime-writable weights (eki-project#255)
 - The MLO (DDR) weight directory of the Pynq driver was resolved relative to the working directory as well; it is now taken from next to `settings.json` like `runtime_weights/`, and a missing directory reports what to pass instead of failing on the first `.dat` file (eki-project#259)
