@@ -1,20 +1,16 @@
 """Integrates ONNX Passes and ONNX Script passes into the FINN build steps."""
 
-from onnx_passes.passes.base import RewriteRule, Sequential
-from onnx_passes.passes.config import Config as PassesConfig
-from onnx_passes.passes.config import VerifyConfig, LoggingConfig
-
+import numpy as np
+import onnx_ir as ir
 from onnx_passes.ops import DOMAIN as PASSES_DOMAIN
 from onnx_passes.ops.qonnx import DOMAIN as QONNX_DOMAIN
-
-from finn.builder.build_dataflow_config import DataflowBuildConfig
-from finn.builder.build_dataflow_config import VerificationStepType
-
+from onnx_passes.passes.base import RewriteRule, Sequential
+from onnx_passes.passes.config import Config as PassesConfig
+from onnx_passes.passes.config import LoggingConfig, VerifyConfig
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 
-import onnx_ir as ir
-import numpy as np
+from finn.builder.build_dataflow_config import DataflowBuildConfig, VerificationStepType
 
 
 class ExportIm2ColToFINN_v1(RewriteRule):
@@ -28,7 +24,7 @@ class ExportIm2ColToFINN_v1(RewriteRule):
             dilations=dilations,
             kernel_shape=kernel_shape,
             strides=strides,
-            _domain=PASSES_DOMAIN
+            _domain=PASSES_DOMAIN,
         )
 
     @staticmethod
@@ -52,7 +48,7 @@ class ExportIm2ColToFINN_v1(RewriteRule):
             dilations=dilations.as_ints(),
             kernel_size=kernel_shape.as_ints(),
             stride=strides.as_ints(),
-            _domain=QONNX_DOMAIN
+            _domain=QONNX_DOMAIN,
         )
 
 
@@ -96,10 +92,7 @@ class ExportMultiThresholdToFINN_v1(RewriteRule):
         out_dtype = f"UINT{int(np.ceil(np.log2(thresholds.shape[-1] + 1)))}"
 
         return op.MultiThreshold(
-            x,
-            op.Constant(value=ir.tensor(thresholds)),
-            out_dtype=out_dtype,
-            _domain=QONNX_DOMAIN
+            x, op.Constant(value=ir.tensor(thresholds)), out_dtype=out_dtype, _domain=QONNX_DOMAIN
         )
 
 
@@ -109,9 +102,7 @@ class ExportLayoutConverterToFINN_v1(RewriteRule):
     @staticmethod
     def pattern(op, x, assumes, perm):
         """Match LayoutConverter from the ONNX Passes custom domain."""
-        return op.LayoutConverter(
-            x, assumes=assumes, perm=perm, _domain=PASSES_DOMAIN
-        )
+        return op.LayoutConverter(x, assumes=assumes, perm=perm, _domain=PASSES_DOMAIN)
 
     @staticmethod
     def rewrite(op, x, assumes, perm):
@@ -119,13 +110,15 @@ class ExportLayoutConverterToFINN_v1(RewriteRule):
         return op.Transpose(x, perm=perm)
 
 
-from onnx_passes.passes import canonicalize
-from onnx_passes.passes import lower
-from onnx_passes.passes import inline
-from onnx_passes.passes import reorder
-from onnx_passes.passes import fold_constants
-from onnx_passes.passes import multithreshold
-from onnx_passes.passes import unbroadcast
+from onnx_passes.passes import (
+    canonicalize,
+    fold_constants,
+    inline,
+    lower,
+    multithreshold,
+    reorder,
+    unbroadcast,
+)
 
 
 class FINNPasses_v1(Sequential):
@@ -157,7 +150,7 @@ class FINNPasses_v1(Sequential):
         # compatibility
         ExportIm2ColToFINN_v1,
         ExportMultiThresholdToFINN_v1,
-        ExportLayoutConverterToFINN_v1
+        ExportLayoutConverterToFINN_v1,
     ]
 
 
@@ -174,8 +167,7 @@ def _infer_qonnx_datatypes(model: ModelWrapper):
             if not model.get_tensor_datatype(name).is_integer():
                 # If all values are integers, i.e., do not change when rounding
                 # and casting to integer, infer this as an integer tensor
-                if np.all(
-                        np.asarray(np.round(init), dtype=np.int64) == init):
+                if np.all(np.asarray(np.round(init), dtype=np.int64) == init):
                     # Set to some large integer type, should be minimized later
                     model.set_tensor_datatype(name, DataType["INT64"])
 
@@ -202,15 +194,10 @@ def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
                 ),
                 full_context_dump=cfg.verify_save_full_context,
                 inputs=[cfg.verify_input_npy],
-                expected=[cfg.verify_expected_output_npy]
+                expected=[cfg.verify_expected_output_npy],
             )
 
-    config = PassesConfig(
-        logging=LoggingConfig(
-            verbose=cfg.verbose
-        ),
-        verify=verify
-    )
+    config = PassesConfig(logging=LoggingConfig(verbose=cfg.verbose), verify=verify)
 
     # Apply the FINNPasses sequence and convert the resulting model back to the
     # proto representation wrapped as QONNX ModelWrapper
@@ -220,12 +207,13 @@ def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     if state := result.model.meta["passes"]:
         total, modified_by, verified_by = (
-            state.counter, len(state.modified_by), len(state.verified_by)
+            state.counter,
+            len(state.modified_by),
+            len(state.verified_by),
         )
 
         print(
-            f"Applied {total} passes (model modified by {modified_by},"
-            f" verified {verified_by})"
+            f"Applied {total} passes (model modified by {modified_by}," f" verified {verified_by})"
         )
 
     # Annotate integer-valued constant tensors with QONNX type annotations for
