@@ -13,6 +13,8 @@
 #define AP_WIDTH(x) (decltype(x)::width)
 
 constexpr size_t MAX_ETHERNET_HEADER_LENGTH_BYTES = 22;
+constexpr size_t ETHERNET_MTU = 1500;
+using MAC = ap_uint<48>;
 
 namespace lsp {
     constexpr size_t CURRENT_VERSION = 0;
@@ -89,6 +91,13 @@ namespace lsp {
             // TODO
         }
 
+        /** Serial-number comparison for wrapping FSNs and credit counters: true if
+        * `a` is before `b`, i.e. 0 < (b - a) mod 2^W < 2^(W-1). */
+        template<int W>
+        bool serialBefore(const ap_uint<W>& a, const ap_uint<W>& b) {
+            const ap_uint<W> difference = b - a;
+            return difference != 0 && !difference[W - 1];
+        }
 
     }
 
@@ -104,6 +113,59 @@ namespace lsp {
     };
     template <> struct lsp_stat_counters_t<false> {
         void countZeroChunkSegment() {}
+    };
+
+
+    /** The peers of a node: peer I has the I-th MAC address, and I is its connection index. The single
+    * source of this mapping, so that every block that handles several peers (e.g. the RX manager
+    * dispatching by source MAC, the CTRL controller addressing a connection's peer) agrees on it. */
+    template<uint64_t... MACs>
+    struct lsp_peers_t {
+        static constexpr size_t N = sizeof...(MACs);
+        static_assert(N > 0, "At least one peer MAC address is required");
+        static_assert(
+            helpers::maxOf<MACs...>() < (1ULL << MAC::width),
+            "Every peer MAC address must fit into 48 bits"
+        );
+        static_assert(helpers::allDistinct<MACs...>(), "Peer MAC addresses must be distinct");
+
+        // Connection index; the value N marks an unknown MAC address
+        using index_t = ap_uint<clog2(N + 1)>;
+        static constexpr size_t INVALID_INDEX = N;
+
+        /** Return the connection index of the given MAC address, or INVALID_INDEX if it is unknown. */
+        static index_t getIndexFromMAC(const MAC& mac) {
+            #pragma HLS inline
+            static constexpr uint64_t lookupTable[N] = {MACs...};
+            index_t idx = INVALID_INDEX;
+            for (size_t i = 0; i < N; i++) {
+                #pragma HLS unroll
+                if (mac == lookupTable[i]) {
+                    idx = i;
+                }
+            }
+            return idx;
+        }
+
+        /** Return whether the given MAC address belongs to a peer. */
+        static bool isKnownMAC(const MAC& mac) {
+            #pragma HLS inline
+            return getIndexFromMAC(mac) != INVALID_INDEX;
+        }
+
+        /** Return the MAC address of the peer with the given connection index (idx < N). */
+        static MAC getMACFromIndex(const index_t& idx) {
+            #pragma HLS inline
+            static constexpr uint64_t lookupTable[N] = {MACs...};
+            MAC mac = 0;
+            for (size_t i = 0; i < N; i++) {
+                #pragma HLS unroll
+                if (idx == i) {
+                    mac = lookupTable[i];
+                }
+            }
+            return mac;
+        }
     };
 
     namespace protocol {

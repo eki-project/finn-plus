@@ -1,204 +1,164 @@
+// LSP receiver kernel: receives every frame from the CMAC and serves all incoming connections.
+// - The manager dispatches each frame by its source MAC address to the connection of that peer.
+// - One connection per peer parses its frames, feeds its output streams and reports its CTRL status
+//   (cumulative ACK, open gap, urgent ACK) to the controller_tx.
+// - The controller_tx builds the CTRL frames (CREDIT_ACK, NACK) of all connections and sends them
+//   back through the CMAC.
 #include "lsp_receiver.hpp"
 #include "lsp_common.hpp"
 #include <ap_axi_sdata.h>
-
-#define DEVELOP
 
 using namespace lsp;
 
 namespace lsp {
     namespace receiver {
+        using beat_t = ap_axiu<constants::BEAT_WIDTH, 1, 0, 0>;
 
-        // Send a NACK frame roughly every 100 cycles
-        constexpr size_t NACK_FRAME_BEAT_INTERVAL = 100;
+        // Number of beats of the largest frame (MTU plus L2 header). A CMAC side FIFO has to hold at
+        // least one whole frame: CMAC RX cannot be paused, and CMAC TX must not see a gap in a frame.
+        constexpr size_t CMAC_BEAT_BUFFER = (
+            (ETHERNET_MTU + MAX_ETHERNET_HEADER_LENGTH_BYTES) * 8 + constants::BEAT_WIDTH - 1
+        ) / constants::BEAT_WIDTH;
 
-        using BEAT_TYPE = ap_axiu<constants::BEAT_WIDTH, 1, 0, 0>;
+        /** CTRL status of one connection, sent by the connection to the controller_tx whenever it
+        changes. The controller_tx reads it non-blocking and keeps the newest one per connection (see
+        takeNewer), so the connection never has to wait for the controller_tx. */
+        struct ctrl_status_t {
+            // Next expected FSN: the cumulative ACK, and the FSN to NACK while gapOpen is set
+            ap_uint<constants::FSN_WIDTH> expectedFSN = 0;
+            // A gap was seen at expectedFSN and is still open: NACK it, and again if it stays open
+            bool gapOpen = false;
+            // Send a CREDIT_ACK at once instead of after the ACK delay, e.g. for an accepted probe or
+            // a duplicate frame
+            bool ackNow = false;
+
+            /** Take the values of a newer status. expectedFSN and gapOpen are states, so the newer
+            values replace the held ones. ackNow is an event, so a pending one stays set until the
+            controller_tx has sent the ACK and cleared it. */
+            void takeNewer(const ctrl_status_t& newer) {
+                #pragma HLS inline
+                expectedFSN = newer.expectedFSN;
+                gapOpen = newer.gapOpen;
+                ackNow = ackNow || newer.ackNow;
+            }
+        };
+
+        // Effectively a dict that maps the MAC addresses of the peers (Peers, an lsp_peers_t) to AXI
+        // Streams. These streams are connected to the connecting kernels which read the beats.
+        // This struct strips the ethernet header and only passes LSP header + payload.
+        template<typename Peers>
+        struct mac_dispatcher {
+            // Stream array used to forward data, indexed by connection index
+            hls::stream<beat_t> (&streams)[Peers::N];
+
+            // Construct with the given array
+            explicit mac_dispatcher(hls::stream<beat_t> (&s)[Peers::N]) : streams(s) {}
+
+            /** Forward the given data to the stream of the peer with the given MAC address. If the
+            address is unknown, nothing is done. */
+            void forwardData(const MAC& sourceMAC, const beat_t& data) {
+                // An unknown MAC yields Peers::INVALID_INDEX, which matches no stream
+                const typename Peers::index_t idx = Peers::getIndexFromMAC(sourceMAC);
+                for (size_t i = 0; i < Peers::N; ++i) {
+                    #pragma HLS unroll
+                    if (i == idx) {
+                        streams[i].write(data);
+                    }
+                }
+            }
+        };
+
+        /** Copy one whole frame from the CMAC into the ingress FIFO. CMAC RX cannot be paused, so this
+        process does nothing else: a stalled manager backs up into the FIFO instead of losing beats on
+        the port. */
+        void cmacIngress(hls::stream<beat_t>& fromCMAC, hls::stream<beat_t, CMAC_BEAT_BUFFER>& ingress) {
+            beat_t beat;
+            do {
+                #pragma HLS PIPELINE II=1
+                beat = fromCMAC.read();
+                ingress.write(beat);
+            } while (!beat.last);
+        }
+
+        /** Copy one whole frame from the egress FIFO to the CMAC, starting only once the frame is
+        complete, so that the CMAC never sees a gap inside the frame. The controller_tx writes one
+        token on egressFrames after the last beat of each frame. */
+        void cmacEgress(
+            hls::stream<beat_t, CMAC_BEAT_BUFFER>& egress,
+            hls::stream<bool, CMAC_BEAT_BUFFER>& egressFrames,
+            hls::stream<beat_t>& toCMAC
+        ) {
+            egressFrames.read();
+            beat_t beat;
+            do {
+                #pragma HLS PIPELINE II=1
+                beat = egress.read();
+                toCMAC.write(beat);
+            } while (!beat.last);
+        }
+
+
+        // TODO: State machine that looks up the source MAC once per frame (beat 0) and forwards the
+        // rest of the frame with it.
+        template<typename Peers>
+        void manager(
+            hls::stream<beat_t, CMAC_BEAT_BUFFER>& ingress,
+            hls::stream<beat_t> (&macStreams)[Peers::N]
+        ) {
+            // Create the dispatcher
+            mac_dispatcher<Peers> dispatcher(macStreams);
+
+            // EXAMPLE
+            dispatcher.forwardData(0xA00001, 10);
+        }
+
+
+        // All processes below run concurrently and free-running (e.g. hls::task, or ap_ctrl_none with
+        // while(1) loops in a dataflow region). cmacIngress in particular must never wait for another
+        // process, otherwise beats are lost on the CMAC RX port.
+        // TODO: T he supplied streams, peers etc. are all examples. This will later be moved into a separate
+        // TODO: file that will be template instantiated by cmake with the real values.
+        void receiver(
+            hls::stream<beat_t>& fromCMAC,
+            hls::stream<beat_t>& toCMAC,
+            hls::stream<ap_uint<constants::BEAT_WIDTH>>& s0,
+            hls::stream<ap_uint<constants::BEAT_WIDTH>>& s1
+        ) {
+            using PEERS = lsp_peers_t<0xA1, 0xA2>;
+
+            // CMAC side FIFOs, each holding at least one whole frame (see CMAC_BEAT_BUFFER)
+            hls::stream<beat_t, CMAC_BEAT_BUFFER> ingress("ingress");
+            hls::stream<beat_t, CMAC_BEAT_BUFFER> egress("egress");
+            // One token per complete frame in egress; every frame has at least one beat
+            hls::stream<bool, CMAC_BEAT_BUFFER> egressFrames("egress_frames");
+
+            hls::stream<beat_t> macStreams[PEERS::N];
+
+            // CTRL status per connection. Read non-blocking by the controller_tx, which keeps the
+            // newest one per connection and attaches it to the next CTRL frame
+            hls::stream<ctrl_status_t> ctrlStatus[PEERS::N];
+
+            lsp_receiver_ring_buffer& ringBuffers[2] = {...};
+
+            // Connect the CMAC to the manager and the manager to macStreams
+            cmacIngress(fromCMAC, ingress);
+            manager<PEERS>(ingress, macStreams);
+
+            // TX to send control frames back. Also on its own sends credit updates and ACKs
+            controller_tx<PEERS>(egress, egressFrames, ringBuffers, ctrlStatus);
+            cmacEgress(egress, egressFrames, toCMAC);
+
+            // Connect macstreams to the actual parsers for the devices/connections
+            connection(macStreams[0], ringBuffers[0], ctrlStatus[0], s0);
+            connection(macStreams[1], ringBuffers[1], ctrlStatus[1], s1);
+        }
+
 
         // Ring buffer depth (in words) of every stream, in the order of the stream arguments
         #ifdef DEVELOP
-        using RING_DEPTHS = data::lsp_ring_depths_t<512, 256>;
+            using RING_DEPTHS = data::lsp_ring_depths_t<512, 256>;
         #else
-        using RING_DEPTHS = data::lsp_ring_depths_t<$$RING_DEPTHS$$>;
+            using RING_DEPTHS = data::lsp_ring_depths_t<$$RING_DEPTHS$$>;
         #endif
-
-
-        void putNACKFrame(hls::stream<BEAT_TYPE>& txNetwork, const ap_uint<constants::FSN_WIDTH>& lastSeenFSN) {
-            protocol::lsp_header_t header;
-            header.version = lsp::CURRENT_VERSION;
-            header._reserved = 0;
-            header.frameSequenceNumber = lastSeenFSN;
-            header.frameType = constants::FRAME_NACK;
-            header.flags = 0;
-            header.payloadChunks = 0;
-
-            // TODO: The Ethernet kernel interface will likely still change. This is only
-            // a first guess.
-            BEAT_TYPE headerBits;
-            headerBits.data = header.pack();
-            headerBits.last = 1;
-            txNetwork.write(headerBits);
-        }
-
-        enum class kernel_fsm_state : unsigned char {
-            EXPECT_FRAME_FIRST_BEAT,
-            EXPECT_BEAT,
-            WAITING_FOR_REPLAY
-        };
-
-        /** Keeps the state of the receiver kernel. Should be static in the receiver function. */
-        struct kernel_state {
-            ap_uint<constants::FSN_WIDTH> lastAcknowledgedFSN = 0;
-            ap_uint<constants::FSN_WIDTH> currentFSN = 0;
-            protocol::lsp_header_t currentHeader;
-            kernel_fsm_state state = kernel_fsm_state::EXPECT_FRAME_FIRST_BEAT;
-            ap_uint<clog2(NACK_FRAME_BEAT_INTERVAL)+1> beatsSinceLastNACK = 0;
-        };
-
-
-        /**
-        Receiver implementation, generic over the number and widths of the FINN streams.
-
-        Stream indices: the index of a FINN stream (the `stream` field of data segments and credit records,
-        and the StreamIndex of its ring buffer) is its position among the stream arguments, both here and in
-        the sender kernel. The local order of the tensor connections can differ between the two devices:
-        if streams X and Y run between devices A and B, and X is tensor connection 0 on A but 1 on B (Y the
-        other way round), then the order of the streams is reversed between the HLS sender and receiver
-        kernel. The stream arguments of both kernels must therefore be generated in the same per-link
-        order, otherwise the receiver dispatches segments into the wrong streams.
-        */
-        template<typename RingDepths, int... StreamWidths>
-        void lsp_receiver_impl(
-            hls::stream<BEAT_TYPE>& rxNetwork,
-            hls::stream<BEAT_TYPE>& txNetwork,
-            hls::stream<ap_uint<StreamWidths>>&... streams
-        ) {
-            // One ring buffer per FINN stream; std::get<I>(ringBuffers) belongs to the I-th stream argument
-            // and has the I-th depth of RingDepths.
-            // Static, so that the buffered data survives between calls of the free-running kernel.
-            static data::lsp_stream_ring_buffers_t<RingDepths, StreamWidths...> ringBuffers;
-
-            // Segment set - the translation unit between the raw bits of the incoming data and
-            // the ring buffers
-            static data::lsp_segment_set_t<StreamWidths...> segmentSet;
-
-            // Keeps reciever state, such as FSNs, replay status, etc.
-            static kernel_state state;
-
-            // First of all the NACK resend timer.
-            // If we wait for a replay, and no frame has arrived yet, we send a NACK.
-            if (state.state == kernel_fsm_state::WAITING_FOR_REPLAY && rxNetwork.empty()) {
-                if (state.beatsSinceLastNACK == NACK_FRAME_BEAT_INTERVAL - 1) {
-                    state.beatsSinceLastNACK = 0;
-                    putNACKFrame(txNetwork, state.currentFSN);
-                }
-                state.beatsSinceLastNACK++;
-                return;
-            }
-
-            // Read a beat
-            BEAT_TYPE inBeat = rxNetwork.read();
-            ap_uint<BEAT_TYPE::Type_data::width> data = inBeat.get_data();
-
-            // If the frame is bad, send back NACK.
-            if (inBeat.last && inBeat.user) {
-                state.state = kernel_fsm_state::WAITING_FOR_REPLAY;
-                putNACKFrame(txNetwork, state.currentFSN);
-                state.beatsSinceLastNACK = 0;
-                return;
-            }
-
-            // Check tag/ethertype for ethernet header length
-            ap_uint<clog2(MAX_ETHERNET_HEADER_LENGTH_BYTES)+1> ethernetHeaderLength = MAX_ETHERNET_HEADER_LENGTH_BYTES;
-            ap_uint<16> tagOrEthertype = data.range(13 * 8 - 1, 12 * 8);
-            if (tagOrEthertype == 0x8100) {
-                // IEEE 802.1Q
-                ethernetHeaderLength = 18;
-            } else if (tagOrEthertype == 0x88A8) {
-                // IEEE 802.1ad
-                ethernetHeaderLength = 22;
-            } else if (tagOrEthertype == 0x88B5 || tagOrEthertype == 0x88B6) {
-                // Local experiment ethertypes
-                ethernetHeaderLength = 14;
-            } else {
-                // TODO: Error counter - unexpected ethertype
-                ethernetHeaderLength = 14;
-            }
-
-            // Check if we are expecting the first beat of a frame and need to account for the ethernet
-            // and protocol header
-            ap_uint<constants::BEAT_WIDTH> beatOffset = 0;
-            if (state.state == kernel_fsm_state::EXPECT_FRAME_FIRST_BEAT) {
-                // We expect a protocol header. Read it, unpack it and adjust the read offset.
-                beatOffset = ethernetHeaderLength;
-                state.currentHeader = protocol::lsp_header_t::unpack(
-                    data.range(beatOffset + protocol::lsp_header_t::WIDTH - 1, beatOffset)
-                );
-                beatOffset += protocol::lsp_header_t::WIDTH;
-            }
-
-            // Check if the sequence number is correct. If not, we start sending NACK frames.
-            // Assignment here on purpose so that it wraps around to 0 correctly
-            auto expectedFSN = state.currentFSN + 1;
-            if (state.currentHeader.frameSequenceNumber == expectedFSN) {
-                // Looks good, we increase
-                state.currentFSN++;
-            } else {
-                // Start sending NACKs until we receive the correct FSN. Go back to the last one seen
-                putNACKFrame(txNetwork, state.currentFSN);
-                state.beatsSinceLastNACK = 0;
-                state.state = kernel_fsm_state::WAITING_FOR_REPLAY;
-            }
-
-            // Decide what to do, depending on the incoming frame type and kernel state
-            if (state.currentHeader.frameType == constants::FRAME_DATA) {
-                while (beatOffset <= constants::BEAT_WIDTH) {
-                    // TODO: Continuously read from the segments into ring buffer
-                    // TODO: Assure that ethernet is padded to 64bit multiple so that we can use chunk_offset_t
-                    segmentSet.set(data, beatOffset);
-                    // TODO: Read the segment header to find out how long the segment was and adjust the beatOffset accordingly
-                }
-            } else {
-                // Unexpected - we normally only receive data frames
-            }
-
-            // Check if credit updates are necessary
-            // TODO
-
-            // If this was the last beat in the frame, we expect a new frame
-            if (inBeat.last) {
-                state.state = kernel_fsm_state::EXPECT_FRAME_FIRST_BEAT;
-            }
-        }
-
-
-        /**
-        * Top Level Function
-        */
-        void lsp_receiver(
-            hls::stream<BEAT_TYPE>& networkStream,
-        #ifdef DEVELOP
-            hls::stream<ap_uint<64>>& stream0,
-            hls::stream<ap_uint<264>>& stream1
-        #else
-            $$STREAMS$$
-        #endif
-        ) {
-        #pragma HLS INTERFACE axis port = net_in
-
-        #ifdef DEVELOP
-        #pragma HLS INTERFACE axis port = stream0
-        #pragma HLS INTERFACE axis port = stream1
-        #else
-        $$STREAM_PRAGMAS$$
-        #endif
-        #pragma HLS INTERFACE ap_ctrl_none port = return
-
-            // The order of the streams sets their indices, see lsp_receiver_impl
-        #ifdef DEVELOP
-            lsp_receiver_impl<RING_DEPTHS>(networkStream, stream0, stream1);
-        #else
-            lsp_receiver_impl<RING_DEPTHS>(networkStream, $$STREAM_ARGS$$);
-        #endif
-        }
     }
 }
