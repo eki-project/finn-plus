@@ -185,7 +185,7 @@ class FINNSettings(BaseModel):
         3. In the FINN+ repository root
         4. In ~/.finn/
         If the file does not exist, the function will still return the path for 1,2 and 4.
-        It must then be created by another function.
+        It must then be created by another function, which also creates missing directories.
         """
         if override_settings_path is not None:
             return override_settings_path
@@ -194,10 +194,7 @@ class FINNSettings(BaseModel):
         repo_settings = FINN_ROOT / "settings.yaml"
         if repo_settings.exists():
             return repo_settings
-        finn_home = Path("~/.finn").expanduser()
-        if not finn_home.exists():
-            finn_home.mkdir()
-        return finn_home / "settings.yaml"
+        return Path("~/.finn").expanduser() / "settings.yaml"
 
     @staticmethod
     def init(
@@ -247,6 +244,16 @@ class FINNSettings(BaseModel):
         settings_path = FINNSettings.resolve_settings_file(override_settings_path)
 
         # Verify file exists
+        if settings_path.is_dir():
+            source = (
+                "the settings path passed to FINN+"
+                if override_settings_path is not None
+                else "the FINN_SETTINGS environment variable"
+            )
+            raise FINNUserError(
+                f"The FINN+ settings file resolved to {settings_path}, which is a directory. "
+                f"Set {source} to the settings file itself, e.g. {settings_path / 'settings.yaml'}."
+            )
         if must_exist and not settings_path.exists():
             raise FINNUserError(
                 f"FINN Settings were resolved to {settings_path}. "
@@ -349,6 +356,7 @@ class FINNSettings(BaseModel):
         if self._num_default_workers == -1:
             # Dont save this if its set to automatic detection
             del data["num_default_workers"]
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w+") as f:
             yaml.dump(data, f, yaml.Dumper)
 
