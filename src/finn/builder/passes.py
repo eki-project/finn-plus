@@ -22,6 +22,7 @@ class ExportIm2ColToFINN_v1(RewriteRule):
 
     @staticmethod
     def pattern(op, x, dilations, kernel_shape, strides):
+        """Match Im2Col from the ONNX Passes custom domain."""
         return op.Im2Col(
             x,
             dilations=dilations,
@@ -32,18 +33,26 @@ class ExportIm2ColToFINN_v1(RewriteRule):
 
     @staticmethod
     def check(context, x, dilations, kernel_shape, strides):
+        """Require a static input shape, QONNX needs it as an attribute."""
         return x.shape is not None and x.shape.is_static()
 
     @staticmethod
     def rewrite(op, x, dilations, kernel_shape, strides):
+        """Transplant the node into the QONNX domain with QONNX attributes."""
+        # The replacement must live in the QONNX domain: emitting it into the
+        # ONNX Passes domain matches the pattern of this rule again and the
+        # rewriter never terminates. QONNX also names the attributes
+        # differently and needs the input shape as a string attribute. Padding
+        # is explicit and standalone in ONNX Passes and grouped convolutions
+        # are split explicitly, so the QONNX padding and depthwise attributes
+        # keep their defaults.
         return op.Im2Col(
             x,
-            # QONNX needs the input shape as a node attribute
             input_shape="({})".format(",".join(map(str, x.shape.numpy()))),
-            dilations=dilations,
-            kernel_shape=kernel_shape,
-            strides=strides,
-            _domain=PASSES_DOMAIN
+            dilations=dilations.as_ints(),
+            kernel_size=kernel_shape.as_ints(),
+            stride=strides.as_ints(),
+            _domain=QONNX_DOMAIN
         )
 
 
@@ -52,10 +61,12 @@ class ExportMultiThresholdToFINN_v1(RewriteRule):
 
     @staticmethod
     def pattern(op, x, thresholds, weights):
+        """Match MultiThreshold from the ONNX Passes custom domain."""
         return op.MultiThreshold(x, thresholds, weights, _domain=PASSES_DOMAIN)
 
     @staticmethod
     def check(context, x, thresholds, weights):
+        """Accept only static, per-channel thresholds with unit step weights."""
         if thresholds.shape is None or thresholds.shape.is_dynamic():
             return False
 
@@ -69,6 +80,7 @@ class ExportMultiThresholdToFINN_v1(RewriteRule):
 
     @staticmethod
     def rewrite(op, x, thresholds, weights):
+        """Transplant the node into the QONNX domain with QONNX attributes."""
         # Extract constant parameter tensors as NumPy arrays: according to the
         # match conditions these are never None and safe to access.
         thresholds = ir.convenience.get_const_tensor(thresholds).numpy()  # noqa
@@ -96,10 +108,14 @@ class ExportLayoutConverterToFINN_v1(RewriteRule):
 
     @staticmethod
     def pattern(op, x, assumes, perm):
-        return op.LayoutConverter(x, assumes=assumes, perm=perm)
+        """Match LayoutConverter from the ONNX Passes custom domain."""
+        return op.LayoutConverter(
+            x, assumes=assumes, perm=perm, _domain=PASSES_DOMAIN
+        )
 
     @staticmethod
     def rewrite(op, x, assumes, perm):
+        """Replace by a plain Transpose with the same permutation."""
         return op.Transpose(x, perm=perm)
 
 
