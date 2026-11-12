@@ -34,11 +34,18 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name
+from typing import TYPE_CHECKING, Any, cast
 
 from finn.analysis.fpgadataflow.floorplan_params import floorplan_params
 from finn.transformation.general import ApplyConfig
 from finn.util.basic import get_metadata_prop_path, make_build_dir
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from onnx import NodeProto
+
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 
 class Floorplan(Transformation):
@@ -59,24 +66,28 @@ class Floorplan(Transformation):
     def __init__(self, floorplan: str | None = None) -> None:
         """Initialize the transform with an optional floorplan file."""
         super().__init__()
-        self.user_floorplan = floorplan
+        self.user_floorplan: dict[str, Any] | str | None = floorplan
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply floorplanning and partition assignment to the model."""
         # read in a user-specified floorplan or generate a default one
         if self.user_floorplan is None:
             self.user_floorplan = model.analysis(floorplan_params)
-            json_dir = make_build_dir(prefix="vitis_floorplan_")
+            json_dir = cast("str", make_build_dir(prefix="vitis_floorplan_"))
             json_file = json_dir + "/floorplan.json"
             model.set_metadata_prop("floorplan_json", json_file)
             with Path(json_file).open("w") as f:
                 json.dump(self.user_floorplan, f, indent=4)
         else:
-            model.set_metadata_prop("floorplan_json", self.user_floorplan)
+            model.set_metadata_prop("floorplan_json", cast("str", self.user_floorplan))
             model = model.transform(ApplyConfig(self.user_floorplan))
 
         try:
-            default_slr = self.user_floorplan["Defaults"]["slr"][0]
+            # self.user_floorplan may still be a file path (str) here when the user
+            # supplied one, since ApplyConfig parses it internally without handing the
+            # parsed dict back to us; that TypeError is caught below and treated the
+            # same as any other malformed/missing "Defaults"/"slr" entry.
+            default_slr = cast("dict[str, Any]", self.user_floorplan)["Defaults"]["slr"][0]
         except Exception:
             default_slr = -1
 
@@ -93,13 +104,17 @@ class Floorplan(Transformation):
                 if node_slr != -1:
                     continue
                 # optimize for possible SLR crossing
-                in_width = node_inst.get_nodeattr("inWidth")
-                out_width = node_inst.get_nodeattr("outWidth")
+                in_width = cast("int", node_inst.get_nodeattr("inWidth"))
+                out_width = cast("int", node_inst.get_nodeattr("outWidth"))
                 # find neighbour with narrowest bus
                 if in_width > out_width:
                     narrow_neighbour = model.find_consumer(node.output[0])
                 else:
                     narrow_neighbour = model.find_producer(node.input[0])
+                if narrow_neighbour is None:
+                    raise FINNInternalError(
+                        f"Could not find a neighbour of {node.name} to inherit its SLR from."
+                    )
                 node_slr = getCustomOp(narrow_neighbour).get_nodeattr("slr")
                 node_inst.set_nodeattr("slr", node_slr)
             if node.op_type.startswith("StreamingFIFO"):
@@ -168,7 +183,7 @@ class Floorplan(Transformation):
         # handle remaining nodes
         for node in non_dma_nodes:
             pre_node = model.find_producer(node.input[0])
-            node_inst = getCustomOp(node)
+            node_inst = cast("HWCustomOp", getCustomOp(node))
             if pre_node not in non_dma_nodes:
                 # input node -> start new partition
                 node_inst.set_nodeattr("partition_id", partition_cnt)
@@ -180,10 +195,14 @@ class Floorplan(Transformation):
                 and node_inst.get_nodeattr("mem_mode") == "external"
             ):
                 pre_nodes = model.find_direct_predecessors(node)
+                if pre_nodes is None:
+                    raise FINNInternalError(
+                        f"Node {node.name} unexpectedly has no direct predecessors."
+                    )
             else:
                 # exception for external weight MVAU: only consider primary input
                 # TODO: (why) is this necessary? should we consider such exceptions for other cases?
-                pre_nodes = [pre_node]
+                pre_nodes = [cast("NodeProto", pre_node)]
 
             axilite_intf_name = node_inst.get_verilog_top_module_intf_names()["axilite"]
             if len(axilite_intf_name) != 0:

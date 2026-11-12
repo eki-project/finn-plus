@@ -10,6 +10,7 @@ import numpy as np
 from copy import deepcopy
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
+from typing import cast
 
 from finn.core.onnx_exec import execute_onnx
 from finn.util.exception import FINNUserError
@@ -57,7 +58,12 @@ def despecialize_model(model: ModelWrapper) -> ModelWrapper:
         # missing code generation directories: select the Python mode where the op offers
         # one, and clear the attribute otherwise (those ops always execute in Python).
         inst = getCustomOp(node)
-        allowed_modes = inst.get_nodeattr_types().get("exec_mode", (None, None, None, set()))[3]
+        # exec_mode specs carry the allowed values as 4th element
+        exec_mode_spec = cast(
+            "tuple[str, bool, str, set[str]]",
+            inst.get_nodeattr_types().get("exec_mode", (None, None, None, set())),
+        )
+        allowed_modes = exec_mode_spec[3]
         if "python" in allowed_modes:
             inst.set_nodeattr("exec_mode", "python")
         else:

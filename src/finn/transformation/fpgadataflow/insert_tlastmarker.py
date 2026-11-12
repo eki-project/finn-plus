@@ -126,7 +126,8 @@ class InsertTLastMarker(Transformation):
                 # TODO: fix this with a cleanup transform
                 if first_node == []:
                     continue
-                assert len(first_node) == 1, "Input fans out to multiple nodes"
+                if len(first_node) != 1:
+                    raise FINNInternalError("Input fans out to multiple nodes")
                 first_node = first_node[0]
                 # several scenarios exclude the node:
                 # 1. node is a FC layer with internal weights, in which case
@@ -158,7 +159,7 @@ class InsertTLastMarker(Transformation):
                             # only handle ElementwiseAdd with two dynamic inputs (not const)
                             stream_width = int(custom_op.get_instream_width(1))
                         else:
-                            raise Exception("No method to determine stream width")
+                            raise FINNInternalError("No method to determine stream width")
                     else:
                         stream_width = int(custom_op.get_instream_width())
                     in_shape = model.get_tensor_shape(graph_in_name)

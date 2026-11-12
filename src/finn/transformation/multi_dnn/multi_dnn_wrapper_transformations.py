@@ -28,7 +28,7 @@ class MultiDNNWrapperExposeIO(Transformation):
                 dnn_custom_op = getCustomOp(node)
                 if not (isinstance(dnn_custom_op, DNNContainer)):
                     raise FINNInternalError("Expected a DNNContainer custom op")
-                body_model = dnn_custom_op.get_nodeattr("body")
+                body_model = dnn_custom_op.body
                 body_graph = body_model.graph
                 graph_name = body_graph.name
 
@@ -80,8 +80,8 @@ class CollapseModels(Transformation):
                 dnn_custom_op = getCustomOp(node)
                 if not (isinstance(dnn_custom_op, DNNContainer)):
                     raise FINNInternalError("Expected a DNNContainer custom op")
-                body_model = dnn_custom_op.get_nodeattr("body")
-                io_map = json.loads(dnn_custom_op.get_nodeattr("io_map"))
+                body_model = dnn_custom_op.body
+                io_map = json.loads(dnn_custom_op.io_map)
                 model.graph.node.remove(node)
 
                 mod = body_model

@@ -43,6 +43,7 @@ import finn.custom_op.fpgadataflow.hls.elementwise_binary_hls as elementwise_bin
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.util.basic import MAX_ALLOWED_AP_INT_W
+from finn.util.exception import FINNInternalError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 
@@ -292,7 +293,7 @@ class SetFolding(Transformation):
                 max_pe = cast("int", node_inst.get_nodeattr("Channels"))
                 self.optimize_attribute_val(node_inst, max_pe, "PE")
                 # increase SIMD for VVAU once PE is exhausted
-                pe = node_inst.get_nodeattr("PE")
+                pe = cast("int", node_inst.get_nodeattr("PE"))
                 cyc = node_inst.get_exp_cycles()
                 if (
                     op_type in ["VVAU_hls", "VVAU_rtl"]
@@ -304,9 +305,10 @@ class SetFolding(Transformation):
                 # also set the folding of the upsteam DW SWU
                 # which must be identical to this node
                 swu_node = model.find_producer(node.input[0])
-                assert swu_node is not None, "Expected producer node for VVAU/Pool input"
+                if swu_node is None:
+                    raise FINNInternalError("Expected producer node for VVAU/Pool input")
                 if swu_node.op_type.startswith("ConvolutionInputGenerator"):
-                    swu_node_inst = getCustomOp(swu_node)
+                    swu_node_inst = cast("HWCustomOp", getCustomOp(swu_node))
                     swu_node_inst.set_nodeattr("SIMD", pe)
                     # The depthwise SWU replays its buffered window once per channel
                     # fold, so it can be slower than the VVAU/Pool it feeds (e.g. a
@@ -344,9 +346,11 @@ class SetFolding(Transformation):
                     elif op_type == "Pool_hls":
                         ksize = node_inst.get_nodeattr("KernelSize")
                     else:
-                        raise Exception(f"Undefined edge case for {op_type}")
+                        raise FINNInternalError(f"Undefined edge case for {op_type}")
                     if ksize != 1:  # pointwise vvau/pool lack a SWU
-                        raise Exception("Expected SWU on DW op input, found " + swu_node.op_type)
+                        raise FINNInternalError(
+                            "Expected SWU on DW op input, found " + swu_node.op_type
+                        )
             elif op_type in simd_ops:
                 if op_type.startswith("ConvolutionInputGenerator"):
                     depthwise = node_inst.get_nodeattr("depthwise")

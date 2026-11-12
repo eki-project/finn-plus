@@ -893,7 +893,7 @@ def run(
     finn_deps_definitions: Path | None,
     finn_build_dir: Path | None,
     skip_dep_update: bool,
-    num_workers: int,
+    num_default_workers: int,
     script: Path,
     batch: bool,
 ) -> None:

@@ -451,8 +451,10 @@ class CreateStitchedIP(Transformation):
         if len(axilite_intf_name) != 0:
             self.connect_cmds.extend(
                 [
-                    f"make_bd_intf_pins_external "
-                    f"[get_bd_intf_pins {inst_name}/{axilite_intf_name[0]}]"
+                    (
+                        f"make_bd_intf_pins_external "
+                        f"[get_bd_intf_pins {inst_name}/{axilite_intf_name[0]}]"
+                    )
                 ]
             )
             ext_if_name = f"{axilite_intf_name[0]}_{len(self.intf_names['axilite'])}"
@@ -478,9 +480,11 @@ class CreateStitchedIP(Transformation):
                 self.connect_cmds.extend(dummy.code_clk_rst())
                 self.connect_cmds.extend(
                     [
-                        f"connect_bd_intf_net "
-                        f"[get_bd_intf_pins {inst_name}/{mm_intf_name[0]}] "
-                        f"[get_bd_intf_pins {dummy.name}/s_axi]",
+                        (
+                            f"connect_bd_intf_net "
+                            f"[get_bd_intf_pins {inst_name}/{mm_intf_name[0]}] "
+                            f"[get_bd_intf_pins {dummy.name}/s_axi]"
+                        ),
                     ]
                 )
                 continue
@@ -517,7 +521,7 @@ class CreateStitchedIP(Transformation):
                 # per-SIMD packed memblock.dat (the layout fetch_weights expects in
                 # external memory, e.g. DDR/HBM) rather than input_1.npy, which is
                 # one-value-per-element.
-                code_gen_dir = node_inst.get_nodeattr("code_gen_dir_ipgen")
+                code_gen_dir = cast("str", node_inst.get_nodeattr("code_gen_dir_ipgen"))
                 dat_path = Path(code_gen_dir) / "memblock.dat"
                 if dat_path.is_file():
                     self.aximm_weight_files[ext_if_name] = str(dat_path)
@@ -706,12 +710,14 @@ class CreateStitchedIP(Transformation):
         self.create_cmds.extend(
             [
                 f"create_bd_cell -type ip -vlnv {signature_vlnv} {signature_name}",
-                f"set_property -dict [list "
-                f"CONFIG.SIG_CUSTOMER {{{self.signature[0]}}} "
-                f"CONFIG.SIG_APPLICATION {{{self.signature[1]}}} "
-                f"CONFIG.VERSION {{{self.signature[2]}}} "
-                f"CONFIG.CHECKSUM_COUNT {{{checksum_count}}} "
-                f"] [get_bd_cells {signature_name}]",
+                (
+                    f"set_property -dict [list "
+                    f"CONFIG.SIG_CUSTOMER {{{self.signature[0]}}} "
+                    f"CONFIG.SIG_APPLICATION {{{self.signature[1]}}} "
+                    f"CONFIG.VERSION {{{self.signature[2]}}} "
+                    f"CONFIG.CHECKSUM_COUNT {{{checksum_count}}} "
+                    f"] [get_bd_cells {signature_name}]"
+                ),
             ]
         )
 
@@ -720,10 +726,12 @@ class CreateStitchedIP(Transformation):
             [
                 f"connect_bd_net [get_bd_ports ap_clk] [get_bd_pins {signature_name}/ap_clk]",
                 f"connect_bd_net [get_bd_ports ap_rst_n] [get_bd_pins {signature_name}/ap_rst_n]",
-                f"set_property -dict [list "
-                f"CONFIG.FREQ_HZ {{{fclk_hz}}} "
-                f"CONFIG.CLK_DOMAIN {{ap_clk}} "
-                f"] [get_bd_intf_pins {signature_name}/s_axi]",
+                (
+                    f"set_property -dict [list "
+                    f"CONFIG.FREQ_HZ {{{fclk_hz}}} "
+                    f"CONFIG.CLK_DOMAIN {{ap_clk}} "
+                    f"] [get_bd_intf_pins {signature_name}/s_axi]"
+                ),
                 f"make_bd_intf_pins_external [get_bd_intf_pins {signature_name}/s_axi]",
                 "set_property name s_axilite_info [get_bd_intf_ports s_axi_0]",
                 "assign_bd_address",
@@ -822,9 +830,9 @@ class CreateStitchedIP(Transformation):
         for graph_input in model.graph.input:
             inp_name = graph_input.name
             inp_cons = model.find_consumers(inp_name)
-            if not (inp_cons != []):
+            if inp_cons == []:
                 raise FINNInternalError(f"No consumer for input {inp_name}")
-            if not (len(inp_cons) == 1):
+            if len(inp_cons) != 1:
                 raise FINNInternalError(f"Multiple consumers for input {inp_name}")
             node = inp_cons[0]
             node_inst = getCustomOp(node)
@@ -834,7 +842,7 @@ class CreateStitchedIP(Transformation):
         for output in model.graph.output:
             out_name = output.name
             node = model.find_producer(out_name)
-            if not (node is not None):
+            if node is None:
                 raise FINNInternalError(f"No producer for output {out_name}")
             node_inst = getCustomOp(node)
             for i in range(len(node.output)):
@@ -847,6 +855,10 @@ class CreateStitchedIP(Transformation):
             for node in model.graph.node:
                 node_inst = getCustomOp(node)
                 inst_name = node.name
+                if not isinstance(node_inst, HWCustomOp):
+                    raise FINNInternalError(
+                        f"Node {node.name} is not an HWCustomOp, cannot connect s_axis_tap."
+                    )
                 s_axis_intf_names = node_inst.get_verilog_top_module_intf_names()["s_axis"]
                 for intf_name, width in s_axis_intf_names:
                     if intf_name == "s_axis_tap":
@@ -925,7 +937,7 @@ class CreateStitchedIP(Transformation):
 
         model.set_metadata_prop("wrapper_filename", wrapper_filename)
         num_workers = get_num_default_workers()
-        if not (num_workers >= 0):
+        if num_workers < 0:
             raise FINNInternalError("Number of workers must be nonnegative.")
         if num_workers == 0:
             num_workers = mp.cpu_count()
@@ -1023,9 +1035,11 @@ class CreateStitchedIP(Transformation):
         # Package IP and configure properties
         tcl.extend(
             [
-                f"ipx::package_project -root_dir {vivado_stitch_proj_dir}/ip "
-                f"-vendor {block_vendor} -library {block_library} -taxonomy /UserIP "
-                f"-module {block_name} -import_files",
+                (
+                    f"ipx::package_project -root_dir {vivado_stitch_proj_dir}/ip "
+                    f"-vendor {block_vendor} -library {block_library} -taxonomy /UserIP "
+                    f"-module {block_name} -import_files"
+                ),
                 "set_property ipi_drc {ignore_freq_hz true} [ipx::current_core]",
             ]
         )
@@ -1041,8 +1055,10 @@ class CreateStitchedIP(Transformation):
             [
                 f"set_property core_revision 2 [ipx::find_open_core {block_vlnv}]",
                 f"ipx::create_xgui_files [ipx::find_open_core {block_vlnv}]",
-                "set_property value_resolve_type user [ipx::get_bus_parameters "
-                "-of [ipx::get_bus_interfaces -of [ipx::current_core ]]]",
+                (
+                    "set_property value_resolve_type user [ipx::get_bus_parameters "
+                    "-of [ipx::get_bus_interfaces -of [ipx::current_core ]]]"
+                ),
             ]
         )
         # If targeting Vitis, add some properties to the IP
@@ -1053,21 +1069,29 @@ class CreateStitchedIP(Transformation):
                     f"set_property sdx_kernel true [ipx::find_open_core {block_vlnv}]",
                     f"set_property sdx_kernel_type rtl [ipx::find_open_core {block_vlnv}]",
                     f"set_property supported_families {{}} [ipx::find_open_core {block_vlnv}]",
-                    f"set_property xpm_libraries {{XPM_CDC XPM_MEMORY XPM_FIFO}} "
-                    f"[ipx::find_open_core {block_vlnv}]",
-                    f"set_property auto_family_support_level level_2 "
-                    f"[ipx::find_open_core {block_vlnv}]",
+                    (
+                        f"set_property xpm_libraries {{XPM_CDC XPM_MEMORY XPM_FIFO}} "
+                        f"[ipx::find_open_core {block_vlnv}]"
+                    ),
+                    (
+                        f"set_property auto_family_support_level level_2 "
+                        f"[ipx::find_open_core {block_vlnv}]"
+                    ),
                 ]
             )
 
             # Remove all files from synthesis and sim groups and replace with DCP
             tcl.extend(
                 [
-                    "ipx::remove_all_file "
-                    "[ipx::get_file_groups xilinx_anylanguagebehavioralsimulation]",
+                    (
+                        "ipx::remove_all_file "
+                        "[ipx::get_file_groups xilinx_anylanguagebehavioralsimulation]"
+                    ),
                     "ipx::remove_all_file [ipx::get_file_groups xilinx_anylanguagesynthesis]",
-                    "ipx::remove_file_group "
-                    "xilinx_anylanguagebehavioralsimulation [ipx::current_core]",
+                    (
+                        "ipx::remove_file_group "
+                        "xilinx_anylanguagebehavioralsimulation [ipx::current_core]"
+                    ),
                     "ipx::remove_file_group xilinx_anylanguagesynthesis [ipx::current_core]",
                 ]
             )
@@ -1090,11 +1114,15 @@ class CreateStitchedIP(Transformation):
                     "ipx::add_file_group xilinx_implementation [ipx::current_core]",
                     *kernel_xdc_package_tcl(block_name),
                     "ipx::add_file_group xilinx_synthesischeckpoint [ipx::current_core]",
-                    f"ipx::add_file dcp/{block_name}.dcp "
-                    f"[ipx::get_file_groups xilinx_synthesischeckpoint]",
+                    (
+                        f"ipx::add_file dcp/{block_name}.dcp "
+                        f"[ipx::get_file_groups xilinx_synthesischeckpoint]"
+                    ),
                     "ipx::add_file_group xilinx_simulationcheckpoint [ipx::current_core]",
-                    f"ipx::add_file dcp/{block_name}.dcp "
-                    f"[ipx::get_file_groups xilinx_simulationcheckpoint]",
+                    (
+                        f"ipx::add_file dcp/{block_name}.dcp "
+                        f"[ipx::get_file_groups xilinx_simulationcheckpoint]"
+                    ),
                 ]
             )
         # add a rudimentary driver mdd to get correct ranges in xparameters.h later on
@@ -1182,10 +1210,12 @@ close $ofile
         v_file_list = f"{vivado_stitch_proj_dir}/all_verilog_srcs.txt"
         tcl.extend(
             [
-                "set all_v_files [get_files -filter {USED_IN_SYNTHESIS == 1 "
-                "&& (FILE_TYPE == Verilog || FILE_TYPE == SystemVerilog "
-                '|| FILE_TYPE == "Verilog Header" || FILE_TYPE == VHDL '
-                "|| FILE_TYPE == XCI)}]",
+                (
+                    "set all_v_files [get_files -filter {USED_IN_SYNTHESIS == 1 "
+                    "&& (FILE_TYPE == Verilog || FILE_TYPE == SystemVerilog "
+                    '|| FILE_TYPE == "Verilog Header" || FILE_TYPE == VHDL '
+                    "|| FILE_TYPE == XCI)}]"
+                ),
                 f"set fp [open {v_file_list} w]",
                 "foreach f $all_v_files {puts $fp $f}",
                 "close $fp",

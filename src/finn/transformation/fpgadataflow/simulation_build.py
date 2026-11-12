@@ -18,7 +18,6 @@ from enum import Enum
 from jinja2 import Environment
 from onnx import NodeProto, TensorProto, ValueInfoProto
 from pathlib import Path
-from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
@@ -48,6 +47,8 @@ from finn.util.slurmutil import get_slurm_cpus, get_slurm_mem_workers, parse_hos
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from qonnx.core.datatype import BaseDataType
 
 
 # The nlohmann/json sources the simulation backend's CMake build needs. They are a direct download
@@ -524,7 +525,7 @@ class SimulationBuilder:
         # to float and can wreck the synthesized IP (float threshold comparisons let
         # Vitis HLS collapse the MVAU pipeline to II>1). Collect the datatype of every
         # tensor of the isolated graph here and re-annotate the model after creation.
-        tensor_datatypes: dict[str, DataType] = {}
+        tensor_datatypes: dict[str, BaseDataType] = {}
 
         # Process each input exactly once: either keep as initializer input or isolate via dummy
         pred_count = 0

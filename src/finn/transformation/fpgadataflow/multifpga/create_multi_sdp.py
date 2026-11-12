@@ -87,8 +87,8 @@ class ClusterByNodeattribute(Transformation):
                 neighbor_op = getCustomOp(neighbor)
                 node_comp = node_op.get_nodeattr(self.comp)
                 neighbor_comp = neighbor_op.get_nodeattr(self.comp)
-                node_part = node_op.get_nodeattr(self.part)
-                neighbor_part = neighbor_op.get_nodeattr(self.part)
+                node_part = cast("int", node_op.get_nodeattr(self.part))
+                neighbor_part = cast("int", neighbor_op.get_nodeattr(self.part))
 
                 # By changing both attributes to the lower common one,
                 # the transformation avoids an endless loop in which
@@ -268,7 +268,9 @@ class CreateMultiFPGAStreamingDataflowPartition(Transformation):
         )
 
         # Create separate IODMAs
-        all_ids = [getCustomOp(node).get_nodeattr("partition_id") for node in model.graph.node]
+        all_ids = [
+            cast("int", getCustomOp(node).get_nodeattr("partition_id")) for node in model.graph.node
+        ]
         if self.separate_iodmas:
             for node in model.graph.node:
                 if node.op_type == "IODMA_hls":
