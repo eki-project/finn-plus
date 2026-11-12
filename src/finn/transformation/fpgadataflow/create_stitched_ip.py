@@ -174,6 +174,31 @@ def kernel_xdc_package_tcl(block_name: str) -> list[str]:
     ]
 
 
+def ooc_clock_tcl(clk_ns: float, double_pumped: bool) -> list[str]:
+    """Clock constraints for the out-of-context place and route of a stitched IP.
+
+    A double-pumped IP also gets ``ap_clk2x`` at half the period. Vivado keeps periods in
+    picoseconds, so both periods are rounded to an even number of picoseconds first: a
+    period that halves to a fraction of a picosecond (2.857 ns -> 1.4285 ns) is rounded on
+    its own and the two clocks drift apart, which showed up as -0.45 ns between ap_clk and
+    ap_clk2x on paths that meet timing.
+
+    >>> ooc_clock_tcl(5.0, False)
+    ['create_clock -period 5.0 [get_ports ap_clk]']
+    >>> for line in ooc_clock_tcl(2.857, True):
+    ...     print(line)
+    create_clock -period 2.856 [get_ports ap_clk]
+    create_clock -period 1.428 [get_ports ap_clk2x]
+    """
+    if not double_pumped:
+        return [f"create_clock -period {clk_ns} [get_ports ap_clk]"]
+    half_ps = round(clk_ns * 500)
+    return [
+        f"create_clock -period {2 * half_ps / 1000} [get_ports ap_clk]",
+        f"create_clock -period {half_ps / 1000} [get_ports ap_clk2x]",
+    ]
+
+
 # The reset tree's hops carry no timing exception of their own: they are register to
 # register in the kernel clock and the period bounds them. When appending to a
 # `write_xdc -cell` file, start with `current_instance -quiet`: the file ends inside the
@@ -298,15 +323,15 @@ class CreateStitchedIP(Transformation):
         return repos
 
     def is_double_pumped(self, node: "NodeProto") -> bool:
-        """Check if node uses double-pumped compute or memory."""
-        if node.op_type.startswith("MVAU"):
-            inst = getCustomOp(node)
-            try:
-                pumped_compute = cast("int", inst.get_nodeattr("pumpedCompute"))
-            except AttributeError:
-                pumped_compute = 0
-            return bool(pumped_compute or cast("int", inst.get_nodeattr("pumpedMemory")))
-        return False
+        """Check if node has a 2x clock input (double-pumped compute or memory).
+
+        Asks the node's own interface list, so any node type that exposes ``clk2x`` counts
+        (today MVAU with ``pumpedCompute`` or ``pumpedMemory``).
+        """
+        inst = getCustomOp(node)
+        if not isinstance(inst, HWCustomOp):
+            return False
+        return bool(inst.get_verilog_top_module_intf_names().get("clk2x"))
 
     def connect_clk_rst(self, node: "NodeProto") -> None:
         """Connect clock and reset signals for a node."""
@@ -989,7 +1014,7 @@ class CreateStitchedIP(Transformation):
                 [
                     "",
                     "# --- Place and Route for OOC Metrics ---",
-                    f"create_clock -period {float(self.clk_ns)} [get_ports ap_clk]",
+                    *ooc_clock_tcl(float(self.clk_ns), bool(self.intf_names.get("clk2x"))),
                     "opt_design",
                     "place_design",
                     "route_design",
