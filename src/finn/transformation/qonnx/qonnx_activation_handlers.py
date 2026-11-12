@@ -31,9 +31,13 @@ from abc import ABC, abstractmethod
 from onnx import NodeProto, TensorProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-from finn.util.exception import FINNUserError
+from finn.util.exception import FINNInternalError, FINNUserError
+
+if TYPE_CHECKING:
+    from qonnx.custom_op.general.bipolar_quant import BipolarQuant
+    from qonnx.custom_op.general.intquant import IntQuant
 
 np_default_dtype = np.float32
 
@@ -55,11 +59,31 @@ class QuantActBaseHandler(ABC):
         self._q_node = quant_node
         self._q_index = quant_node_index
 
+    def _get_predecessor(self) -> NodeProto:
+        """Return the single direct predecessor of the Quant node.
+
+        Raises if the Quant node has no predecessor, since the handlers that call
+        this always require one (unlike ``valid_predecessor_op_types``, which
+        also allows the Quant node to be the first node in the graph).
+        """
+        predecessors = self._model.find_direct_predecessors(self._q_node)
+        if not predecessors:
+            raise FINNInternalError(f"Quant node {self._q_node.name} has no predecessor to convert")
+        return predecessors[0]
+
+    def _get_tensor_shape(self, tensor_name: str) -> list[int]:
+        """Return the shape of ``tensor_name``, raising if it is not known."""
+        shape = self._model.get_tensor_shape(tensor_name)
+        if shape is None:
+            raise FINNInternalError(f"Could not determine shape of tensor {tensor_name}")
+        return shape
+
     @classmethod
     def valid_predecessor_op_types(cls) -> list[str | None]:
         """Return the op types the preceding node is allowed to have.
 
-        Specific to this type of activation.
+        Specific to this type of activation. ``None`` means the Quant node may
+        also be the first node in the graph, i.e. have no predecessor at all.
         """
         raise NotImplementedError()
 
@@ -98,10 +122,12 @@ class QuantActBaseHandler(ABC):
 
     def _extract_output_datatype(self) -> str:
         """Get the output datatype for the MultiThreshold node."""
-        q_inst = getCustomOp(self._q_node)
+        # Both the Quant and BipolarQuant custom-op implementations behind this
+        # registry lookup provide get_integer_datatype(), the common CustomOp
+        # base class does not declare it
+        q_inst = cast("IntQuant | BipolarQuant", getCustomOp(self._q_node))
         dtype = q_inst.get_integer_datatype(self._model)
-        dtype = dtype.name
-        return dtype
+        return dtype.name
 
     def _get_channel_axis(self, tensor_name: str) -> int | None:
         """Determine the channel axis of the Quant node from the SHAPE of its
@@ -115,7 +141,7 @@ class QuantActBaseHandler(ABC):
         scale. Raises for multi-axis scales, which are not supported.
         """
         scale = np.asarray(self._model.get_initializer(self._q_node.input[1]))
-        tensor_shape = self._model.get_tensor_shape(tensor_name)
+        tensor_shape = self._get_tensor_shape(tensor_name)
         ndim = len(tensor_shape)
         # Right-align the scale shape against the tensor shape, matching numpy
         # broadcasting: a scale of shape (C,) aligns with the last axis, while a
@@ -196,7 +222,7 @@ class QuantActBaseHandler(ABC):
         # so fall back to any existing layout annotation on the input tensor.
         channel_axis = self._get_channel_axis(n.input[0])
         if channel_axis is not None:
-            ndim = len(model.get_tensor_shape(n.input[0]))
+            ndim = len(self._get_tensor_shape(n.input[0]))
             data_layout = self._channel_axis_to_data_layout(channel_axis, ndim)
         else:
             annotated = model.get_tensor_layout(n.input[0])
@@ -361,15 +387,14 @@ class QuantReluHandler(QuantActBaseHandler):
         """Check that the quantizer's zero-point, narrow and signed settings are supported."""
         if self._q_node.op_type == "Quant":
             q_inst = getCustomOp(self._q_node)
-            narrow = q_inst.get_nodeattr("narrow")
-            signed = q_inst.get_nodeattr("signed")
+            narrow = cast("bool", q_inst.get_nodeattr("narrow"))
+            signed = cast("bool", q_inst.get_nodeattr("signed"))
             if not self._model.get_initializer(self._q_node.input[2]) == 0:
                 raise ValueError(
                     "Only Quant nodes with zero-point == 0 "
                     "are currently supported for ReLu activations."
                 )
-            act_node = self._model.find_direct_predecessors(self._q_node)
-            act_node = act_node[0]
+            act_node = self._get_predecessor()
             if act_node.op_type == "Relu" and (signed or narrow):
                 raise ValueError(
                     "FINN only supports unsigned and non-narrow Quant nodes "
@@ -385,16 +410,16 @@ class QuantReluHandler(QuantActBaseHandler):
         # No bias allowed for Relu activations, see: https://github.com/Xilinx/
         # brevitas/blob/a5bfd6dc5e030f0047ac1ee47932b60e8e873e17/src/brevitas/
         # export/onnx/finn/handler/act.py#L48
-        act_node = self._model.find_direct_predecessors(self._q_node)
-        act_node = act_node[0]
+        act_node = self._get_predecessor()
         if act_node.op_type == "Relu":
             bias = np.array([0.0], dtype=np_default_dtype)
         elif act_node.op_type == "Selu":
             # Gather parameters
             q_inst = getCustomOp(self._q_node)
+            narrow = False
             if self._q_node.op_type == "Quant":
-                bit_width = self._model.get_initializer(self._q_node.input[3])
-                narrow = q_inst.get_nodeattr("narrow")
+                bit_width = cast("float", self._model.get_initializer(self._q_node.input[3]))
+                narrow = cast("bool", q_inst.get_nodeattr("narrow"))
             elif self._q_node.op_type == "BipolarQuant":
                 bit_width = 1.0
             else:
@@ -410,20 +435,27 @@ class QuantReluHandler(QuantActBaseHandler):
                 else:
                     min_non_scaled_val = -(2 ** (bit_width - 1))
                 bias = np.array([min_non_scaled_val], dtype=np_default_dtype)
+        else:
+            raise FINNInternalError(
+                f"Unexpected activation node type {act_node.op_type} preceding Quant node "
+                f"{self._q_node.name}: expected Relu or Selu"
+            )
         return bias
 
     def _calculate_thresholds(self) -> np.ndarray:
         """Return the MultiThreshold thresholds for the Relu/Selu quantizer."""
         # Gather parameters
         if self._q_node.op_type == "Quant":
-            bit_width = self._model.get_initializer(self._q_node.input[3])
+            bit_width = cast("float", self._model.get_initializer(self._q_node.input[3]))
         elif self._q_node.op_type == "BipolarQuant":
             bit_width = 1.0
         else:
             raise RuntimeError("Got an unexpected quantizer node type")
-        quant_scale = self._model.get_initializer(self._q_node.input[1]).astype(np.float32)
-        act_node = self._model.find_direct_predecessors(self._q_node)
-        act_node = act_node[0]
+        quant_scale_init = self._model.get_initializer(self._q_node.input[1])
+        if quant_scale_init is None:
+            raise FINNInternalError(f"Quant node {self._q_node.name} has no scale initializer")
+        quant_scale = cast("np.ndarray", quant_scale_init).astype(np.float32)
+        act_node = self._get_predecessor()
         if act_node.op_type == "Relu":
             # Calculate thresholds, see: https://github.com/Xilinx/brevitas/blob/
             # a5bfd6dc5e030f0047ac1ee47932b60e8e873e17/src/brevitas/export/
@@ -445,7 +477,7 @@ class QuantReluHandler(QuantActBaseHandler):
 
         elif act_node.op_type == "Selu":
             q_inst = getCustomOp(self._q_node)
-            narrow = q_inst.get_nodeattr("narrow")
+            narrow = cast("bool", q_inst.get_nodeattr("narrow"))
             num_distinct_values = 2**bit_width - 1 if narrow else 2**bit_width
 
             num_thresholds = int(num_distinct_values - 1)
@@ -466,6 +498,12 @@ class QuantReluHandler(QuantActBaseHandler):
                     else:
                         thresholds[c][t] = step / selu_scale
 
+        else:
+            raise FINNInternalError(
+                f"Unexpected activation node type {act_node.op_type} preceding Quant node "
+                f"{self._q_node.name}: expected Relu or Selu"
+            )
+
         # narrow back to the storage dtype only after the accumulation
         thresholds = thresholds.astype(np_default_dtype)
 
@@ -481,7 +519,7 @@ class QuantReluHandler(QuantActBaseHandler):
                     "scale must yield a single (global) threshold row."
                 )
         else:
-            num_output_channels = self._model.get_tensor_shape(self._q_node.output[0])[channel_axis]
+            num_output_channels = self._get_tensor_shape(self._q_node.output[0])[channel_axis]
             if thresholds.shape[0] not in (1, num_output_channels):
                 raise FINNUserError(
                     "Quant node cannot be converted to MultiThreshold because only "
@@ -493,12 +531,13 @@ class QuantReluHandler(QuantActBaseHandler):
     def _calculate_act_scale(self) -> np.ndarray:
         """Return the activation scale (the quantizer scale)."""
         # Gather parameters
-        quant_scale = cast("np.ndarray", self._model.get_initializer(self._q_node.input[1]))
+        quant_scale = self._model.get_initializer(self._q_node.input[1])
+        if quant_scale is None:
+            raise FINNInternalError(f"Quant node {self._q_node.name} has no scale initializer")
         # Calculate scale, see: https://github.com/Xilinx/brevitas/blob/
         # a5bfd6dc5e030f0047ac1ee47932b60e8e873e17/src/brevitas/export/
         # onnx/finn/handler/act.py#L40
-        scale = quant_scale
-        return scale
+        return cast("np.ndarray", quant_scale)
 
     def _remove_activation_node(self, multi_threshold_node: NodeProto) -> None:
         """Bypass and remove the Relu/Selu node preceding the Quant node."""
@@ -552,7 +591,10 @@ class QuantIdentityHandler(QuantActBaseHandler):
                     "are currently supported for identity activations."
                 )
         elif self._q_node.op_type == "BipolarQuant":
-            quant_scale = self._model.get_initializer(self._q_node.input[1])
+            quant_scale_init = self._model.get_initializer(self._q_node.input[1])
+            if quant_scale_init is None:
+                raise FINNInternalError(f"Quant node {self._q_node.name} has no scale initializer")
+            quant_scale = cast("np.ndarray", quant_scale_init)
             if (quant_scale.flatten().shape[0] != 1) or quant_scale.flatten()[0] != 1.0:
                 raise ValueError(
                     "FINN only supports Bipolar identity activations "
@@ -565,10 +607,12 @@ class QuantIdentityHandler(QuantActBaseHandler):
         """Return the activation bias derived from the quantizer's bit width and signedness."""
         # Gather parameters
         q_inst = getCustomOp(self._q_node)
+        narrow = False
+        signed = True
         if self._q_node.op_type == "Quant":
-            bit_width = self._model.get_initializer(self._q_node.input[3])
-            narrow = q_inst.get_nodeattr("narrow")
-            signed = q_inst.get_nodeattr("signed")
+            bit_width = cast("float", self._model.get_initializer(self._q_node.input[3]))
+            narrow = cast("bool", q_inst.get_nodeattr("narrow"))
+            signed = cast("bool", q_inst.get_nodeattr("signed"))
         elif self._q_node.op_type == "BipolarQuant":
             bit_width = 1.0
         else:
@@ -591,12 +635,17 @@ class QuantIdentityHandler(QuantActBaseHandler):
     def _calculate_thresholds(self) -> np.ndarray:
         """Return the MultiThreshold thresholds for the identity quantizer."""
         # Gather parameters
-        quant_scale = self._model.get_initializer(self._q_node.input[1])
+        quant_scale_init = self._model.get_initializer(self._q_node.input[1])
+        if quant_scale_init is None:
+            raise FINNInternalError(f"Quant node {self._q_node.name} has no scale initializer")
+        quant_scale = cast("np.ndarray", quant_scale_init)
         q_inst = getCustomOp(self._q_node)
+        narrow = False
+        signed = True
         if self._q_node.op_type == "Quant":
-            bit_width = self._model.get_initializer(self._q_node.input[3])
-            narrow = q_inst.get_nodeattr("narrow")
-            signed = q_inst.get_nodeattr("signed")
+            bit_width = cast("float", self._model.get_initializer(self._q_node.input[3]))
+            narrow = cast("bool", q_inst.get_nodeattr("narrow"))
+            signed = cast("bool", q_inst.get_nodeattr("signed"))
         elif self._q_node.op_type == "BipolarQuant":
             bit_width = 1.0
         else:
@@ -649,7 +698,7 @@ class QuantIdentityHandler(QuantActBaseHandler):
                     "scale must yield a single (global) threshold row."
                 )
         else:
-            num_output_channels = self._model.get_tensor_shape(self._q_node.output[0])[channel_axis]
+            num_output_channels = self._get_tensor_shape(self._q_node.output[0])[channel_axis]
             if thresholds.shape[0] not in (1, num_output_channels):
                 raise FINNUserError(
                     "Quant node cannot be converted to MultiThreshold because only "
@@ -662,12 +711,15 @@ class QuantIdentityHandler(QuantActBaseHandler):
         """Return the activation scale (the quantizer scale, doubled for bipolar)."""
         # Gather parameters
         if self._q_node.op_type == "Quant":
-            bit_width = self._model.get_initializer(self._q_node.input[3])
+            bit_width = cast("float", self._model.get_initializer(self._q_node.input[3]))
         elif self._q_node.op_type == "BipolarQuant":
             bit_width = 1.0
         else:
             raise RuntimeError("Got an unexpected quantizer node type")
-        quant_scale = cast("np.ndarray", self._model.get_initializer(self._q_node.input[1]))
+        quant_scale_init = self._model.get_initializer(self._q_node.input[1])
+        if quant_scale_init is None:
+            raise FINNInternalError(f"Quant node {self._q_node.name} has no scale initializer")
+        quant_scale = cast("np.ndarray", quant_scale_init)
         # Calculate scale, see: https://github.com/Xilinx/brevitas/
         # blob/a5bfd6dc5e030f0047ac1ee47932b60e8e873e17/src/brevitas/
         # export/onnx/finn/handler/act.py#L111

@@ -278,7 +278,7 @@ def get_liveness_threshold_cycles() -> int:
     return int(os.getenv("LIVENESS_THRESHOLD", 1000000))
 
 
-def get_watchdog_timeout_cycles(cycles_estimate: int | float | None = None) -> int:
+def get_watchdog_timeout_cycles(cycles_estimate: float | None = None) -> int:
     """Return the effective number of no-output cycles rtlsim will wait before
     assuming the simulation is not finishing and throwing an exception. This is
     the derived cycle estimate raised to at least the ``LIVENESS_THRESHOLD``
@@ -289,9 +289,7 @@ def get_watchdog_timeout_cycles(cycles_estimate: int | float | None = None) -> i
     return max(int(cycles_estimate), override)
 
 
-def get_rtlsim_timeout_error_message(
-    threshold: int | float, cycles_estimate: int | float | None = None
-) -> str:
+def get_rtlsim_timeout_error_message(threshold: float, cycles_estimate: float | None = None) -> str:
     """Return an actionable RTL simulation timeout error message."""
     message = f"RTL simulation timed out after {int(threshold)} cycles"
     if cycles_estimate is not None:
@@ -347,7 +345,7 @@ def robust_rmtree(
         try:
             shutil.rmtree(path)
             return
-        except FileNotFoundError:
+        except FileNotFoundError:  # noqa: PERF203  (retry loop, the try must be inside it)
             return
         except OSError as exc:
             transient = exc.errno in (errno.ENOTEMPTY, errno.EBUSY)
@@ -623,7 +621,7 @@ def get_dsp_block(fpgapart: str) -> str:
     return "DSP48E2"
 
 
-def get_dsp_datapath_limits(dsp_block):
+def get_dsp_datapath_limits(dsp_block: str) -> tuple[int, int, int]:
     """Return the maximum (activation, weight, accumulator) operand widths in bits
     that fit the datapath of the given DSP block. These correspond to the DSP B, A
     and P ports respectively. Widths exceeding these limits would be silently

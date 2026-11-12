@@ -157,7 +157,7 @@ def get_model_device_resource_factors(
     resource, None is returned.
     """
     estimated = get_estimated_model_resources(model, fpga_part, considered_resources, True)
-    total_estimated = dict.fromkeys(considered_resources, 0)
+    total_estimated = dict.fromkeys(considered_resources, 0.0)
     for resource in estimated.values():
         for restype in considered_resources:
             if restype not in resource:

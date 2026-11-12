@@ -300,6 +300,7 @@ class PartitionForMultiFPGA(Transformation):
                 )
 
         solution_found = False
+        elapsed_seconds = 0.0
         for i, device_count in enumerate(device_counts):
             log.info(
                 f"Trying to partition model... ({device_count} devices) "

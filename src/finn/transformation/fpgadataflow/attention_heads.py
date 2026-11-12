@@ -12,6 +12,10 @@ import numpy as np
 # Utility for handling ONNX nodes and tensors
 from onnx import NodeProto
 from onnx import helper as oh
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
 # QONNX wrapper of ONNX model graphs
 from qonnx.core.modelwrapper import ModelWrapper
@@ -40,6 +44,38 @@ from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
 
+def _require_shape(model: ModelWrapper, tensor_name: str) -> list[int]:
+    """Return the shape of a tensor, raising if it is not known."""
+    shape = model.get_tensor_shape(tensor_name)
+    if shape is None:
+        raise FINNInternalError(f"Could not determine shape of tensor {tensor_name}")
+    return shape
+
+
+def _require_successor(model: ModelWrapper, node: NodeProto) -> NodeProto:
+    """Return the single direct successor of node, raising if it has none."""
+    successors = model.find_direct_successors(node)
+    if not successors:
+        raise FINNInternalError(f"Node {node.name} has no successor where one was expected")
+    return successors[0]
+
+
+def _require_initializer(model: ModelWrapper, tensor_name: str) -> "npt.NDArray[Any]":
+    """Return an initializer tensor, raising if it is not set."""
+    value = model.get_initializer(tensor_name)
+    if value is None:
+        raise FINNInternalError(f"Tensor {tensor_name} has no initializer")
+    return cast("npt.NDArray[Any]", value)
+
+
+def _require_attr(node: NodeProto, name: str) -> Any:
+    """Return a node attribute, raising if it is not set."""
+    attr = get_by_name(node.attribute, name)
+    if attr is None:
+        raise FINNInternalError(f"Node {node.name} is missing the {name!r} attribute")
+    return attr
+
+
 # Infers reshaping of attention heads, i.e., converts the Reshape and transpose
 # patterns to the SplitMultiHeads and MergeMultiHeads hardware custom operators.
 class InferMultiHeads(Transformation):
@@ -62,7 +98,7 @@ class InferMultiHeads(Transformation):
             # operation followed by a transpose
             if is_reshape_transpose(node, model):
                 # Get the single successor node
-                transpose = model.find_direct_successors(node)[0]
+                transpose = _require_successor(model, node)
 
                 # Get the input and output tensor names to the pattern
                 inp = node.input[0]
@@ -71,7 +107,7 @@ class InferMultiHeads(Transformation):
 
                 # Get the shape of the input tensor for inferring the number of
                 # heads and correctly propagating shapes
-                shape = model.get_tensor_shape(inp)
+                shape = _require_shape(model, inp)
                 # Determine the rank of the input tensor to support batched and
                 # non-batched inputs
                 rank = len(shape)
@@ -93,7 +129,7 @@ class InferMultiHeads(Transformation):
                 seq, _, dim = shape if (rank == 3) else (shape[0], 1, shape[1])
 
                 # Can only handle 3-dimensional (2-dimensional) layouts for now
-                if len(model.get_tensor_shape(mid)) != 3:
+                if len(_require_shape(model, mid)) != 3:
                     # Issue a warning of near match of the supported head
                     # pattern
                     # @formatter:off
@@ -107,14 +143,13 @@ class InferMultiHeads(Transformation):
 
                 # The intermediate shape must be the same as specified as the
                 # second input to the reshape operation
-                if not (
-                    (model.get_tensor_shape(mid) == model.get_initializer(node.input[1])).all()
-                ):
+                mid_shape = _require_shape(model, mid)
+                if not (np.asarray(mid_shape) == _require_initializer(model, node.input[1])).all():
                     raise FINNInternalError(
                         "Reshape target shape does not match the transposed tensor shape"
                     )
                 # Expected layout after reshape is "head last"
-                _, heads, _ = model.get_tensor_shape(mid)
+                _, heads, _ = mid_shape
 
                 # Get the (optional) permutation indices of the transpose in
                 # case it is a multi-axis transpose
@@ -223,7 +258,7 @@ class InferMultiHeads(Transformation):
             # operation followed by a reshape
             if is_transpose_reshape(node, model):
                 # Get the single successor node
-                reshape = model.find_direct_successors(node)[0]
+                reshape = _require_successor(model, node)
 
                 # Get the input and output tensor names to the pattern
                 inp = node.input[0]
@@ -231,7 +266,7 @@ class InferMultiHeads(Transformation):
 
                 # Get the shape of the input tensor for inferring the number of
                 # heads and correctly propagating shapes
-                shape = model.get_tensor_shape(inp)
+                shape = _require_shape(model, inp)
                 # Determine the rank of the input tensor to support batched and
                 # non-batched inputs
                 rank = len(shape)
@@ -273,11 +308,14 @@ class InferMultiHeads(Transformation):
                     continue
 
                 # Shape of the final output of the operator pattern
-                out_shape = model.get_tensor_shape(end)
+                out_shape = _require_shape(model, end)
 
                 # The output of the reshape must be the same as specified as the
                 # second input to the reshape operation
-                if not ((out_shape == model.get_initializer(reshape.input[1])).all()):
+                out_shape_matches = np.asarray(out_shape) == _require_initializer(
+                    model, reshape.input[1]
+                )
+                if not out_shape_matches.all():
                     raise FINNInternalError(
                         "Reshape target shape does not match the expected head-last layout"
                     )
@@ -384,7 +422,7 @@ class MoveSplitMultiHeadsPastMultiThreshold(Transformation):
                     continue
                 # Now we know there is only one consumer operation following the
                 # slice node
-                thresholds_node = model.find_direct_successors(node)[0]
+                thresholds_node = _require_successor(model, node)
                 # Successor must actually be a MultiThresholds for this
                 # transform to apply
                 if thresholds_node.op_type != "MultiThreshold":
@@ -408,11 +446,7 @@ class MoveSplitMultiHeadsPastMultiThreshold(Transformation):
 
                 # Get the thresholds tensor, which must be an initializer at
                 # the second input
-                thresholds = model.get_initializer(thresholds_node.input[1])
-                # This is indeed an error, no way to recover from this, so
-                # assertion is fine
-                if not (thresholds is not None):
-                    raise FINNInternalError(f"Missing threshold tensor for {thresholds_node.name}")
+                thresholds = _require_initializer(model, thresholds_node.input[1])
 
                 # The slice node should have an attribute specifying the number
                 # of heads
@@ -440,7 +474,7 @@ class MoveSplitMultiHeadsPastMultiThreshold(Transformation):
                 # The middle tensor is now produced by the multi-threshold,
                 # which does not change the shape. Propagate the shape of the
                 # input tensor
-                model.set_tensor_shape(mid, model.get_tensor_shape(inp))
+                model.set_tensor_shape(mid, _require_shape(model, inp))
                 # As the middle tensor is now produced by the multi-threshold,
                 # the datatype needs to be taken from the output tensor
                 model.set_tensor_datatype(mid, model.get_tensor_datatype(out))
@@ -506,7 +540,7 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
                     continue
                 # Now we know there is only one consumer operation following the
                 # slice node
-                thresholds_node = model.find_direct_successors(node)[0]
+                thresholds_node = _require_successor(model, node)
                 # Successor must actually be a MultiThresholds for this
                 # transform to apply
                 if thresholds_node.op_type != "MultiThreshold":
@@ -530,11 +564,7 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
 
                 # Get the thresholds tensor, which must be an initializer at
                 # the second input
-                thresholds = model.get_initializer(thresholds_node.input[1])
-                # This is indeed an error, no way to recover from this, so
-                # assertion is fine
-                if not (thresholds is not None):
-                    raise FINNInternalError(f"Missing threshold tensor for {thresholds_node.name}")
+                thresholds = _require_initializer(model, thresholds_node.input[1])
 
                 # The merge node should have an attribute specifying the number
                 # of heads
@@ -550,10 +580,10 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
                 if thresholds.shape[0] > 1:
                     # Split the thresholds for each head along the channel
                     # dimension
-                    thresholds = np.split(thresholds, heads)
+                    thresholds_list = np.split(thresholds, heads)
                 else:
                     # Replicate the single per-tensor thresholds
-                    thresholds = [thresholds for _ in range(heads)]
+                    thresholds_list = [thresholds for _ in range(heads)]
 
                 # Need to insert a new thresholding operation at each input of
                 # the multi-head merging
@@ -569,17 +599,17 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
                     # Annotate the new thresholds input with the new shape of
                     # the split thresholds
                     model.set_tensor_shape(
-                        new_thresholds.input[1], thresholds[i].shape
+                        new_thresholds.input[1], thresholds_list[i].shape
                     )
                     # Set the initializer input to the split thresholds
                     model.set_initializer(
-                        new_thresholds.input[1], thresholds[i]
+                        new_thresholds.input[1], thresholds_list[i]
                     )
                     # Create a new output tensor name
                     new_thresholds.output[0] = model.make_new_valueinfo_name()
                     # Annotate the new output with the shape of the input
                     model.set_tensor_shape(
-                        new_thresholds.output[0], model.get_tensor_shape(inp)
+                        new_thresholds.output[0], _require_shape(model, inp)
                     )
                     # Connect the new output tensor to the corresponding input
                     # of the merge node
@@ -622,15 +652,15 @@ def is_multi_head_attention(node: NodeProto, model: ModelWrapper) -> bool:
         # There must be exactly three predecessors of type head-splitting
         # Note: there must be nothing in between splitting and the attention
         # itself
-        if op_types(predecessors) == 3 * ["SplitMultiHeads"]:
+        if predecessors is not None and op_types(predecessors) == 3 * ["SplitMultiHeads"]:
             # Get the node fed by the attention operation
             successors = model.find_direct_successors(node)
             # There must be exactly onde successor of type head-merging
             # Note: there must be nothing in between attention and the merging
-            if op_types(successors) == 1 * ["MergeMultiHeads"]:
+            if successors is not None and op_types(successors) == 1 * ["MergeMultiHeads"]:
                 # Get the shape of the input tensor for inferring the number of
                 # heads and correctly propagating shapes
-                shape = model.get_tensor_shape(node.input[0])
+                shape = _require_shape(model, node.input[0])
                 # Determine the rank of the input tensor to support batched and
                 # non-batched inputs
                 rank = len(shape)
@@ -663,29 +693,39 @@ class UnrollMultiHeadAttention(Transformation):
             # pattern
             if is_multi_head_attention(node, model):
                 # Get the splitting nodes fed by the attention operation
-                split0, split1, split2 = model.find_direct_predecessors(node)
+                predecessors = model.find_direct_predecessors(node)
+                if predecessors is None or len(predecessors) != 3:
+                    raise FINNInternalError(
+                        f"Expected exactly 3 SplitMultiHeads predecessors of {node.name}"
+                    )
+                split0, split1, split2 = predecessors
                 # Get the single merging node
-                merge0, = model.find_direct_successors(node)
+                successors = model.find_direct_successors(node)
+                if successors is None or len(successors) != 1:
+                    raise FINNInternalError(
+                        f"Expected exactly 1 MergeMultiHeads successor of {node.name}"
+                    )
+                (merge0,) = successors
                 # Get the number of heads produced by an arbitrary splitters
-                heads = get_by_name(split0.attribute, "heads").i
+                heads = _require_attr(split0, "heads").i
                 # Get the number of input elements to the heads splitting
                 # Note: Embedding dims might actually differ per input stream,
                 #   e.g., for cross-attention
-                dim0 = get_by_name(split0.attribute, "num_elems").i
-                dim1 = get_by_name(split1.attribute, "num_elems").i
-                dim2 = get_by_name(split2.attribute, "num_elems").i
+                dim0 = _require_attr(split0, "num_elems").i
+                dim1 = _require_attr(split1, "num_elems").i
+                dim2 = _require_attr(split2, "num_elems").i
                 # get the number of input features per splitting
                 # Note: Feature map sizes might actually differ per input
                 #   stream, e.g., for cross-attention
-                ins0 = get_by_name(split0.attribute, "num_inputs").ints
-                ins1 = get_by_name(split1.attribute, "num_inputs").ints
-                ins2 = get_by_name(split2.attribute, "num_inputs").ints
+                ins0 = _require_attr(split0, "num_inputs").ints
+                ins1 = _require_attr(split1, "num_inputs").ints
+                ins2 = _require_attr(split2, "num_inputs").ints
                 # Validate the number of heads matches between all slice and
                 # merge nodes
                 for n in [split0, split1, split2, merge0]:
                     # All heads must match, otherwise this is a failure from
                     # which we cannot recover
-                    if not (get_by_name(n.attribute, "heads").i == heads):
+                    if not (_require_attr(n, "heads").i == heads):
                         raise FINNInternalError(
                             f"Differing number of heads at {node.name} and {n.name}"
                         )
@@ -716,7 +756,7 @@ class UnrollMultiHeadAttention(Transformation):
                     # Unrolled heads do not produce packed tensors
                     packed=False,
                     # Datatype of inputs and outputs
-                    dtype=get_by_name(split1.attribute, "dtype").s,
+                    dtype=_require_attr(split1, "dtype").s,
                     # Number of input elements, i.e., embedding dimension
                     num_elems=dim0,
                     # Number of embeddings in the whole input sequence/feature
@@ -743,7 +783,7 @@ class UnrollMultiHeadAttention(Transformation):
                     # Unrolled heads do not produce packed tensors
                     packed=False,
                     # Datatype of inputs and outputs
-                    dtype=get_by_name(split1.attribute, "dtype").s,
+                    dtype=_require_attr(split1, "dtype").s,
                     # Number of input elements, i.e., embedding dimension
                     num_elems=dim1,
                     # Number of embeddings in the whole input sequence/feature
@@ -770,7 +810,7 @@ class UnrollMultiHeadAttention(Transformation):
                     # Unrolled heads do not produce packed tensors
                     packed=False,
                     # Datatype of inputs and outputs
-                    dtype=get_by_name(split2.attribute, "dtype").s,
+                    dtype=_require_attr(split2, "dtype").s,
                     # Number of input elements, i.e., embedding dimension
                     num_elems=dim2,
                     # Number of embeddings in the whole input sequence/feature
@@ -797,19 +837,18 @@ class UnrollMultiHeadAttention(Transformation):
                     heads=heads,
                     # Attribute specifying whether the output needs to be
                     # squeezed
-                    squeezed=get_by_name(merge0.attribute, "squeezed").i,
+                    squeezed=_require_attr(merge0, "squeezed").i,
                     # Unrolled heads do not produce packed tensors
                     packed=False,
                     # Datatype of inputs and outputs
-                    dtype=get_by_name(merge0.attribute, "dtype").s,
+                    dtype=_require_attr(merge0, "dtype").s,
                     # Number of input elements, i.e., embedding dimension
-                    num_elems=get_by_name(merge0.attribute, "num_elems").i,
+                    num_elems=_require_attr(merge0, "num_elems").i,
                     # Number of embeddings in the whole input sequence/feature
                     # map
                     # Note: Drop head-first head dimension of previously packed
                     # input
-                    num_inputs=get_by_name(
-                        merge0.attribute, "num_inputs").ints[1:]
+                    num_inputs=_require_attr(merge0, "num_inputs").ints[1:]
                 )
 
                 # Replicate the attention operator for each head
@@ -818,11 +857,11 @@ class UnrollMultiHeadAttention(Transformation):
                     attention = copy.deepcopy(node)
                     # Get the original shape of each input to remove the head
                     # number
-                    _, seq, dim = model.get_tensor_shape(attention.input[0])
+                    _, seq, dim = _require_shape(model, attention.input[0])
                     model.set_tensor_shape(split0.output[i], (1, seq, dim))
-                    _, seq, dim = model.get_tensor_shape(attention.input[1])
+                    _, seq, dim = _require_shape(model, attention.input[1])
                     model.set_tensor_shape(split1.output[i], (1, seq, dim))
-                    _, seq, dim = model.get_tensor_shape(attention.input[2])
+                    _, seq, dim = _require_shape(model, attention.input[2])
                     model.set_tensor_shape(split2.output[i], (1, seq, dim))
 
                     # Propagate the original datatype to each of the head inputs
@@ -841,7 +880,7 @@ class UnrollMultiHeadAttention(Transformation):
 
                     # Get the original shape the output to remove the head
                     # number
-                    _, seq, dim = model.get_tensor_shape(attention.output[0])
+                    _, seq, dim = _require_shape(model, attention.output[0])
                     model.set_tensor_shape(merge0.input[i], (1, seq, dim))
 
                     # Propagate the original datatype to each of the head
@@ -906,7 +945,7 @@ class InferSplitIntoSplitMultiHeads(Transformation):
                 continue
 
             heads = len(node.output)
-            num_elems = model.get_tensor_shape(inp)[-1]
+            num_elems = ishape[-1]
 
             if num_elems % heads != 0:
                 log.warning(
@@ -926,7 +965,7 @@ class InferSplitIntoSplitMultiHeads(Transformation):
                     )
                     continue
 
-            num_inputs = list(model.get_tensor_shape(inp)[:-1])
+            num_inputs = list(ishape[:-1])
 
             new_node = oh.make_node(
                 op_type="SplitMultiHeads",

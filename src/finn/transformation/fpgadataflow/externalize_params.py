@@ -29,29 +29,33 @@
 """Transformation for externalizing weight parameters via IODMA inputs."""
 
 
+from onnx import NodeProto
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name
+
+from finn.util.exception import FINNInternalError
 
 
 class ExternalizeParams(Transformation):
     """Create top-level graph inputs for IODMAs serving layers where weights are
     marked as external using mem_mode="external"."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the transformation."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply the transformation to externalize DMA-fed weights."""
         graph_modified = False
 
-        def filter_fc_extw(x):
+        def filter_fc_extw(x: NodeProto) -> bool:
             """Return True for IODMA nodes using external wrap burst mode."""
             if x.op_type == "IODMA_hls":
                 burst_mode = get_by_name(x.attribute, "burstMode")
                 if burst_mode is not None:
-                    burst_mode = burst_mode.s.decode("UTF-8")
-                    return burst_mode == "wrap"
+                    return burst_mode.s.decode("UTF-8") == "wrap"
+            return False
 
         dma_extw_nodes = list(filter(filter_fc_extw, model.graph.node))
 
@@ -61,14 +65,18 @@ class ExternalizeParams(Transformation):
             if extw_tensor_name in [x.name for x in model.graph.input]:
                 continue
             extw_vi = model.get_tensor_valueinfo(extw_tensor_name)
-            assert extw_vi is not None
+            if extw_vi is None:
+                raise FINNInternalError(
+                    f"Could not determine value info of tensor {extw_tensor_name}"
+                )
             model.graph.value_info.remove(extw_vi)
             model.graph.input.append(extw_vi)
             iodma_init = model.get_initializer(extw_vi.name)
-            assert iodma_init is not None
+            if iodma_init is None:
+                raise FINNInternalError(f"Tensor {extw_vi.name} has no initializer")
             # remove output-side initializer to get correct dataflow partitioning
             model.graph.initializer.remove(
-                [x for x in model.graph.initializer if x.name == extw_tensor_name_out][0]
+                next(x for x in model.graph.initializer if x.name == extw_tensor_name_out)
             )
             graph_modified = True
 
