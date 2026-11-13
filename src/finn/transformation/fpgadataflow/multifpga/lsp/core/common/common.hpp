@@ -10,158 +10,13 @@
 #include <algorithm>
 #include <type_traits>
 
-#define AP_WIDTH(x) (decltype(x)::width)
+#include "comptime.hpp"
+#include "constants.hpp"
+#include "helpers.hpp"
 
-constexpr size_t MAX_ETHERNET_HEADER_LENGTH_BYTES = 22;
-constexpr size_t ETHERNET_MTU = 1500;
-using MAC = ap_uint<48>;
+using MAC = ap_uint<lsp::constants::MAC_WIDTH>;
 
 namespace lsp {
-    constexpr size_t CURRENT_VERSION = 0;
-
-    /** Ceiling of log2(n): the number of bits needed to tell n different values apart
-    * (clog2(1) == 0). To store the value n itself, use clog2(n + 1). */
-    constexpr int clog2(unsigned long long n) {
-        int bits = 0;
-        while ((1ULL << bits) < n) ++bits;
-        return bits;
-    }
-    static_assert(clog2(1) == 0 && clog2(2) == 1 && clog2(8) == 3 && clog2(9) == 4, "clog2 is broken");
-
-
-    namespace constants {
-        // CONSTANTS
-
-        // Datawidths in bits
-        constexpr int BEAT_WIDTH = 512;
-        constexpr int STREAM_ID_WIDTH = 10;
-        constexpr int FSN_WIDTH = 32;
-        constexpr int FRAME_TYPE_WIDTH = 3;
-        constexpr int CREDIT_LIMIT_WIDTH = 32;
-
-        constexpr unsigned int CHUNK_SIZE_BITS = 64;
-        constexpr unsigned int CHUNK_SIZE_BYTES = CHUNK_SIZE_BITS / 8;
-        constexpr int CHUNKS_PER_BEAT = BEAT_WIDTH / CHUNK_SIZE_BITS;
-        constexpr int CHUNK_INDEX_WIDTH = clog2(CHUNKS_PER_BEAT);
-        static_assert(
-            (1 << CHUNK_INDEX_WIDTH) == CHUNKS_PER_BEAT,
-            "CHUNK_INDEX_WIDTH must be log2(CHUNKS_PER_BEAT)"
-        );
-
-        // Largest frame on the CMAC AXI Stream: L2 header plus MTU, without the FCS (appended and
-        // stripped by the CMAC). The L2 padding is part of the MTU, so it adds nothing.
-        constexpr int MAX_FRAME_BYTES = MAX_ETHERNET_HEADER_LENGTH_BYTES + ETHERNET_MTU;
-        // Beats of the largest frame, e.g. for FIFOs holding a whole frame and frame descriptors
-        constexpr int MAX_BEATS_PER_FRAME = (MAX_FRAME_BYTES * 8 + BEAT_WIDTH - 1) / BEAT_WIDTH;
-
-        // "Enum" values
-        static const ap_uint<FRAME_TYPE_WIDTH> FRAME_DATA = 0;
-        static const ap_uint<FRAME_TYPE_WIDTH> FRAME_CREDIT_ACK = 1;
-        static const ap_uint<FRAME_TYPE_WIDTH> FRAME_NACK = 2;
-    }
-
-    namespace helpers {
-        /** Return the sum of all bitwidths */
-        template<int... Ws>
-        constexpr int widthSum() {
-            // Leading 0 keeps the array non-empty for an empty pack
-            const int widths[] = {0, Ws...};
-            int sum = 0;
-            for (int w : widths) sum += w;
-            return sum;
-        }
-
-        /** Return the largest of the given values (0 for an empty pack). */
-        template<uint64_t... Values>
-        constexpr uint64_t maxOf() {
-            // Leading 0 keeps the array non-empty for an empty pack
-            const uint64_t values[] = {0, Values...};
-            uint64_t result = 0;
-            for (uint64_t v : values) result = v > result ? v : result;
-            return result;
-        }
-
-        /** Return whether no value occurs twice among the given values. */
-        template<uint64_t... Values>
-        constexpr bool allDistinct() {
-            // Leading 0 keeps the array non-empty for an empty pack, skipped by starting at 1
-            const uint64_t values[] = {0, Values...};
-            for (size_t i = 1; i < sizeof...(Values) + 1; ++i) {
-                for (size_t j = i + 1; j < sizeof...(Values) + 1; ++j) {
-                    if (values[i] == values[j]) return false;
-                }
-            }
-            return true;
-        }
-
-        /** Reverse the byte order of `value`. Converts a multi-byte field between wire order (most
-        * significant byte first, so in the lowest bits of an AXI Stream beat) and its numeric value,
-        * in both directions. Pure wiring in hardware. */
-        template<int W>
-        ap_uint<W> swapBytes(const ap_uint<W>& value) {
-            static_assert(W % 8 == 0, "Only whole bytes can be swapped");
-            ap_uint<W> result;
-            for (int i = 0; i < W / 8; ++i) {
-                #pragma HLS unroll
-                result.range(8 * i + 7, 8 * i) = value.range(W - 8 * i - 1, W - 8 * i - 8);
-            }
-            return result;
-        }
-
-        /** `swapBytes` of a slice such as `value.range(95, 48)`. A slice's width is only known at
-        * runtime, so the field width W must be given explicitly: `swapBytes<48>(beat.range(95, 48))`.
-        * Checks in csim that the slice is W bits wide. */
-        template<int W, int PW, bool S>
-        ap_uint<W> swapBytes(const ap_range_ref<PW, S>& value) {
-#ifndef __SYNTHESIS__
-            assert(value.length() == W && "Slice width does not match the field width W");
-#endif
-            return swapBytes<W>(ap_uint<W>(value));
-        }
-
-        /** Return bits upper..lower of `value` byte swapped, as a W-bit field. W must be given
-        * explicitly: `swapBytes<48>(beat, 95, 48)`. */
-        template<int W, int VW>
-        ap_uint<W> swapBytes(const ap_uint<VW>& value, int upper, int lower) {
-            return swapBytes<W>(value.range(upper, lower));
-        }
-
-        /** Base case of `packFrom`: nothing left to pack. */
-        template<int BW, int Offset>
-        void packFrom(ap_uint<BW>&) {}
-
-        /** Pack the given data into `result`, starting at bit `Offset`. The first argument goes into
-        * the lowest bits, each following one directly above the previous. */
-        template<int BW, int Offset, int W, int... Ws>
-        void packFrom(ap_uint<BW>& result, const ap_uint<W>& data, const ap_uint<Ws>&... datas) {
-            static_assert(Offset + W <= BW, "Packed data exceeds the target width");
-            result.range(Offset + W - 1, Offset) = data;
-            packFrom<BW, Offset + W>(result, datas...);
-        }
-
-        /** Base case of `unpackFrom`: nothing left to unpack. */
-        template<int BW, int Offset>
-        void unpackFrom(const ap_uint<BW>&) {}
-
-        /** Unpack `source`, starting at bit `Offset`, into the given data. Inverse of `packFrom`: the
-        * first argument is read from the lowest bits, each following one directly above the previous. */
-        template<int BW, int Offset, int W, int... Ws>
-        void unpackFrom(const ap_uint<BW>& source, ap_uint<W>& data, ap_uint<Ws>&... datas) {
-            static_assert(Offset + W <= BW, "Unpacked data exceeds the source width");
-            data = source.range(Offset + W - 1, Offset);
-            unpackFrom<BW, Offset + W>(source, datas...);
-        }
-
-        /** Serial-number comparison for wrapping FSNs and credit counters: true if
-        * `a` is before `b`, i.e. 0 < (b - a) mod 2^W < 2^(W-1). */
-        template<int W>
-        bool serialBefore(const ap_uint<W>& a, const ap_uint<W>& b) {
-            const ap_uint<W> difference = b - a;
-            return difference != 0 && !difference[W - 1];
-        }
-
-    }
-
     /** A debug struct that can be switched on at comptime. */
     template<bool Debug> struct lsp_stat_counters_t;
     template <> struct lsp_stat_counters_t<true> {
@@ -239,7 +94,7 @@ namespace lsp {
             ap_uint<10> payloadChunks;
             ap_uint<8> _reserved;
 
-            static constexpr int WIDTH = 64;
+            static constexpr int WIDTH = lsp::constants::PROTOCOL_HEADER_WIDTH;
             static constexpr int VERSION_WIDTH = decltype(version)::width;
             static constexpr int FRAME_WIDTH = decltype(frameType)::width;
             static constexpr int FLAGS_WIDTH = decltype(flags)::width;
@@ -276,7 +131,7 @@ namespace lsp {
 
             // Check that the version can be stored in the header
             static_assert(
-                clog2(CURRENT_VERSION)+1 <= AP_WIDTH(version),
+                clog2(lsp::constants::CURRENT_VERSION)+1 <= AP_WIDTH(version),
                 "Cannot accommodate version number in protocol header!"
             );
         };
@@ -300,13 +155,6 @@ namespace lsp {
     namespace data {
         using lsp::constants::BEAT_WIDTH;
 
-        // Width of a data segment header, one chunk
-        constexpr int SEGMENT_HEADER_WIDTH = 64;
-        // Largest payload a segment can carry: a segment never crosses a beat, so at most
-        // the rest of the beat behind its header. Every segment fits into this width, whatever its
-        // stream's word width
-        constexpr int MAX_SEGMENT_PAYLOAD_WIDTH = BEAT_WIDTH - SEGMENT_HEADER_WIDTH;
-
         // Data segment as it is on the wire
         template<int PayloadWidth>
         struct lsp_data_segment_t {
@@ -319,7 +167,7 @@ namespace lsp {
             // PAYLOAD
             ap_uint<PayloadWidth> payload;
 
-            static constexpr int HEADER_WIDTH = SEGMENT_HEADER_WIDTH;
+            static constexpr int HEADER_WIDTH = lsp::constants::SEGMENT_HEADER_WIDTH;
             static constexpr int PAYLOAD_WIDTH = PayloadWidth;
             static constexpr int WIDTH = HEADER_WIDTH + PayloadWidth;
 
@@ -356,7 +204,7 @@ namespace lsp {
 
         /** Segment of the largest possible size: exactly one beat. The receiver unpacks every segment
         into this type, because its stream (and with it the word width) is only known at runtime. */
-        using max_segment_t = lsp_data_segment_t<MAX_SEGMENT_PAYLOAD_WIDTH>;
+        using max_segment_t = lsp_data_segment_t<lsp::constants::MAX_SEGMENT_PAYLOAD_WIDTH>;
         static_assert(max_segment_t::WIDTH == BEAT_WIDTH, "A max size segment must fill exactly one beat");
 
         /** Pack a beat for a data frame: the protocol header (if given), followed by the given segments,
@@ -644,13 +492,17 @@ namespace lsp {
     }
 
     namespace credit {
+        using lsp::constants::creditsPerBeat;
+        using lsp::constants::CREDITS_PER_BEAT;
+        using lsp::constants::CREDITS_PER_HEADER_BEAT;
+
         // CREDIT record
         struct lsp_credit_record_t {
             ap_uint<lsp::constants::STREAM_ID_WIDTH> stream;    // Stream ID
             ap_uint<lsp::constants::CREDIT_LIMIT_WIDTH> limit;  // Credit limit. Wraps around (mod 2^32)
             ap_uint<22> _reserved;
 
-            static constexpr int WIDTH = 64;
+            static constexpr int WIDTH = lsp::constants::CREDIT_RECORD_WIDTH;
 
             ap_uint<WIDTH> pack() const {
                 ap_uint<WIDTH> record = 0;
@@ -673,17 +525,6 @@ namespace lsp {
             >() == lsp_credit_record_t::WIDTH,
             "Credit record fields must fill exactly WIDTH bits"
         );
-
-        /** Number of credit records that fit into a beat behind `offset` bits, and behind the protocol
-        * header if `withHeader` is set. */
-        constexpr int creditsPerBeat(int offset, bool withHeader) {
-            return (constants::BEAT_WIDTH - offset - (withHeader ? protocol::lsp_header_t::WIDTH : 0))
-                / lsp_credit_record_t::WIDTH;
-        }
-
-        // Capacities without an offset
-        constexpr int CREDITS_PER_BEAT = creditsPerBeat(0, false);
-        constexpr int CREDITS_PER_HEADER_BEAT = creditsPerBeat(0, true);
 
         /** Pack credit records into a beat: the protocol header (if given), followed by the records,
         * starting at bit `Offset` (e.g. to leave room for Ethernet / Ethernet+UDP headers).

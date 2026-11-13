@@ -48,7 +48,7 @@ namespace lsp {
                 ap_uint<clog2(1 + constants::BEAT_WIDTH)> initialOffset,
                 beat_t& data
             ) -> connection_state {
-                lsp_data_segment_t<MAX_SEGMENT_PAYLOAD_WIDTH> segment;
+                lsp_data_segment_t<constants::MAX_SEGMENT_PAYLOAD_WIDTH> segment;
                 chunk_offset_t chunkOffset{initialOffset/64};
                 for (unsigned int i = 0; i < constants::CHUNKS_PER_BEAT; ++i) {
                     #pragma HLS PIPELINE II=1
@@ -77,8 +77,8 @@ namespace lsp {
 
                     // Since we have read a header we can definitely already advance the counters
                     // by the number of chunks required by a segment header.
-                    chunkOffset.index += (SEGMENT_HEADER_WIDTH / constants::CHUNK_SIZE_BITS);
-                    frameChunksLeft -= (SEGMENT_HEADER_WIDTH / constants::CHUNK_SIZE_BITS);
+                    chunkOffset.index += (constants::SEGMENT_HEADER_WIDTH / constants::CHUNK_SIZE_BITS);
+                    frameChunksLeft -= (constants::SEGMENT_HEADER_WIDTH / constants::CHUNK_SIZE_BITS);
 
                     // Normal DATA or BLOCKED?
                     if (segment.chunks == 0) {
