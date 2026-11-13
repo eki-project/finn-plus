@@ -3,9 +3,9 @@
 #include <iostream>
 #include <string>
 
-#include "lsp_common.hpp"
-#include "lsp_receiver_utils.hpp"
-#include "lsp_receiver_tb_utils.hpp"
+#include "common.hpp"
+#include "utils.hpp"
+#include "tb_utils.hpp"
 
 using namespace lsp::receiver;
 
@@ -154,6 +154,6 @@ int main(int argc, char** argv) {
     } else if (test == "cmac_egress") {
         return testCmacEgress();
     }
-    std::cerr << "lsp_receiver_utils_tb: unknown test '" << test << "'" << std::endl;
+    std::cerr << "utils_tb: unknown test '" << test << "'" << std::endl;
     return 1;
 }

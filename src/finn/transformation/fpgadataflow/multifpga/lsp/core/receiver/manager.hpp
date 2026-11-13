@@ -3,8 +3,8 @@
 #ifndef LSP_RECEIVER_MANAGER_HPP
 #define LSP_RECEIVER_MANAGER_HPP
 
-#include "lsp_common.hpp"
-#include "lsp_receiver_utils.hpp"
+#include "common.hpp"
+#include "utils.hpp"
 
 namespace lsp {
     namespace receiver {

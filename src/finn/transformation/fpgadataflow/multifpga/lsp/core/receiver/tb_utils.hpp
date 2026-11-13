@@ -2,7 +2,7 @@
 #ifndef LSP_RECEIVER_TB_UTILS_HPP
 #define LSP_RECEIVER_TB_UTILS_HPP
 
-#include "lsp_receiver_utils.hpp"
+#include "utils.hpp"
 
 #include <iostream>
 #include <string>

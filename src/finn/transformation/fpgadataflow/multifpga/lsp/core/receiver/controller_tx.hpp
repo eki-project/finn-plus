@@ -3,7 +3,7 @@
 #ifndef LSP_RECEIVER_CONTROLLER_TX_HPP
 #define LSP_RECEIVER_CONTROLLER_TX_HPP
 
-#include "lsp_receiver_utils.hpp"
+#include "utils.hpp"
 
 namespace lsp {
     namespace receiver {

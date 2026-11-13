@@ -1,9 +1,9 @@
 // Testbench of the RX manager. Returns 0 on success, 77 if not implemented yet, any other value on
 // failure.
-#include "lsp_common.hpp"
-#include "lsp_receiver_manager.hpp"
-#include "lsp_receiver_tb_utils.hpp"
-#include "lsp_receiver_utils.hpp"
+#include "common.hpp"
+#include "manager.hpp"
+#include "tb_utils.hpp"
+#include "utils.hpp"
 
 using namespace lsp::receiver;
 

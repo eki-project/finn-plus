@@ -3,7 +3,7 @@
 #ifndef LSP_RECEIVER_UTILS_HPP
 #define LSP_RECEIVER_UTILS_HPP
 
-#include "lsp_common.hpp"
+#include "common.hpp"
 #include <ap_axi_sdata.h>
 
 namespace lsp {

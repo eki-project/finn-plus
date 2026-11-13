@@ -2,7 +2,7 @@
 # One testbench per component file. A file with several components gets one test per component,
 # selected by the first argument. Exit code 77 marks a test that is not implemented yet.
 function(receiver_tb file)
-    add_executable(${file}_tb lsp_receiver_${file}_tb.cpp)
+    add_executable(${file}_tb ${file}_tb.cpp)
     foreach(test IN LISTS ARGN)
         add_test(NAME ${file}.${test} COMMAND ${file}_tb ${test})
         set_tests_properties(${file}.${test} PROPERTIES SKIP_RETURN_CODE 77)

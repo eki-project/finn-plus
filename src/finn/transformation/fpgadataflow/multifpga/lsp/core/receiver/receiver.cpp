@@ -4,12 +4,12 @@
 //   (cumulative ACK, open gap, urgent ACK) to the controller_tx.
 // - The controller_tx builds the CTRL frames (CREDIT_ACK, NACK) of all connections and sends them
 //   back through the CMAC.
-#include "lsp_receiver.hpp"
-#include "lsp_common.hpp"
-#include "lsp_receiver_utils.hpp"
-#include "lsp_receiver_manager.hpp"
-#include "lsp_receiver_connection.hpp"
-#include "lsp_receiver_controller_tx.hpp"
+#include "receiver.hpp"
+#include "common.hpp"
+#include "utils.hpp"
+#include "manager.hpp"
+#include "connection.hpp"
+#include "controller_tx.hpp"
 
 using namespace lsp;
 
