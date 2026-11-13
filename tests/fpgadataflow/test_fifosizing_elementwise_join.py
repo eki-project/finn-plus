@@ -8,8 +8,8 @@ operands are both streams, fed by a fork.
 import pytest
 
 import json
-import os
 from onnx import TensorProto, helper
+from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -66,7 +66,8 @@ def make_fork_join_model(op_type, ch, pe, n_vec, rhs_style="input"):
                 [dst],
                 domain="finn.custom_op.fpgadataflow.hls",
                 backend="fpgadataflow",
-                shape=shape,
+                inShape=shape,
+                outShape=shape,
                 inWidth=inw,
                 outWidth=outw,
                 dataType=IDT.name,
@@ -164,42 +165,29 @@ def fifo_depths(model):
 
 
 def build_and_measure(model_file, build_dir, strategy):
-    """Build to stitched IP with ``strategy``; returns (throughput, depths)."""
-    output_dir = os.path.join(build_dir, strategy)
-    folding = os.path.join(build_dir, "folding.json")
-    with open(folding, "w") as f:
-        json.dump({"Defaults": {}}, f)
+    """Generate the hardware with ``strategy`` and measure it in the connected node
+    simulation; returns (throughput, depths)."""
+    output_dir = Path(build_dir) / strategy
     cfg = build_cfg.DataflowBuildConfig(
         output_dir=output_dir,
         fpga_part=FPGA_PART,
         synth_clk_period_ns=CLK_NS,
-        # the model already is the hardware graph: start where the convert phase ends
-        steps=["phase_optimize_hardware", "phase_build_hardware", "phase_generate_outputs"],
-        folding_config_file=folding,
+        # the model already is the hardware graph
+        steps=["step_generate_hardware", "step_measure_rtlsim_performance"],
         auto_fifo_depths=True,
         auto_fifo_strategy=strategy,
-        rtlsim_batch_size=8,
-        stitched_ip_gen_dcp=False,
         verify_steps=[],
         enable_build_pdb_debug=False,
-        generate_outputs=[
-            build_cfg.DataflowOutputType.STITCHED_IP,
-            build_cfg.DataflowOutputType.RTLSIM_PERFORMANCE,
-        ],
+        generate_outputs=[build_cfg.DataflowOutputType.RTLSIM_PERFORMANCE],
     )
     assert (
-        build.build_dataflow_cfg(model_file, cfg) == 0
-    ), "%s build failed, see %s/build_dataflow.log" % (strategy, output_dir)
-    with open(os.path.join(output_dir, "report", "rtlsim_performance.json")) as f:
+        build.build_dataflow_cfg(str(model_file), cfg) == 0
+    ), f"{strategy} build failed, see {output_dir}/build_dataflow.log"
+    with (output_dir / "report" / "rtlsim_performance.json").open() as f:
         perf = json.load(f)
-    assert perf["completed_output_frames"] == cfg.rtlsim_batch_size, (
-        "%s: rtlsim did not complete all frames (deadlock?)" % strategy
-    )
-    assert perf["stable_throughput_valid"], "%s: no steady-state throughput" % strategy
-    stitched = ModelWrapper(
-        os.path.join(output_dir, "intermediate_models", "step_create_stitched_ip.onnx")
-    )
-    return float(perf["stable_throughput[images/s]"]), fifo_depths(stitched)
+    assert len(perf) > 0, f"{strategy}: the simulation produced no output samples (deadlock?)"
+    sized = ModelWrapper(str(output_dir / "intermediate_models" / "step_generate_hardware.onnx"))
+    return float(perf[0]["throughput_fps"]), fifo_depths(sized)
 
 
 @pytest.mark.slow
@@ -207,39 +195,32 @@ def build_and_measure(model_file, build_dir, strategy):
 @pytest.mark.fpgadataflow
 @pytest.mark.parametrize("op_type", ["ElementwiseAdd", "ElementwiseMul", "ElementwiseSub"])
 def test_fifosizing_elementwise_join(op_type):
-    """Fork -> (shortcut, delayed branch) -> two-stream elementwise join, built
-    with largefifo_rtlsim as the reference and with both heuristic strategies.
-    Every build has to complete: heuristic_rtlsim used to stall characterizing
-    any join but ElementwiseAdd. The heuristics should also reach the reference's
-    stitched-IP throughput, which they do not yet (see the xfail below)."""
-    build_dir = make_build_dir("fifosizing_elementwise_join_")
-    model_file = os.path.join(build_dir, "model.onnx")
-    make_fork_join_model(op_type, ch=16, pe=2, n_vec=8).save(model_file)
+    """Fork -> (shortcut, delayed branch) -> two-stream elementwise join, sized with the
+    simulation-based FINN+ reference (distributed_sim) and with heuristic_analytical.
 
+    Both builds have to complete. The heuristic should also reach the reference's
+    throughput, which upstream reports it does not yet (see the xfail below)."""
+    build_dir = Path(make_build_dir("fifosizing_elementwise_join_"))
+    model_file = build_dir / "model.onnx"
+    make_fork_join_model(op_type, ch=16, pe=2, n_vec=8).save(str(model_file))
+
+    reference = build_cfg.AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION.value
+    heuristic = build_cfg.AutoFIFOSizingMethod.HEURISTIC_ANALYTICAL.value
     results = {}
-    for strategy in ["largefifo_rtlsim", "heuristic_analytical", "heuristic_rtlsim"]:
+    for strategy in [reference, heuristic]:
         fps, depths = build_and_measure(model_file, build_dir, strategy)
         results[strategy] = {"fps": fps, "depths": depths}
+    with (build_dir / f"{op_type}.json").open("w") as f:
+        json.dump(results, f, indent=2)
 
-    summary_dir = os.path.join(os.environ["FINN_BUILD_DIR"], "fifosizing_elementwise_join")
-    os.makedirs(summary_dir, exist_ok=True)
-    with open(os.path.join(summary_dir, op_type + ".json"), "w") as f:
-        json.dump(dict(results, build_dir=build_dir), f, indent=2)
-
-    ref = results["largefifo_rtlsim"]["fps"]
-    ratios = {s: results[s]["fps"] / ref for s in ("heuristic_analytical", "heuristic_rtlsim")}
-    low = {s: r for s, r in ratios.items() if r < 0.98}
-    if low:
-        # Known issue: the shortcut gets the join window floor (the 1:8
-        # converter's window plus margin, 10) but the converters' pipeline
-        # latency is not covered, while largefifo_rtlsim measures 15. All
-        # elementwise joins, ElementwiseAdd included, reach about 59 %.
+    ratio = results[heuristic]["fps"] / results[reference]["fps"]
+    if ratio < 0.98:
+        # Known issue (Xilinx/finn#1185): the shortcut gets the join window floor (the
+        # 1:8 converter's window plus margin) but the converters' pipeline latency is
+        # not covered. Upstream measures about 59 % for all elementwise joins. The
+        # build directory is kept for inspection.
         pytest.xfail(
-            "shortcut under-sized: %s of the reference throughput, depths %s vs %s"
-            % (
-                ", ".join("%s %.1f%%" % (s, 100 * r) for s, r in low.items()),
-                results["heuristic_analytical"]["depths"],
-                results["largefifo_rtlsim"]["depths"],
-            )
+            f"shortcut under-sized: {ratio:.1%} of the reference throughput, depths "
+            f"{results[heuristic]['depths']} vs {results[reference]['depths']}"
         )
     robust_rmtree(build_dir)
