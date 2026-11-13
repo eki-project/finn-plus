@@ -144,7 +144,7 @@ def get_metadata_prop_safe(model: ModelWrapper, key: str, custom_error: str | No
     if data is None:
         if custom_error is None:
             raise FINNInternalError(
-                f"Unable to read metadata prop '{key}' " "from model. No such key exists."
+                f"Unable to read metadata prop '{key}' from model. No such key exists."
             )
         raise FINNInternalError(custom_error)
     return data
@@ -262,11 +262,7 @@ def get_vivado_root() -> str:
     try:
         return os.environ["XILINX_VIVADO"]
     except KeyError:
-        raise Exception(
-            """Environment variable XILINX_VIVADO must be set
-        correctly.
-        """
-        ) from None
+        raise FINNUserError("Environment variable XILINX_VIVADO must be set correctly.") from None
 
 
 def get_vivado_version() -> tuple[int, int] | None:
@@ -282,7 +278,7 @@ def get_liveness_threshold_cycles() -> int:
     return int(os.getenv("LIVENESS_THRESHOLD", 1000000))
 
 
-def get_watchdog_timeout_cycles(cycles_estimate: int | float | None = None) -> int:
+def get_watchdog_timeout_cycles(cycles_estimate: float | None = None) -> int:
     """Return the effective number of no-output cycles rtlsim will wait before
     assuming the simulation is not finishing and throwing an exception. This is
     the derived cycle estimate raised to at least the ``LIVENESS_THRESHOLD``
@@ -293,9 +289,7 @@ def get_watchdog_timeout_cycles(cycles_estimate: int | float | None = None) -> i
     return max(int(cycles_estimate), override)
 
 
-def get_rtlsim_timeout_error_message(
-    threshold: int | float, cycles_estimate: int | float | None = None
-) -> str:
+def get_rtlsim_timeout_error_message(threshold: float, cycles_estimate: float | None = None) -> str:
     """Return an actionable RTL simulation timeout error message."""
     message = f"RTL simulation timed out after {int(threshold)} cycles"
     if cycles_estimate is not None:
@@ -324,11 +318,12 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path
     try:
         build_dir = get_settings().finn_build_dir
     except KeyError as keyerror:
-        raise Exception("""Environment variable FINN_BUILD_DIR is missing!""") from keyerror
+        raise FINNUserError("Environment variable FINN_BUILD_DIR is missing!") from keyerror
 
     if not build_dir.exists():
-        raise Exception(
-            f"FINN_BUILD_DIR at {build_dir} does not exist! Make sure the FINN setup ran properly!"
+        raise FINNUserError(
+            f"FINN_BUILD_DIR at {build_dir} does not exist! "
+            f"Make sure the FINN setup ran properly!"
         )
 
     tmpdir = Path(tempfile.mkdtemp(prefix=prefix, dir=build_dir))
@@ -350,7 +345,7 @@ def robust_rmtree(
         try:
             shutil.rmtree(path)
             return
-        except FileNotFoundError:
+        except FileNotFoundError:  # noqa: PERF203  (retry loop, the try must be inside it)
             return
         except OSError as exc:
             transient = exc.errno in (errno.ENOTEMPTY, errno.EBUSY)
@@ -626,7 +621,7 @@ def get_dsp_block(fpgapart: str) -> str:
     return "DSP48E2"
 
 
-def get_dsp_datapath_limits(dsp_block):
+def get_dsp_datapath_limits(dsp_block: str) -> tuple[int, int, int]:
     """Return the maximum (activation, weight, accumulator) operand widths in bits
     that fit the datapath of the given DSP block. These correspond to the DSP B, A
     and P ports respectively. Widths exceeding these limits would be silently
@@ -679,9 +674,8 @@ def get_driver_shapes(model: ModelWrapper) -> dict:
         if i_consumer.op_type != "StreamingDataflowPartition":
             raise FINNInternalError("Ensure CreateDataflowPartition called before driver creation.")
         first_df_model = ModelWrapper(cast("str", getCustomOp(i_consumer).get_nodeattr("model")))
-        assert (
-            first_df_model.graph.node[0].op_type == "IODMA_hls"
-        ), "First partition must hold input IODMA"
+        if not (first_df_model.graph.node[0].op_type == "IODMA_hls"):
+            raise FINNInternalError("First partition must hold input IODMA")
         successors = model.find_direct_successors(i_consumer)
         if successors is None or len(successors) == 0:
             raise FINNInternalError(
@@ -740,7 +734,8 @@ def get_driver_shapes(model: ModelWrapper) -> dict:
                 f"Output tensor {o_tensor_name} is not part of a StreamingDataflowPartition."
             )
         df_model = ModelWrapper(cast("str", getCustomOp(o_producer).get_nodeattr("model")))
-        assert df_model.graph.node[-1].op_type == "IODMA_hls", "Partition must hold output IODMA"
+        if not (df_model.graph.node[-1].op_type == "IODMA_hls"):
+            raise FINNInternalError("Partition must hold output IODMA")
         predecessors = model.find_direct_predecessors(o_producer)
         if predecessors is None or len(predecessors) == 0:
             raise FINNInternalError(

@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
 
 import finn.xsi as finnxsi
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.basic import make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -57,20 +57,12 @@ class RTLBackend(HWCustomOp, ABC):
     custom node should have. Some as abstract methods, these have to be filled
     when writing a new RTL custom op node."""
 
-    def get_nodeattr_types(
-        self,
-    ) -> dict[
-        str,
-        tuple[str, bool, int | float | str | bool | npt.NDArray | list]
-        | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
-    ]:
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return 4-tuple (dtype, required, default_val, allowed_values) for attribute
         with name. allowed_values will be None if not specified.
 
         Returns:
-            dict[ str, tuple[str, bool, int | float | str | bool | npt.NDArray | list] | tuple[
-                str, bool, int | float | str | bool | npt.NDArray | list, set | None]]:
-                Dictionary of node attribute types
+            Dictionary of node attribute types
         """
         super_attrs = super().get_nodeattr_types()
         super_attrs.update(

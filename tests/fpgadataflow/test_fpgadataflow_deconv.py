@@ -197,7 +197,7 @@ def test_fpgadataflow_deconv(idim, stride, ifm_ch, ofm_ch, simd, pe, k, padding,
     assert (y_produced == y_expected).all()
 
     if exec_mode == "rtlsim":
-        node = model.get_nodes_by_op_type("FMPadding_Pixel_hls")[0]
+        node = model.get_nodes_by_op_type("InputDilation_hls")[0]
         inst = getCustomOp(node)
         cycles_rtlsim = inst.get_nodeattr("cycles_rtlsim")
         exp_cycles_dict = model.analysis(exp_cycles_per_layer)

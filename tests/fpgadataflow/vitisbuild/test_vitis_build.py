@@ -1,3 +1,5 @@
+"""End-to-end Vitis build tests."""
+
 import pytest
 
 import onnx.helper as oh

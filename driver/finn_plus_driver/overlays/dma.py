@@ -6,10 +6,12 @@ import os
 import time
 from finn_plus_driver.hwh import get_clk_wiz_params_from_hwh
 from finn_plus_driver.packing import finnpy_to_packed_bytearray, packed_bytearray_to_finnpy
+from pathlib import Path
 from pynq import Overlay, allocate
 from pynq.ps import Clocks
-from qonnx.core.datatype import DataType
+from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.util.basic import gen_finn_dt_tensor
+from typing import Any, cast
 
 
 class FINNDMAOverlay(Overlay):
@@ -17,19 +19,19 @@ class FINNDMAOverlay(Overlay):
 
     def __init__(
         self,
-        bitfile_name,
-        platform,
-        io_shape_dict,
-        batch_size=1,
-        fclk_mhz=100.0,
-        device=None,
-        download=True,
-        runtime_weight_dir="runtime_weights/",
-        mlo_weight_dir="mlo_weights/",
-        runtime_weights=False,
-        validation_dataset=None,
-        **kwargs,
-    ):
+        bitfile_name: str,
+        platform: str,
+        io_shape_dict: dict,
+        batch_size: int = 1,
+        fclk_mhz: float = 100.0,
+        device: Any = None,
+        download: bool = True,
+        runtime_weight_dir: str = "runtime_weights/",
+        mlo_weight_dir: str = "mlo_weights/",
+        runtime_weights: bool = False,
+        validation_dataset: str | None = None,
+        **kwargs: Any,  # noqa: ARG002
+    ) -> None:
         """Initialize the FINN accelerator.
 
         Parameters
@@ -63,6 +65,10 @@ class FINNDMAOverlay(Overlay):
             ``driver_information`` of ``settings.json``). If so, the weight files must be found
             and written before the accelerator can compute anything meaningful, so a missing
             directory is an error instead of being skipped silently.
+        validation_dataset: str or None
+            Dataset used by ``validate()`` when none is given at call time.
+        **kwargs:
+            Ignored; accepted so subclasses can forward extra keyword arguments.
         """
         super().__init__(bitfile_name, download=download, device=device)
         self.runtime_weight_dir = runtime_weight_dir
@@ -106,7 +112,7 @@ class FINNDMAOverlay(Overlay):
         self.load_runtime_weights()
         self.load_mlo_weights()
 
-    def load_external_weights(self):
+    def load_external_weights(self) -> None:
         """Load any existing external (DRAM) weights from the specified dir into the
         appropriate layer of the accelerator. Note that this must be enabled
         during the accelerator build process. The weights directory
@@ -115,9 +121,9 @@ class FINNDMAOverlay(Overlay):
         """
         self.external_weights = []
         w_filenames = []
-        if not os.path.isdir(self.runtime_weight_dir):
+        if not Path(self.runtime_weight_dir).is_dir():
             return
-        for dirpath, dirnames, filenames in os.walk(self.runtime_weight_dir):
+        for _dirpath, _dirnames, filenames in os.walk(self.runtime_weight_dir):
             w_filenames.extend(filenames)
 
         tmp_weight_dict = {}
@@ -142,10 +148,7 @@ class FINNDMAOverlay(Overlay):
 
                 input_shape = self._io_shape_dict["external_weights_input_shapes"][idma_name]
                 # NHWC input?
-                if len(input_shape) == 4:
-                    num_repeats = input_shape[1] * input_shape[2]
-                else:
-                    num_repeats = 1
+                num_repeats = input_shape[1] * input_shape[2] if len(input_shape) == 4 else 1
                 self.external_weights += [(iwdma, weight_buf, idma_name, num_repeats)]
 
         if "number_of_external_weights" in self.io_shape_dict:
@@ -153,46 +156,43 @@ class FINNDMAOverlay(Overlay):
             hw_ext_weights = int(self.io_shape_dict["number_of_external_weights"])
             if len(self.external_weights) != hw_ext_weights:
                 raise FileNotFoundError(
-                    "The accelerator has %d external weight stream(s), but %d external weight "
-                    "tensors (.npy) were found in '%s'. Is runtime_weight_dir pointing to the "
+                    f"The accelerator has {hw_ext_weights} external weight stream(s), but "
+                    f"{len(self.external_weights)} external weight tensors (.npy) were found in "
+                    f"'{self.runtime_weight_dir}'. Is runtime_weight_dir pointing to the "
                     "correct folder?"
-                    % (hw_ext_weights, len(self.external_weights), self.runtime_weight_dir)
                 )
 
-    def load_mlo_weights(self):
+    def load_mlo_weights(self) -> None:
         """Load DDR weights for MLO/FINNLoop accelerators."""
         self.mlo_weight_buffer = None
         mlo_cfg = self.io_shape_dict.get("mlo_weight_config")
         if not mlo_cfg:
             return
-        if not os.path.isdir(self.mlo_weight_dir):
+        if not Path(self.mlo_weight_dir).is_dir():
             # The DDR weights of an MLO accelerator are never part of the bitstream, so it
             # computes garbage without them - report the missing directory instead of failing
             # on the first .dat file with a bare FileNotFoundError.
             raise FileNotFoundError(
                 "The accelerator streams its weights from DDR, but the MLO weight directory "
-                "'%s' does not exist (working directory: '%s'). Pass the 'mlo_weights' "
-                "directory of the deployment package as mlo_weight_dir."
-                % (self.mlo_weight_dir, os.getcwd())
+                f"'{self.mlo_weight_dir}' does not exist (working directory: '{Path.cwd()}'). "
+                "Pass the 'mlo_weights' directory of the deployment package as mlo_weight_dir."
             )
         total_size = mlo_cfg["total_size_bytes"]
         # allocate one big contiguous buffer for all MLO weights
         weight_buf = allocate(shape=(total_size,), dtype=np.uint8)
         weight_buf[:] = 0
         for entry in mlo_cfg["weights"]:
-            dat_path = os.path.join(self.mlo_weight_dir, entry["dat_file"])
-            with open(dat_path, "r") as f:
-                dat = f.read()
+            dat = (Path(self.mlo_weight_dir) / entry["dat_file"]).read_text()
             raw = bytearray()
             for tok in dat.split():
-                if len(tok) % 2:
-                    tok = "0" + tok
-                raw += bytes.fromhex(tok)[::-1]
+                # pad odd-length hex tokens to whole bytes
+                raw += bytes.fromhex("0" + tok if len(tok) % 2 else tok)[::-1]
             layer_bytes = np.frombuffer(bytes(raw), dtype=np.uint8)
             offset = entry["address_offset"]
-            assert offset + layer_bytes.shape[0] <= total_size, (
-                "MLO weight %s does not fit in the allocated DDR buffer" % entry["dat_file"]
-            )
+            if offset + layer_bytes.shape[0] > total_size:
+                raise ValueError(
+                    f"MLO weight {entry['dat_file']} does not fit in the allocated DDR buffer"
+                )
             weight_buf[offset : offset + layer_bytes.shape[0]] = layer_bytes
         weight_buf.flush()
         self.mlo_weight_buffer = weight_buf
@@ -200,13 +200,13 @@ class FINNDMAOverlay(Overlay):
         # write buffer physical DDR address
         phys_addr = int(weight_buf.device_address)
         for ip_name in mlo_cfg.get("address_config_ips", []):
-            if ip_name not in self.ip_dict.keys():
+            if ip_name not in self.ip_dict:
                 continue
             address_config = getattr(self, ip_name)
             address_config.write(0x0, phys_addr & 0xFFFFFFFF)
             address_config.write(0x4, (phys_addr >> 32) & 0xFFFFFFFF)
 
-    def load_runtime_weights(self, flush_accel=True, verify=True):
+    def load_runtime_weights(self, flush_accel: bool = True, verify: bool = True) -> None:
         """Load any existing runtime-writable weights from the specified dir into the
         appropriate layer of the accelerator. Note that this must be enabled
         during the accelerator build process. The runtime weights directory
@@ -222,7 +222,7 @@ class FINNDMAOverlay(Overlay):
             Whether the written weights will be re-read and verified.
         """
         w_filenames = []
-        if not os.path.isdir(self.runtime_weight_dir):
+        if not Path(self.runtime_weight_dir).is_dir():
             if self.runtime_weights_expected:
                 # Layers with runtime-writable weights (e.g. URAM weight memories, which cannot
                 # be initialized from the bitstream) compute garbage until their weights are
@@ -230,17 +230,17 @@ class FINNDMAOverlay(Overlay):
                 # accuracy collapse later.
                 raise FileNotFoundError(
                     "The accelerator has runtime-writable weights, but the runtime weight "
-                    "directory '%s' does not exist (working directory: '%s'). Pass the "
-                    "'runtime_weights' directory of the deployment package as "
-                    "runtime_weight_dir." % (self.runtime_weight_dir, os.getcwd())
+                    f"directory '{self.runtime_weight_dir}' does not exist (working directory: "
+                    f"'{Path.cwd()}'). Pass the 'runtime_weights' directory of the deployment "
+                    "package as runtime_weight_dir."
                 )
             return
-        for dirpath, dirnames, filenames in os.walk(self.runtime_weight_dir):
+        for _dirpath, _dirnames, filenames in os.walk(self.runtime_weight_dir):
             w_filenames.extend(filenames)
         rt_weight_dict = {}
         for w_filename in w_filenames:
             if w_filename.endswith(".dat"):
-                with open(self.runtime_weight_dir + "/" + w_filename) as f:
+                with (Path(self.runtime_weight_dir) / w_filename).open() as f:
                     dat = f.read()
             else:
                 continue
@@ -251,14 +251,14 @@ class FINNDMAOverlay(Overlay):
         if self.runtime_weights_expected and len(rt_weight_dict) == 0:
             raise FileNotFoundError(
                 "The accelerator has runtime-writable weights, but no .dat weight files were "
-                "found in '%s'." % self.runtime_weight_dir
+                f"found in '{self.runtime_weight_dir}'."
             )
         num_written = 0
         for sdp_ind, layer_ind in rt_weight_dict.keys():
-            cand_if_name = "StreamingDataflowPartition_%d" % sdp_ind
-            if cand_if_name in self.ip_dict.keys():
+            cand_if_name = f"StreamingDataflowPartition_{sdp_ind}"
+            if cand_if_name in self.ip_dict:
                 num_written += 1
-                layer_mmio = getattr(self, "StreamingDataflowPartition_%d" % sdp_ind).mmio
+                layer_mmio = getattr(self, cand_if_name).mmio
                 layer_w = rt_weight_dict[(sdp_ind, layer_ind)]
                 layer_mmio.write_mm(0, layer_w.tobytes())
                 if verify:
@@ -271,93 +271,95 @@ class FINNDMAOverlay(Overlay):
                         # spaces over 16KB do NOT work as intended. Be aware of this if seeing
                         # unexpected behaviour.
                         new_array = layer_mmio.array[: layer_w.shape[0]]
-                        new_w = np.copy(np.array(([x for x in new_array]), dtype=layer_w.dtype))
+                        new_w = np.copy(np.array(list(new_array), dtype=layer_w.dtype))
                     else:
                         new_w = np.copy(layer_mmio.array[: layer_w.shape[0]])
-                    assert (layer_w == new_w).all()
+                    if not (layer_w == new_w).all():
+                        raise RuntimeError(
+                            f"Runtime weight verification failed for "
+                            f"StreamingDataflowPartition_{sdp_ind} layer {layer_ind}"
+                        )
         if num_written != len(rt_weight_dict):
             raise RuntimeError(
-                "Found %d runtime weight files in '%s' but wrote only %d of them: no matching "
+                f"Found {len(rt_weight_dict)} runtime weight files in "
+                f"'{self.runtime_weight_dir}' but wrote only {num_written} of them: no matching "
                 "StreamingDataflowPartition_<n> with an AXI-lite interface in the overlay for "
-                "the others." % (len(rt_weight_dict), self.runtime_weight_dir, num_written)
+                "the others."
             )
         if num_written > 0:
-            print(
-                "Wrote runtime weights of %d layer(s) from %s"
-                % (num_written, self.runtime_weight_dir)
-            )
+            print(f"Wrote runtime weights of {num_written} layer(s) from {self.runtime_weight_dir}")
         if flush_accel:
             # run accelerator to flush any stale weights from weight streamer FIFOs
             self.execute_on_buffers()
 
-    def idt(self, ind=0):
+    def idt(self, ind: int = 0) -> BaseDataType:
         """Get input data type for specified index."""
         return self.io_shape_dict["idt"][ind]
 
-    def odt(self, ind=0):
+    def odt(self, ind: int = 0) -> BaseDataType:
         """Get output data type for specified index."""
         return self.io_shape_dict["odt"][ind]
 
-    def ishape_normal(self, ind=0):
+    def ishape_normal(self, ind: int = 0) -> tuple:
         """Get normal input shape with current batch size."""
         ret = list(self.io_shape_dict["ishape_normal"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
-    def oshape_normal(self, ind=0):
+    def oshape_normal(self, ind: int = 0) -> tuple:
         """Get normal output shape with current batch size."""
         ret = list(self.io_shape_dict["oshape_normal"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
-    def ishape_folded(self, ind=0):
+    def ishape_folded(self, ind: int = 0) -> tuple:
         """Get folded input shape with current batch size."""
         ret = list(self.io_shape_dict["ishape_folded"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
-    def oshape_folded(self, ind=0):
+    def oshape_folded(self, ind: int = 0) -> tuple:
         """Get folded output shape with current batch size."""
         ret = list(self.io_shape_dict["oshape_folded"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
-    def ishape_packed(self, ind=0):
+    def ishape_packed(self, ind: int = 0) -> tuple:
         """Get packed input shape with current batch size."""
         ret = list(self.io_shape_dict["ishape_packed"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
-    def oshape_packed(self, ind=0):
+    def oshape_packed(self, ind: int = 0) -> tuple:
         """Get packed output shape with current batch size."""
         ret = list(self.io_shape_dict["oshape_packed"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
     @property
-    def num_inputs(self):
+    def num_inputs(self) -> int:
         """Number of accelerator inputs."""
         return self.io_shape_dict["num_inputs"]
 
     @property
-    def num_outputs(self):
+    def num_outputs(self) -> int:
         """Number of accelerator outputs."""
         return self.io_shape_dict["num_outputs"]
 
     @property
-    def batch_size(self):
+    def batch_size(self) -> int:
         """Current batch size."""
         return self._batch_size
 
     @property
-    def io_shape_dict(self):
+    def io_shape_dict(self) -> dict:
         """Dictionary of I/O shapes and data types."""
         return self._io_shape_dict
 
     @io_shape_dict.setter
-    def io_shape_dict(self, value):
+    def io_shape_dict(self, value: dict) -> None:
         """Set I/O shape dictionary and convert data types."""
-        idt = value.get("idt", None)
+        idt = value["idt"]
         if all(isinstance(element, str) for element in idt):
             idt_new = []
             for i in idt:
@@ -365,7 +367,7 @@ class FINNDMAOverlay(Overlay):
                 idt_new.append(DataType[type_name.strip("'")])
             value["idt"] = idt_new
 
-        odt = value.get("odt", None)
+        odt = value["odt"]
         if all(isinstance(element, str) for element in odt):
             odt_new = []
             for o in odt:
@@ -376,7 +378,7 @@ class FINNDMAOverlay(Overlay):
         self._io_shape_dict = value
 
     @batch_size.setter
-    def batch_size(self, value):
+    def batch_size(self, value: int) -> None:
         """Set batch size and reallocate buffers."""
         self._batch_size = value
         # free the old buffers by setting to None
@@ -401,19 +403,26 @@ class FINNDMAOverlay(Overlay):
             self.obuf_packed_device.append(new_packed_obuf)
             self.obuf_packed.append(np.empty_like(new_packed_obuf))
 
-    def fold_input(self, ibuf_normal, ind=0):
-        """Reshapes input in desired shape.
-        Gets input data (ibuf_normal), checks if data is in expected normal shape.
-        Returns folded input."""
+    def fold_input(self, ibuf_normal: np.ndarray, ind: int = 0) -> np.ndarray:
+        """Reshape the input into the folded shape.
+
+        Gets input data (ibuf_normal), checks if data is in the expected normal shape,
+        and returns the folded input.
+        """
         # ensure that shape is as expected
-        assert ibuf_normal.shape == self.ishape_normal(ind)
+        if ibuf_normal.shape != self.ishape_normal(ind):
+            raise ValueError(
+                f"Input shape {ibuf_normal.shape} != expected {self.ishape_normal(ind)}"
+            )
         # convert to folded form
         ibuf_folded = ibuf_normal.reshape(self.ishape_folded(ind))
         return ibuf_folded
 
-    def pack_input(self, ibuf_folded, ind=0):
-        """Packs folded input and reverses both SIMD dim and endianness.
-        Gets input data in folded shape and returns packed input data."""
+    def pack_input(self, ibuf_folded: np.ndarray, ind: int = 0) -> np.ndarray:
+        """Pack the folded input, reversing both the SIMD dim and endianness.
+
+        Gets input data in folded shape and returns packed input data.
+        """
         ibuf_packed = finnpy_to_packed_bytearray(
             ibuf_folded,
             self.idt(ind),
@@ -422,9 +431,11 @@ class FINNDMAOverlay(Overlay):
         )
         return ibuf_packed
 
-    def unpack_output(self, obuf_packed, ind=0):
-        """Unpacks the packed output buffer from accelerator.
-        Gets packed output and returns output data in folded shape."""
+    def unpack_output(self, obuf_packed: np.ndarray, ind: int = 0) -> np.ndarray:
+        """Unpack the packed output buffer from the accelerator.
+
+        Gets packed output and returns output data in folded shape.
+        """
         obuf_folded = packed_bytearray_to_finnpy(
             obuf_packed,
             self.odt(ind),
@@ -432,26 +443,29 @@ class FINNDMAOverlay(Overlay):
             reverse_endian=True,
             reverse_inner=True,
         )
-        return obuf_folded
+        return cast("np.ndarray", obuf_folded)
 
-    def unfold_output(self, obuf_folded, ind=0):
-        """Unfolds output data to normal shape.
-        Gets folded output data and returns output data in normal shape."""
+    def unfold_output(self, obuf_folded: np.ndarray, ind: int = 0) -> np.ndarray:
+        """Unfold output data to the normal shape.
+
+        Gets folded output data and returns output data in normal shape.
+        """
         obuf_normal = obuf_folded.reshape(self.oshape_normal(ind))
         return obuf_normal
 
-    def copy_input_data_to_device(self, data, ind=0):
-        """Copies given input data to PYNQ buffer."""
+    def copy_input_data_to_device(self, data: np.ndarray, ind: int = 0) -> None:
+        """Copy the given input data into the PYNQ buffer."""
         np.copyto(self.ibuf_packed_device[ind], data)
         self.ibuf_packed_device[ind].flush()
 
-    def copy_output_data_from_device(self, data, ind=0):
-        """Copies PYNQ output buffer from device."""
+    def copy_output_data_from_device(self, data: np.ndarray, ind: int = 0) -> None:
+        """Copy the PYNQ output buffer back from the device."""
         self.obuf_packed_device[ind].invalidate()
         np.copyto(data, self.obuf_packed_device[ind])
 
-    def execute_on_buffers(self, asynch=False, batch_size=None):
-        """Executes accelerator by setting up the DMA(s) on pre-allocated buffers.
+    def execute_on_buffers(self, asynch: bool = False, batch_size: int | None = None) -> None:
+        """Execute the accelerator by setting up the DMA(s) on pre-allocated buffers.
+
         Blocking behavior depends on the asynch parameter:
         * ``asynch=True`` will block until all transfers are complete.
         * ``asynch=False`` won't block, use ``wait_until_finished()`` to check
@@ -462,12 +476,14 @@ class FINNDMAOverlay(Overlay):
         """
         if batch_size is None:
             batch_size = self.batch_size
-        assert batch_size <= self.batch_size, "Specified batch_size is too large."
+        if batch_size > self.batch_size:
+            raise ValueError(f"Specified batch_size {batch_size} is larger than {self.batch_size}.")
         if self.platform == "zynq-iodma":
             for o in range(self.num_outputs):
-                assert self.odma[o].read(0x00) & 0x4 != 0, "Output DMA %d is not idle" % (o)
+                if self.odma[o].read(0x00) & 0x4 == 0:
+                    raise RuntimeError(f"Output DMA {o} is not idle")
             # manually launch IODMAs since signatures are missing
-            for iwdma, iwbuf, iwdma_name, num_repeats in self.external_weights:
+            for iwdma, iwbuf, _iwdma_name, num_repeats in self.external_weights:
                 iwdma.write(0x10, iwbuf.device_address & 0xFFFFFFFF)
                 iwdma.write(0x14, (iwbuf.device_address >> 32) & 0xFFFFFFFF)
                 iwdma.write(0x1C, batch_size * num_repeats)
@@ -488,20 +504,21 @@ class FINNDMAOverlay(Overlay):
                 self.idma[i].write(0x00, 1)
         elif self.platform == "alveo":
             for o in range(self.num_outputs):
-                assert self.odma_handle[o] is None, "Output DMA %d is already running" % o
+                if self.odma_handle[o] is not None:
+                    raise RuntimeError(f"Output DMA {o} is already running")
             for i in range(self.num_inputs):
                 self.idma[i].start(self.ibuf_packed_device[i], batch_size)
-            for iwdma, iwbuf, iwdma_name, num_repeats in self.external_weights:
+            for iwdma, iwbuf, _iwdma_name, num_repeats in self.external_weights:
                 iwdma.start(iwbuf, batch_size * num_repeats)
             for o in range(self.num_outputs):
                 self.odma_handle[o] = self.odma[o].start(self.obuf_packed_device[o], batch_size)
         else:
-            raise Exception("Unrecognized platform: %s" % self.platform)
+            raise ValueError(f"Unrecognized platform: {self.platform}")
         # blocking behavior depends on asynch parameter
         if asynch is False:
             self.wait_until_finished()
 
-    def wait_until_finished(self):
+    def wait_until_finished(self) -> None:
         """Block until all output DMAs have finished writing."""
         if self.platform == "zynq-iodma":
             # check if output IODMA is finished via register reads
@@ -510,21 +527,25 @@ class FINNDMAOverlay(Overlay):
                 while status & 0x2 == 0:
                     status = self.odma[o].read(0x00)
         elif self.platform == "alveo":
-            assert all([x is not None for x in self.odma_handle]), "No odma_handle to wait on"
+            if not all(x is not None for x in self.odma_handle):
+                raise RuntimeError("No odma_handle to wait on")
             for o in range(self.num_outputs):
                 self.odma_handle[o].wait()
                 self.odma_handle[o] = None
         else:
-            raise Exception("Unrecognized platform: %s" % self.platform)
+            raise ValueError(f"Unrecognized platform: {self.platform}")
 
-    def execute(self, input_npy):
-        """Given a single or a list of input numpy array, first perform necessary
-        packing and copying to device buffers, execute on accelerator, then unpack
-        output and return output numpy array from accelerator."""
+    def execute(self, input_npy: np.ndarray | list[np.ndarray]) -> np.ndarray | list[np.ndarray]:
+        """Run one or more input arrays through the accelerator and return the outputs.
+
+        Performs the necessary packing and copying to device buffers, executes on the
+        accelerator, then unpacks the output.
+        """
         # if single input, convert to list to normalize how we process the input
-        if type(input_npy) is not list:
+        if not isinstance(input_npy, list):
             input_npy = [input_npy]
-        assert self.num_inputs == len(input_npy), "Not all accelerator inputs are specified."
+        if self.num_inputs != len(input_npy):
+            raise ValueError("Not all accelerator inputs are specified.")
         for i in range(self.num_inputs):
             ibuf_folded = self.fold_input(input_npy[i], ind=i)
             ibuf_packed = self.pack_input(ibuf_folded, ind=i)
@@ -540,9 +561,11 @@ class FINNDMAOverlay(Overlay):
             return outputs[0]
         return outputs
 
-    def throughput_test(self, **kwargs):
-        """Run accelerator with empty inputs to measure throughput and other metrics.
-        Returns dictionary with various metrics."""
+    def throughput_test(self, **kwargs: Any) -> dict:  # noqa: ARG002
+        """Run the accelerator with empty inputs to measure throughput and other metrics.
+
+        Returns a dictionary with various metrics.
+        """
         # dictionary for results of throughput test
         res = {}
         start = time.time()
@@ -559,8 +582,8 @@ class FINNDMAOverlay(Overlay):
         for o in range(self.num_outputs):
             total_out += np.prod(self.oshape_packed(o))
         res["DRAM_out_bandwidth[MB/s]"] = total_out * 0.000001 / runtime
-        for iwdma, iwbuf, iwdma_name, num_repeats in self.external_weights:
-            res["DRAM_extw_%s_bandwidth[MB/s]" % iwdma_name] = (
+        for _iwdma, iwbuf, iwdma_name, num_repeats in self.external_weights:
+            res[f"DRAM_extw_{iwdma_name}_bandwidth[MB/s]"] = (
                 self.batch_size * np.prod(iwbuf.shape) * num_repeats * 0.000001 / runtime
             )
         if self.platform == "zynq-iodma":
@@ -612,25 +635,25 @@ class FINNDMAOverlay(Overlay):
         res["unfold_output[ms]"] = runtime * 1000
         return res
 
-    def validate(self, *args, **kwargs):
+    def validate(self, *args: Any, **kwargs: Any) -> None:
         """Validate accelerator accuracy on dataset."""
         from finn_plus_driver.validate import run_validate
 
         validation_dataset = kwargs.get("validation_dataset", self.validation_dataset)
         run_validate(validation_dataset, self, *args, **kwargs)
 
-    def idle(self, *args, **kwargs):
+    def idle(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
         """Run idle for specified time."""
-        runtime = kwargs.get("time")
-        print("Running idle for %d seconds.." % runtime)
+        runtime = kwargs["time"]
+        print(f"Running idle for {int(runtime)} seconds..")
         time.sleep(runtime)
         print("Done.")
 
-    def run_throughput_test(self, *args, **kwargs):
+    def run_throughput_test(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
         """Run throughput test and save report."""
-        report_dir = kwargs.get("report_dir")
+        report_dir = kwargs["report_dir"]
         res = self.throughput_test()
         print(res)
-        reportfile = os.path.join(report_dir, "report_throughput_test.json")
-        with open(reportfile, "w") as f:
+        reportfile = Path(report_dir) / "report_throughput_test.json"
+        with reportfile.open("w") as f:
             json.dump(res, f, indent=2)

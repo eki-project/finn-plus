@@ -92,8 +92,8 @@ than the power of two itself; the dominated steps are removed by ``monotone_step
 
 import bisect
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
 
 from finn.util.resource_models import _clog2, _fifo_cost, _geometry, _resolve
 
@@ -133,17 +133,17 @@ class FIFOCost:
         """RAMB36 equivalents (two RAMB18 tiles each)."""
         return self.bram18 / 2
 
-    def as_tuple(self) -> Tuple[int, int, int, int]:
-        """The vector in :data:`RESOURCES` order."""
+    def as_tuple(self) -> tuple[int, int, int, int]:
+        """Return the vector in :data:`RESOURCES` order."""
         return (self.lut, self.ff, self.bram18, self.uram)
 
-    def as_dict(self) -> Dict[str, int]:
-        """The vector keyed by :data:`RESOURCES`."""
-        return dict(zip(RESOURCES, self.as_tuple()))
+    def as_dict(self) -> dict[str, int]:
+        """Return the vector keyed by :data:`RESOURCES`."""
+        return dict(zip(RESOURCES, self.as_tuple(), strict=True))
 
     def __add__(self, other: "FIFOCost") -> "FIFOCost":
         """Component-wise sum (the cost of several FIFOs)."""
-        return FIFOCost(*(a + b for a, b in zip(self.as_tuple(), other.as_tuple())))
+        return FIFOCost(*(a + b for a, b in zip(self.as_tuple(), other.as_tuple(), strict=True)))
 
     @classmethod
     def from_sequence(cls, values: Sequence[float]) -> "FIFOCost":
@@ -188,7 +188,7 @@ class FIFOGeometry:
         return self.style in ("block", "ultra")
 
 
-def _check(depth: int, width: int, style: str):
+def _check(depth: int, width: int, style: str) -> None:
     """Validate the arguments common to every function here."""
     if style not in STYLES:
         raise ValueError(f"unknown ram_style {style!r}, expected one of {STYLES}")
@@ -198,8 +198,13 @@ def _check(depth: int, width: int, style: str):
         raise ValueError(f"depth must not be negative, got {depth}")
 
 
-def resolve_style(depth: int, width: int, requested_style: str = "auto", versal: bool = False):
-    """The storage style ``fifo.sv`` elaborates for a request (``RAM_STYLE_EFF``).
+def resolve_style(
+    depth: int,
+    width: int,
+    requested_style: str = "auto",
+    versal: bool = False,  # noqa: ARG001 - API symmetry, fifo.sv cannot see the part
+) -> str:
+    """Return the storage style ``fifo.sv`` elaborates for a request (``RAM_STYLE_EFF``).
 
     Mirrors ``fifo.sv``'s ladder exactly: a depth of at most 33 is always a shift register
     (``srl``), then an explicit request is honoured, ``auto`` takes a shift register up to 64
@@ -214,7 +219,7 @@ def resolve_style(depth: int, width: int, requested_style: str = "auto", versal:
 
 
 def geometry(depth: int, width: int, style: str = "auto", versal: bool = False) -> FIFOGeometry:
-    """The ``fifo.sv`` layout of a FIFO: resolved style, capacity and memory decomposition.
+    """Return the ``fifo.sv`` layout of a FIFO: resolved style, capacity and memory decomposition.
 
     Reads off ``fifo.sv``: ``DEPTH_IMPL = DEPTH > 4 ? DEPTH-1 : 4`` for the shift path (one
     slot lives in the output register, minimum four stages), ``MEM_SIZE = 2**clog2(DEPTH-1)``
@@ -287,26 +292,26 @@ def ff_estimate(geom: FIFOGeometry) -> int:
       recursive depth-17 shift FIFO whose own occupancy monitor is unconnected and trimmed:
       ``Ptr`` (5), ``Rdy``, ``Vld``, ``B`` (``W``).
     """
-    W = geom.width
+    w = geom.width
     ff = 2 * geom.count_width
     if geom.style == "srl":
-        return ff + (_clog2(geom.srl_depth) + 1) + 2 + W
+        return ff + (_clog2(geom.srl_depth) + 1) + 2 + w
     if geom.style == "distributed":
         abits = _clog2(geom.depth - 1)
-        return ff + 2 * abits + 2 * (abits + 1) + 1 + W
+        return ff + 2 * abits + 2 * (abits + 1) + 1 + w
     ptr_width = geom.abits_lo + (1 if geom.abits_hi else 0)
     ff += 2 * ptr_width + 2 * (_clog2(geom.mem_impl) + 1) + geom.pipe_depth
     absorbed = 2 if geom.style == "ultra" else 1
-    ff += max(geom.pipe_depth - absorbed, 0) * W
+    ff += max(geom.pipe_depth - absorbed, 0) * w
     if geom.abits_hi:
-        ff += geom.pipe_depth + W
+        ff += geom.pipe_depth + w
     if geom.style == "ultra":
-        ff += (_clog2(geom.qdepth + 1) + 1) + 5 + 2 + W
+        ff += (_clog2(geom.qdepth + 1) + 1) + 5 + 2 + w
     return ff
 
 
 def fifo_cost(depth: int, width: int, style: str = "auto", versal: bool = False) -> FIFOCost:
-    """The primitives a ``fifo.sv`` instance of this depth, width and requested style costs.
+    """Return the primitives a ``fifo.sv`` instance of this depth, width and requested style costs.
 
     ``width`` is the padded stream width (a multiple of 8 for AXI streams,
     ``get_instream_width_padded()``), the width the RTL is instantiated with. LUT, RAMB18 and
@@ -331,7 +336,12 @@ def fifo_cost(depth: int, width: int, style: str = "auto", versal: bool = False)
 # --------------------------------------------------------------------------------------
 
 
-def _change_candidates(width: int, max_depth: int, style: str, versal: bool) -> List[int]:
+def _change_candidates(
+    width: int,  # noqa: ARG001 - the candidates do not depend on the width
+    max_depth: int,
+    style: str,
+    versal: bool,  # noqa: ARG001 - nor on the part
+) -> list[int]:
     """Every depth ``d`` at which ``fifo_cost(d) != fifo_cost(d - 1)`` can possibly hold.
 
     The fitted model and the RTL geometry depend on the depth only through a few integer
@@ -368,8 +378,8 @@ def _change_candidates(width: int, max_depth: int, style: str, versal: bool) -> 
 
 def cost_steps(
     width: int, max_depth: int, style: str = "auto", versal: bool = False
-) -> List[Tuple[int, FIFOCost]]:
-    """The cost ladder up to ``max_depth``: ``(largest depth of the step, cost)`` per step.
+) -> list[tuple[int, FIFOCost]]:
+    """Return the cost ladder up to ``max_depth``: ``(largest depth of the step, cost)`` per step.
 
     Consecutive depths with the same cost vector form one step; the list is ascending in
     depth, starts with the step containing :data:`MIN_DEPTH` and ends with the step containing
@@ -380,7 +390,7 @@ def cost_steps(
     _check(max_depth, width, style)
     if max_depth < MIN_DEPTH:
         return []
-    steps: List[Tuple[int, FIFOCost]] = []
+    steps: list[tuple[int, FIFOCost]] = []
     current = fifo_cost(MIN_DEPTH, width, style, versal)
     for cand in _change_candidates(width, max_depth, style, versal):
         cost = fifo_cost(cand, width, style, versal)
@@ -393,8 +403,8 @@ def cost_steps(
 
 def cost_breakpoints(
     width: int, max_depth: int, style: str = "auto", versal: bool = False
-) -> List[int]:
-    """The depths at which the cost vector changes: the largest depth of every step.
+) -> list[int]:
+    """Return the depths at which the cost vector changes: the largest depth of every step.
 
     This is the candidate set of a depth search: a depth strictly inside a step costs the
     same as the step's largest depth and is never preferable. ``max_depth`` is always the last
@@ -408,7 +418,7 @@ def cost_breakpoints(
 # --------------------------------------------------------------------------------------
 
 
-def capacity_weights(lut: int, ff: int, bram18: int, uram: int) -> Dict[str, float]:
+def capacity_weights(lut: int, ff: int, bram18: int, uram: int) -> dict[str, float]:
     """Weights that express every primitive in LUT equivalents of a device's capacity.
 
     ``weight[r] = lut / capacity[r]``: a FIFO's scalar cost is then the sum over the
@@ -428,15 +438,15 @@ def capacity_weights(lut: int, ff: int, bram18: int, uram: int) -> Dict[str, flo
 #: sizing target) from ``finn.util.platforms.ZU7EV_Platform``: 230000 LUTs, 460000 FFs,
 #: 610 RAMB18, 92 URAM288, i.e. 1 RAMB18 = 377 LUTs and 1 URAM288 = 2500 LUTs.
 #: :func:`device_weights` derives the same for another part.
-DEFAULT_WEIGHTS: Dict[str, float] = capacity_weights(230000, 460000, 610, 92)
+DEFAULT_WEIGHTS: dict[str, float] = capacity_weights(230000, 460000, 610, 92)
 
 
 def _device_of_part(fpgapart: str) -> str:
-    """The device of a part name (``xczu28dr-ffvg1517-2-e`` -> ``xczu28dr``)."""
+    """Return the device of a part name (``xczu28dr-ffvg1517-2-e`` -> ``xczu28dr``)."""
     return fpgapart.split("-")[0].lower()
 
 
-def device_weights(fpgapart: Optional[str] = None, board: Optional[str] = None):
+def device_weights(fpgapart: str | None = None, board: str | None = None) -> dict[str, float]:
     """Capacity weights of a target, from ``finn.util.platforms``; the defaults otherwise.
 
     Looks the board up in the platform table (``platforms.platforms``), or, failing that, any
@@ -464,7 +474,7 @@ def device_weights(fpgapart: Optional[str] = None, board: Optional[str] = None):
     return weights
 
 
-def scalarize(cost: FIFOCost, weights: Optional[Dict[str, float]] = None) -> float:
+def scalarize(cost: FIFOCost, weights: dict[str, float] | None = None) -> float:
     """Collapse a cost vector into one number: the weighted sum over the primitives.
 
     The default weighting (:data:`DEFAULT_WEIGHTS`) charges each primitive the fraction of
@@ -478,13 +488,13 @@ def scalarize(cost: FIFOCost, weights: Optional[Dict[str, float]] = None) -> flo
     itself stays available for a different consolidation.
     """
     w = DEFAULT_WEIGHTS if weights is None else weights
-    return sum(w.get(r, 0.0) * v for r, v in zip(RESOURCES, cost.as_tuple()))
+    return sum(w.get(r, 0.0) * v for r, v in zip(RESOURCES, cost.as_tuple(), strict=True))
 
 
 def monotone_steps(
-    steps: Sequence[Tuple[int, FIFOCost]], weights: Optional[Dict[str, float]] = None
-) -> List[Tuple[int, FIFOCost]]:
-    """The steps of a ladder that no deeper step undercuts under the given weights.
+    steps: Sequence[tuple[int, FIFOCost]], weights: dict[str, float] | None = None
+) -> list[tuple[int, FIFOCost]]:
+    """Return the steps of a ladder that no deeper step undercuts under the given weights.
 
     The scalar cost of ``fifo.sv`` is not monotone in the depth (a URAM FIFO just above 2028
     can be cheaper than the BRAM FIFO just below, a power-of-two BRAM depth cheaper than the
@@ -495,9 +505,9 @@ def monotone_steps(
     depths are these; :func:`realize_depth` maps any other depth onto them.
     """
     scalars = [scalarize(c, weights) for _, c in steps]
-    kept: List[Tuple[int, FIFOCost]] = []
+    kept: list[tuple[int, FIFOCost]] = []
     best = math.inf
-    for (depth, cost), scalar in zip(reversed(steps), reversed(scalars)):
+    for (depth, cost), scalar in zip(reversed(steps), reversed(scalars), strict=True):
         if scalar < best:
             kept.append((depth, cost))
             best = scalar
@@ -510,10 +520,10 @@ def realize_depth(
     width: int,
     style: str = "auto",
     versal: bool = False,
-    weights: Optional[Dict[str, float]] = None,
-    max_depth: Optional[int] = None,
+    weights: dict[str, float] | None = None,
+    max_depth: int | None = None,
 ) -> int:
-    """The depth to build for a FIFO that needs at least ``depth``: the cheapest at or above.
+    """Return the depth to build for a FIFO that needs at least ``depth``: the cheapest at or above.
 
     Searches ``[depth, max_depth]`` (default: up to the next larger power of two times four,
     enough to reach the next URAM step) for the smallest scalar cost and returns the largest
@@ -535,8 +545,8 @@ def realize_depth(
 # --------------------------------------------------------------------------------------
 
 
-def cost_table(width: int, max_depth: int, style: str = "auto", versal: bool = False) -> Dict:
-    """The ladder of one FIFO as plain JSON data: ``{"width", "ram_style", "steps"}``.
+def cost_table(width: int, max_depth: int, style: str = "auto", versal: bool = False) -> dict:
+    """Return the ladder of one FIFO as plain JSON data: ``{"width", "ram_style", "steps"}``.
 
     ``steps`` is ``[[largest depth of the step, [lut, ff, bram18, uram]], ...]`` in
     :data:`RESOURCES` order, as :func:`cost_steps` returns it. ``MakePYNQDriver`` writes one

@@ -37,7 +37,7 @@ from finn.transformation.streamline.collapse_repeated import CollapseRepeatedMul
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 
 
-def step_mobilenet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_mobilenet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Streamline a MobileNet model, optionally verifying the result afterward."""
     model = model.transform(Streamline())
     additional_streamline_transformations = [
@@ -61,13 +61,13 @@ def step_mobilenet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(GiveReadableTensorNames())
         model = model.transform(InferDataTypes())
 
-    if VerificationStepType.STREAMLINED_PYTHON in cfg._resolve_verification_steps():
+    if VerificationStepType.STREAMLINED_PYTHON in cfg._resolve_verification_steps():  # noqa: SLF001
         verify_step(model, cfg, "streamlined_python", need_parent=False)
 
     return model
 
 
-def step_mobilenet_lower_convs(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_mobilenet_lower_convs(model: ModelWrapper, _cfg: DataflowBuildConfig) -> ModelWrapper:
     """Lower convolutions to matrix multiplications for a MobileNet model."""
     model = model.transform(LowerConvsToMatMul())
     model = model.transform(absorb.AbsorbTransposeIntoMultiThreshold())
@@ -80,7 +80,9 @@ def step_mobilenet_lower_convs(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
-def step_mobilenet_convert_to_hw_layers(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_mobilenet_convert_to_hw_layers(
+    model: ModelWrapper, _cfg: DataflowBuildConfig
+) -> ModelWrapper:
     """Convert MobileNet model layers to hardware-specific operations."""
     model = model.transform(InferPool())
     model = model.transform(InferConvInpGen())
@@ -94,11 +96,12 @@ def step_mobilenet_convert_to_hw_layers(model: ModelWrapper, cfg: DataflowBuildC
     return model
 
 
-def step_mobilenet_slr_floorplan(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_mobilenet_slr_floorplan(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Apply SLR floorplanning to a MobileNet model when targeting Vitis Alveo."""
     if cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
         try:
-            from finnexperimental.analysis.partitioning import partition
+            # finnexperimental is an optional dependency, not always installed
+            from finnexperimental.analysis.partitioning import partition  # type: ignore
 
             # apply partitioning of the model, restricting the first and last layers
             # to SLR0
@@ -119,7 +122,9 @@ def step_mobilenet_slr_floorplan(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
-def step_mobilenet_convert_to_hw_layers_separate_th(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_mobilenet_convert_to_hw_layers_separate_th(
+    model: ModelWrapper, _cfg: DataflowBuildConfig
+) -> ModelWrapper:
     """Convert MobileNet model layers to hardware operations, keeping thresholding separate."""
     model = model.transform(InferPool())
     model = model.transform(InferConvInpGen())

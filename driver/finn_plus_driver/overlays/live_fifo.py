@@ -3,7 +3,6 @@
 import json
 import math
 import matplotlib.pyplot as plt
-import os
 import random
 import time
 import warnings
@@ -27,6 +26,8 @@ from finn_plus_driver.overlays.fifo_search import (
     search_result_to_dict,
 )
 from finn_plus_driver.overlays.instrumentation import FINNInstrumentationOverlay
+from pathlib import Path
+from typing import Any
 
 # Ring opcodes of the virtual FIFO gauge (finn-rtllib/fifo_virtual/hdl/fifo_gauge_pkg.sv)
 OP_NOP = 0x00
@@ -270,17 +271,17 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
     def __init__(
         self,
-        bitfile_name,
-        platform="zynq-iodma",
-        fclk_mhz=100.0,
-        device=None,
-        download=True,
-        seed=1,
-        fifo_widths=dict(),
-        folding_config=None,
-        fifo_cost_tables=None,
-        **kwargs,
-    ):
+        bitfile_name: str,
+        platform: str = "zynq-iodma",
+        fclk_mhz: float = 100.0,
+        device: Any = None,
+        download: bool = True,
+        seed: int = 1,
+        fifo_widths: dict | None = None,
+        folding_config: dict | None = None,
+        fifo_cost_tables: dict | None = None,
+        **kwargs: Any,  # noqa: ARG002
+    ) -> None:
         """Initialize live FIFO overlay.
 
         ``fifo_widths``, ``folding_config`` and ``fifo_cost_tables`` come from the
@@ -298,7 +299,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         )
 
         self.error = False
-        self.fifo_widths = fifo_widths
+        self.fifo_widths = {} if fifo_widths is None else fifo_widths
         self.num_fifos = len(self.fifo_widths)
         self.fifo_cost_tables = fifo_cost_tables
 
@@ -328,42 +329,47 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # We expect no additional FINN SDPs with AXI-Lite, such as runtime-writable weights
         if len(self.ip_dict.keys()) != 4:
             print(
-                "Error: # of AXI-Lite interfaces (%d) does not match expected number of 4."
-                % (len(self.ip_dict.keys()))
+                f"Error: # of AXI-Lite interfaces ({len(self.ip_dict)}) "
+                f"does not match expected number of 4."
             )
             self.error = True
-        if "fifo_controller_0" not in self.ip_dict.keys():
+        if "fifo_controller_0" not in self.ip_dict:
             print("Error: fifo_controller_0 AXI-Lite interface not found.")
             self.error = True
 
-    def ctrl_read(self, opcode=0x00, fifo_id=0x0000, check_success=False):
+    def ctrl_read(
+        self, opcode: int = 0x00, fifo_id: int = 0x0000, check_success: bool = False
+    ) -> int:
         """Read a value from the FIFO controller via AXI-Lite."""
         address = (fifo_id << 8) | opcode
         # Shift by 2 because FIFO controller operates on word addresses
         response = self.fifo_controller_0.read(offset=(address << 2))
         if check_success and response != opcode:
             print(
-                "Error: FIFO controller returned 0x%02x instead of expected 0x%02x."
-                % (response, opcode)
+                f"Error: FIFO controller returned 0x{response:02x} "
+                f"instead of expected 0x{opcode:02x}."
             )
             self.error = True
         return response
 
-    def ctrl_write(self, opcode=0x00, fifo_id=0x0000, value=0x00000000):
+    def ctrl_write(
+        self, opcode: int = 0x00, fifo_id: int = 0x0000, value: int = 0x00000000
+    ) -> None:
         """Write a value to the FIFO controller via AXI-Lite."""
         address = (fifo_id << 8) | opcode
         # Shift by 2 because FIFO controller operates on word addresses
         self.fifo_controller_0.write(offset=(address << 2), value=value)
 
-    def ctrl_set_depth(self, fifo_id, depth=2):
+    def ctrl_set_depth(self, fifo_id: int, depth: int = 2) -> None:
         """Set FIFO depth via WRITE_FILL instruction."""
         # Issue WRITE_FILL instruction (asynchronous, returns immediately)
         self.ctrl_write(opcode=OP_WRITE_FILL, fifo_id=fifo_id, value=depth)
         # Read to confirm controller has returned to idle state
         self.ctrl_read(check_success=True)
 
-    def configure_fifos_bounded(self, depths):
+    def configure_fifos_bounded(self, depths: int | list[int]) -> None:
         """Configure all FIFOs with bounded depths.
+
         Caller can supply a list of depths or a single depth for all FIFOs.
         """
         if isinstance(depths, (list, tuple)):
@@ -414,7 +420,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         )
         return self.hw_capabilities
 
-    def run_detached(self):
+    def run_detached(self) -> int:
         """Run FIFOs in detached mode to determine bottleneck period."""
         self.reset_accelerator()
 
@@ -434,7 +440,9 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         print("DEBUG: COMP_PERIOD completed")
         return max_period
 
-    def run_paced(self, throttle_interval=0, runtime_s=1):
+    def run_paced(
+        self, throttle_interval: int = 0, runtime_s: float = 1
+    ) -> tuple[list[int], int, int]:
         """Run FIFOs in paced mode to determine the unbounded peak occupancies.
 
         Returns the peak occupancy of every FIFO and the latency and interval of the last
@@ -449,11 +457,11 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.start_accelerator(throttle_interval=throttle_interval)
         time.sleep(runtime_s)
         (
-            overflow_err,
-            underflow_err,
-            frame,
-            checksum,
-            min_latency,
+            _overflow_err,
+            _underflow_err,
+            _frame,
+            _checksum,
+            _min_latency,
             latency,
             interval,
             *_,
@@ -465,14 +473,13 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         return max_occupancy, latency, interval
 
-    def total_fifo_size(self, depths):
+    def total_fifo_size(self, depths: list[int]) -> float:
         """Calculate total FIFO size in kB."""
         # Assuming FIFO SDP/AXI-Lite interfaces are ordered consistently with FIFO IDs
         total_size_bits = 0
         for i, depth in enumerate(depths):
             total_size_bits += (depth + self.fifo_depth_offset) * self.fifo_widths[str(i)]
-        total_size_kB = total_size_bits / 8.0 / 1000.0
-        return total_size_kB
+        return total_size_bits / 8.0 / 1000.0
 
     def fifo_width_list(self):
         """FIFO widths in bits as a list indexed by FIFO ID."""
@@ -696,14 +703,14 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
     def size_iteratively_binary_search(
         self,
-        start_depth,
-        iteration_runtime,
-        throttle_interval=0,
-        fifo_order_strategy="largest_first",
-        stop_condition="both",
-        relaxation=0.0,
-    ):
-        """Iteratively reduce FIFO depths using binary search to find minimum for each FIFO.
+        start_depth: int | list[int],
+        iteration_runtime: float,
+        throttle_interval: int = 0,
+        fifo_order_strategy: str = "largest_first",
+        stop_condition: str = "both",
+        relaxation: float = 0.0,
+    ) -> dict:
+        """Reduce FIFO depths iteratively via binary search to find the minimum for each FIFO.
 
         Kept for compatibility: this is ``run_fifo_search`` with the ``binary_<order>``
         strategy and returns the same dict as before (plus the ``search`` summary).
@@ -775,7 +782,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             ax2.legend(loc="upper center")
 
         plt.tight_layout()
-        plt.savefig(os.path.join(report_dir, "fifo_sizing_graph.png"), dpi=300)
+        plt.savefig(Path(report_dir) / "fifo_sizing_graph.png", dpi=300)
         plt.close(fig)
 
     def generate_search_graph(self, search_log, report_dir):
@@ -813,7 +820,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         )
         ax.legend(loc="upper right")
         plt.tight_layout()
-        plt.savefig(os.path.join(report_dir, "fifo_sizing_graph.png"), dpi=300)
+        plt.savefig(Path(report_dir) / "fifo_sizing_graph.png", dpi=300)
         plt.close(fig)
 
     def experiment_fifosizing(self, *args, **kwargs):
@@ -869,13 +876,13 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # Create subdirectory for this search strategy + stop condition. report_name lets
         # several variants of one strategy (e.g. different seeds) keep separate reports.
         report_name = kwargs.get("report_name") or search_strategy
-        report_dir = os.path.join(base_report_dir, report_name, stop_condition)
-        os.makedirs(report_dir, exist_ok=True)
-        reportfile = os.path.join(report_dir, "report_experiment_fifosizing.json")
+        report_dir = str(Path(base_report_dir) / report_name / stop_condition)
+        Path(report_dir).mkdir(parents=True, exist_ok=True)
+        reportfile = Path(report_dir) / "report_experiment_fifosizing.json"
 
         print("---PHASE 1: RUN_DETACHED---")
         max_period = self.run_detached()
-        print("MEASURED MAX PERIOD: %d cycles" % max_period)
+        print(f"MEASURED MAX PERIOD: {max_period} cycles")
 
         print("---PHASE 2: RUN_PACED---")
         # TODO: Use better heuristic for runtime?
@@ -1094,7 +1101,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             size = (depth + self.fifo_depth_offset) * self.fifo_widths[str(fifo)]
             fifo_report["fifo_depths"][fifo] = depth + self.fifo_depth_offset
             fifo_report["fifo_sizes"][fifo] = size
-        with open(os.path.join(report_dir, "fifo_sizing_report.json"), "w") as f:
+        with (Path(report_dir) / "fifo_sizing_report.json").open("w") as f:
             json.dump(fifo_report, f, indent=2)
 
         # Export measured FIFO settings for use by the follow-up FINN build.
@@ -1105,18 +1112,18 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         }
         tables = (self.fifo_cost_tables or {}).get("fifos", {})
         for fifo, depth in enumerate(fifo_depths):
-            fifo_name = "StreamingFIFO_rtl_%d" % fifo
+            fifo_name = f"StreamingFIFO_rtl_{fifo}"
             final_depth = depth + self.fifo_depth_offset
             fifo_config["fifo_depths"][fifo_name] = final_depth
             fifo_config["impl_style"][fifo_name] = "rtl"
             # the style the cost tables were computed for (the node's ram_style at build time)
             fifo_config["ram_style"][fifo_name] = tables.get(str(fifo), {}).get("ram_style", "auto")
-        with open(os.path.join(report_dir, "fifo_config.json"), "w") as f:
+        with (Path(report_dir) / "fifo_config.json").open("w") as f:
             json.dump(fifo_config, f, indent=2)
 
         if self.folding_config is None:
             raise ValueError("Live FIFO sizing requires folding_config in settings.json.")
-        with open(os.path.join(report_dir, "folding_config.json"), "w") as f:
+        with (Path(report_dir) / "folding_config.json").open("w") as f:
             json.dump(self.folding_config, f, indent=2)
 
         # Generate the usual instrumentation performance report based on final state
@@ -1138,7 +1145,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             "min_pipeline_depth": round(min_latency / interval, 2) if interval != 0 else 0,
             "pipeline_depth": round(latency / interval, 2) if interval != 0 else 0,
         }
-        with open(reportfile, "w") as f:
+        with reportfile.open("w") as f:
             json.dump(report, f, indent=2)
 
         print("Done.")

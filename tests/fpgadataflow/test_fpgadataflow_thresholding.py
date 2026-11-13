@@ -37,7 +37,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
-from qonnx.util.basic import gen_finn_dt_tensor
+from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
@@ -684,3 +684,44 @@ def test_fpgadataflow_thresholding_data_layout(num_input_vecs, num_input_channel
     y_produced = oxe.execute_onnx(model, input_dict)[model.get_first_global_out()]
 
     assert (y_produced.astype(np.float32) == y_expected.astype(np.float32)).all()
+
+
+@pytest.mark.fpgadataflow
+def test_infer_thresholding_bipolar_out_scale():
+    """An exported bipolar MultiThreshold (out_scale=2, out_bias=-1, as at the
+    output of the cybsec MLP) converts to a standalone Thresholding layer with
+    ActVal=0 and a BIPOLAR output (0/1 stream encoding), same as the fused MVAU
+    conversion, and executes identically."""
+    from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
+
+    ch, n = 8, 4
+    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [n, ch])
+    outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [n, ch])
+    thresh = helper.make_tensor_value_info("thresh", TensorProto.FLOAT, [ch, 1])
+    node = helper.make_node(
+        "MultiThreshold",
+        ["inp", "thresh"],
+        ["outp"],
+        domain="qonnx.custom_op.general",
+        out_dtype="BIPOLAR",
+        out_bias=-1.0,
+        out_scale=2.0,
+        data_layout="NC",
+    )
+    graph = helper.make_graph([node], "bipolar_thr", [inp], [outp], value_info=[thresh])
+    model = ModelWrapper(qonnx_make_model(graph, producer_name="bipolar-thr"))
+    model.set_tensor_datatype("inp", DataType["INT8"])
+    model.set_tensor_datatype("thresh", DataType["INT8"])
+    model.set_tensor_datatype("outp", DataType["BIPOLAR"])
+    model.set_initializer("thresh", np.random.randint(-64, 64, (ch, 1)).astype(np.float32))
+    x = gen_finn_dt_tensor(DataType["INT8"], (n, ch))
+    y_ref = oxe.execute_onnx(model, {"inp": x})["outp"]
+    assert set(np.unique(y_ref)) <= {-1.0, 1.0}
+
+    model = model.transform(InferThresholdingLayer())
+    assert model.graph.node[0].op_type == "Thresholding"
+    inst = getCustomOp(model.graph.node[0])
+    assert inst.get_nodeattr("ActVal") == 0
+    assert inst.get_output_datatype() == DataType["BIPOLAR"]
+    y = oxe.execute_onnx(model, {"inp": x})["outp"]
+    assert np.array_equal(y, y_ref)
