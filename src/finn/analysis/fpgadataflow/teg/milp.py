@@ -368,7 +368,7 @@ def build_instance(
 
 
 def _decode(inst: MILPInstance, x: np.ndarray) -> tuple[dict[str, int], dict[str, int]]:
-    """Selected nominal depths and capacities of a solution vector."""
+    """Decode the selected nominal depths and capacities of a solution vector."""
     depths: dict[str, int] = {}
     caps: dict[str, int] = {}
     for name in inst.external_edges:

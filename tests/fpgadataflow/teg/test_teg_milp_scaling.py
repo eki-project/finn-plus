@@ -270,7 +270,7 @@ def test_milp_scaling_table() -> None:
 
 
 def _recipe(dut: str) -> dict:
-    """The dut recipe of the bench flow."""
+    """Load the dut recipe of the bench flow."""
     import yaml
     from importlib.resources import files
 
@@ -281,7 +281,7 @@ _GRAPHS: dict[str, ModelWrapper] = {}
 
 
 def dry_run_graph(name: str) -> ModelWrapper:
-    """The dataflow graph of regression model ``name`` after folding and bit-width
+    """Build the dataflow graph of regression model ``name`` after folding and bit-width
     minimisation, with data width converters inserted and layers specialised: the input of
     the TEG builder, built without Vivado (cached per test process)."""
     if name in _GRAPHS:
@@ -327,7 +327,7 @@ def dry_run_graph(name: str) -> ModelWrapper:
     if sdp:
         model = ModelWrapper(getCustomOp(sdp[0]).get_nodeattr("model"))
     model = model.transform(InsertDWC())
-    model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
+    model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))  # noqa: SLF001
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
     _GRAPHS[name] = model
@@ -335,7 +335,7 @@ def dry_run_graph(name: str) -> ModelWrapper:
 
 
 def load_plan() -> dict:
-    """The experiment plan from ``MILP_SCALING_PLAN`` (preset name or file)."""
+    """Load the experiment plan from ``MILP_SCALING_PLAN`` (preset name or file)."""
     spec = os.environ.get("MILP_SCALING_PLAN", "smoke")
     if spec in PRESETS:
         return PRESETS[spec]

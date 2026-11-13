@@ -76,7 +76,7 @@ _LIB_ERROR: str | None = None
 
 # ----------------------------------------------------------------------------- compilation
 def _compiler() -> str | None:
-    """The C++ compiler to build the simulator with, or None."""
+    """Return the C++ compiler to build the simulator with, or None."""
     return shutil.which("g++") or shutil.which("clang++")
 
 
@@ -368,7 +368,7 @@ def flatten(model: TEGModel) -> _Flat:
 
 # ----------------------------------------------------------------------------- run
 def _ptr(a: np.ndarray) -> ctypes.POINTER:  # type: ignore[type-arg]
-    """ctypes pointer to a contiguous array (a dummy element for empty arrays)."""
+    """Return a ctypes pointer to a contiguous array (a dummy element for empty arrays)."""
     if a.size == 0:
         a = np.zeros(1, dtype=a.dtype)
     return a.ctypes.data_as(POINTER(c_double if a.dtype == np.float64 else c_int64))

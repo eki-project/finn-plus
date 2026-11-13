@@ -78,7 +78,7 @@ DEFAULT_MILP_CALIBRATION = (1.2e-7, 1.7)
 
 
 def _orders(cfg: DataflowBuildConfig) -> list[MinimizationOrder]:
-    """The minimisation orders named in the build configuration."""
+    """Parse the minimisation orders named in the build configuration."""
     names = cast("list[str]", cfg.teg_minimization_orders)
     try:
         return [MinimizationOrder[n] for n in names]

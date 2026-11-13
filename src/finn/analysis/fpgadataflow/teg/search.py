@@ -237,8 +237,11 @@ def minimize_depths(
     max_cycles = math.ceil(sim_cycles * 1.05) + 10 * len(ext)
 
     def make_oracle(current: dict[str, int], edge: str) -> Callable[[int], tuple[bool, bool]]:
-        """Oracle for ``minimize_fifo_depth``: does ``edge`` at a given depth keep the target
-        interval (and does the simulation finish) with all other depths as in ``current``?"""
+        """Build the oracle of ``minimize_fifo_depth``.
+
+        It answers whether ``edge`` at a given depth keeps the target interval (and whether
+        the simulation finishes) with all other depths as in ``current``.
+        """
 
         def test_depth(depth: int) -> tuple[bool, bool]:
             nonlocal simulations

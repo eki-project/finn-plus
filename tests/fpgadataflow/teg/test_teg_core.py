@@ -578,8 +578,8 @@ def _freeze_model(ports: int = 1) -> TEGModel:
 
 
 def _mvu_lock_model(sf: int, nf: int, n_vectors: int = 6) -> TEGModel:
-    """The RTL MVU template (replay register, output lock with threshold, lead, freeze and
-    thaw delays) between a Bernoulli source and a bursty sink over direct edges."""
+    """Build the RTL MVU template (replay register, output lock with threshold, lead, freeze
+    and thaw delays) between a Bernoulli source and a bursty sink over direct edges."""
     from finn.analysis.fpgadataflow.teg.templates.mvau_rtl import mvu_rtl
 
     m = TEGModel()
@@ -664,7 +664,7 @@ def test_milp_gurobi_backend() -> None:
         target,
         cands,
         solver="gurobi",
-        on_incumbent=lambda d, c, obj, bnd, t: incumbents.append(obj),
+        on_incumbent=lambda _d, _c, obj, _bnd, _t: incumbents.append(obj),
         on_progress=progress.append,
         progress_interval=0.0,
     )

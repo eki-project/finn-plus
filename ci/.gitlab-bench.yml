@@ -299,8 +299,11 @@ QoR Model Fitting:
     - job: Result Collection
   script:
     # Isolated venv: the runner's system packages are outdated (e.g. jinja2) and the
-    # scikit-learn version must match pyproject.toml so the pickled models load in builds
-    - python3.10 -m venv qor-venv
+    # scikit-learn version must match pyproject.toml so the pickled models load in builds.
+    # LOCAL_QOR_PYTHON (project variable) selects the interpreter of the QoR jobs: the
+    # runner's system python3.10 cannot be relied on to create a venv (no working ensurepip
+    # since the runner's OS upgrade), so the variable points to a standalone build there.
+    - ${LOCAL_QOR_PYTHON:-python3.10} -m venv qor-venv
     - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9'
     - |
       export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
@@ -327,7 +330,8 @@ QoR End2End Report:
   needs:
     - job: Result Collection
   script:
-    - python3.10 -m venv qor-venv
+    # Interpreter: see QoR Model Fitting
+    - ${LOCAL_QOR_PYTHON:-python3.10} -m venv qor-venv
     - qor-venv/bin/pip install --quiet 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'jinja2>=3.1.2'
     - |
       qor-venv/bin/python ci/qor/end2end_report.py --output-dir qor_e2e_artifacts \

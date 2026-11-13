@@ -521,19 +521,6 @@ def globalaccpool_hls(
     return flp_loop(prefix, its, loop_params(node))
 
 
-# ---------------------------------------------------------------------------- ReplicateStream
-@register("ReplicateStream", "hls")
-def replicate_stream_hls(
-    node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]
-) -> OpModel:
-    """``replicate_stream_hls.py::docompute``: one flp loop over all folded elements, one read
-    and one blocking write to every replica per iteration (zero skew tolerance between the
-    outputs, see the inventory: class A2)."""
-    n = int(np.prod(node.get_folded_output_shape()[:-1]))
-    its: list[Iteration] = [((in_edges[0],), tuple(out_edges))] * n
-    return flp_loop(prefix, its, loop_params(node))
-
-
 # ---------------------------------------------------------------------------- 1:1 loops
 def _one_to_one(
     node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]

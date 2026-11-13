@@ -82,6 +82,7 @@ def register(op_type: str, backend: str) -> Callable[[TemplateBuilder], Template
     """Register the decorated builder for ``(op_type, backend)``."""
 
     def deco(fn: TemplateBuilder) -> TemplateBuilder:
+        """Register ``fn`` and return it unchanged."""
         _REGISTRY[(op_type, backend)] = fn
         return fn
 

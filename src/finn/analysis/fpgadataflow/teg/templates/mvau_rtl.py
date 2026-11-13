@@ -117,7 +117,7 @@ def core_pipeline_depth(version: int, simd: int, segmentlen: int) -> int:
     return 3 + clog2(simd + 1) + (1 if simd == 1 else 0)
 
 
-def core_latency(version: int, simd: int, segmentlen: int, int8_core: bool) -> int:
+def core_latency(simd: int, segmentlen: int, int8_core: bool) -> int:
     """Cycles from the core consuming the last word of a fold to its result (``vld``).
 
     ``mvu.sv:242`` for the generic core, ``mvu_vvu_8sx9_dsp58.sv:100-110`` for the DSP58 INT8
@@ -248,7 +248,7 @@ def mvau_rtl(node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list
     version = params.get("VERSION", 1)
     segmentlen = params.get("SEGMENTLEN", 0)
     int8 = uses_int8_core(params)
-    depth = core_latency(version, simd, segmentlen, int8)
+    depth = core_latency(simd, segmentlen, int8)
     queue = core_pipeline_depth(version, simd, segmentlen) + 1
     m = mvu_rtl(prefix, in_edges[0], out_edges[0], reps, sf, nf, depth, queue)
     m.notes.update(

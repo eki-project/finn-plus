@@ -49,7 +49,6 @@ import math
 import re
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from finn.analysis.fpgadataflow.teg.from_onnx import build_model, depths_to_fifo_config, edge_widths
@@ -72,6 +71,7 @@ from finn.util.logging import log
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from qonnx.core.modelwrapper import ModelWrapper
 
@@ -122,7 +122,7 @@ def synthetic_chain(n: int, burst: int = 8) -> TEGModel:
 
 
 def chain_instance(n: int, burst: int = 8) -> ScalingInstance:
-    """The synthetic chain with ``n`` tokens per frame."""
+    """Build the synthetic chain instance with ``n`` tokens per frame."""
     teg = synthetic_chain(n, burst)
     cands = {e: [(d, d) for d in CHAIN_DEPTHS] for e in teg.external_edges}
     return ScalingInstance(f"chain n={n}", "chain", teg, teg.bottleneck_interval(), cands)
@@ -155,8 +155,8 @@ def model_candidates(
 
 
 def prefix_graph(model: ModelWrapper, n_nodes: int) -> ModelWrapper:
-    """The first ``n_nodes`` nodes of a dataflow graph as a model of their own (the tensors
-    that fed the dropped nodes become graph outputs)."""
+    """Cut a dataflow graph down to its first ``n_nodes`` nodes (the tensors that fed the
+    dropped nodes become graph outputs)."""
     import copy
 
     from onnx import helper
@@ -401,8 +401,10 @@ def summarize(out_dir: Path, default_fit: tuple[float, float] = (1.2e-7, 1.7)) -
     lines = [
         f"fit on {len(pts)} optimal solves: t = {a:.3g} * n^{b:.2f} (n = constraint rows)",
         "",
-        "| instance | kind | constraints | variables | binaries | events/frame | solve | status "
-        "| verified | extrapolated |",
+        (
+            "| instance | kind | constraints | variables | binaries | events/frame | solve "
+            "| status | verified | extrapolated |"
+        ),
         "|---|---|---:|---:|---:|---:|---:|---|---|---:|",
     ]
     for r in table:

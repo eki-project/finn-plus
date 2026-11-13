@@ -132,7 +132,7 @@ def dwc_down(prefix: str, n_in: int, k: int, in_edge: str, out_edge: str) -> OpM
 def dwc_generic(
     prefix: str, n_in: int, n_out: int, pi0: int, po0: int, in_edge: str, out_edge: str
 ) -> OpModel:
-    """Generic converter (``vpc.sv:genGeneric``): element FIFO of ``CAP`` elements.
+    """Model the generic converter (``vpc.sv:genGeneric``): element FIFO of ``CAP`` elements.
 
     Widths are normalised by their gcd: an input beat deposits ``pi0`` elements, an output beat
     takes ``po0``. ``ovld`` (``F >= po0``) and ``irdy`` (``F <= CAP - pi0``) are derived from

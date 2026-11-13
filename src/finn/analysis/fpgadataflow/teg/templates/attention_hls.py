@@ -128,6 +128,7 @@ def _process(
     external_out: set[str],
     internal_out: set[str],
 ) -> OpModel:
+    """Build one dataflow process of the attention region as a pipelined loop."""
     params.top_level = False
     params.dataflow = True
     return flp_loop(
@@ -160,6 +161,7 @@ def attention_hls(
     row_bubble = ROW_BUBBLE.get(embfold, ROW_BUBBLE_DEFAULT)
 
     def e(name: str) -> str:
+        """Prefix an internal edge or chain name with the node's prefix."""
         return f"{prefix}.{name}"
 
     models: list[OpModel] = []
