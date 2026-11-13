@@ -48,6 +48,12 @@ namespace lsp {
             "CHUNK_INDEX_WIDTH must be log2(CHUNKS_PER_BEAT)"
         );
 
+        // Largest frame on the CMAC AXI Stream: L2 header plus MTU, without the FCS (appended and
+        // stripped by the CMAC). The L2 padding is part of the MTU, so it adds nothing.
+        constexpr int MAX_FRAME_BYTES = MAX_ETHERNET_HEADER_LENGTH_BYTES + ETHERNET_MTU;
+        // Beats of the largest frame, e.g. for FIFOs holding a whole frame and frame descriptors
+        constexpr int MAX_BEATS_PER_FRAME = (MAX_FRAME_BYTES * 8 + BEAT_WIDTH - 1) / BEAT_WIDTH;
+
         // "Enum" values
         static const ap_uint<FRAME_TYPE_WIDTH> FRAME_DATA = 0;
         static const ap_uint<FRAME_TYPE_WIDTH> FRAME_CREDIT_ACK = 1;
@@ -142,7 +148,8 @@ namespace lsp {
         template<int BW, int Offset, int W, int... Ws>
         void unpackFrom(const ap_uint<BW>& source, ap_uint<W>& data, ap_uint<Ws>&... datas) {
             static_assert(Offset + W <= BW, "Unpacked data exceeds the source width");
-            // TODO
+            data = source.range(Offset + W - 1, Offset);
+            unpackFrom<BW, Offset + W>(source, datas...);
         }
 
         /** Serial-number comparison for wrapping FSNs and credit counters: true if
@@ -293,6 +300,13 @@ namespace lsp {
     namespace data {
         using lsp::constants::BEAT_WIDTH;
 
+        // Width of a data segment header, one chunk
+        constexpr int SEGMENT_HEADER_WIDTH = 64;
+        // Largest payload a segment can carry: a segment never crosses a beat, so at most
+        // the rest of the beat behind its header. Every segment fits into this width, whatever its
+        // stream's word width
+        constexpr int MAX_SEGMENT_PAYLOAD_WIDTH = BEAT_WIDTH - SEGMENT_HEADER_WIDTH;
+
         // Data segment as it is on the wire
         template<int PayloadWidth>
         struct lsp_data_segment_t {
@@ -305,7 +319,7 @@ namespace lsp {
             // PAYLOAD
             ap_uint<PayloadWidth> payload;
 
-            static constexpr int HEADER_WIDTH = 64;
+            static constexpr int HEADER_WIDTH = SEGMENT_HEADER_WIDTH;
             static constexpr int PAYLOAD_WIDTH = PayloadWidth;
             static constexpr int WIDTH = HEADER_WIDTH + PayloadWidth;
 
@@ -318,7 +332,10 @@ namespace lsp {
             /** Unpack a segment from its packed representation. Inverse of `pack()`. */
             static lsp_data_segment_t unpack(const ap_uint<WIDTH>& bits) {
                 lsp_data_segment_t segment;
-                // TODO
+                helpers::unpackFrom<WIDTH, 0>(
+                    bits, segment.stream, segment.validBytesLastChunk, segment.chunks, segment._reserved,
+                    segment.payload
+                );
                 return segment;
             }
 
@@ -336,6 +353,11 @@ namespace lsp {
                 "Payload width must be a multiple of the chunk size"
             );
         };
+
+        /** Segment of the largest possible size: exactly one beat. The receiver unpacks every segment
+        into this type, because its stream (and with it the word width) is only known at runtime. */
+        using max_segment_t = lsp_data_segment_t<MAX_SEGMENT_PAYLOAD_WIDTH>;
+        static_assert(max_segment_t::WIDTH == BEAT_WIDTH, "A max size segment must fill exactly one beat");
 
         /** Pack a beat for a data frame: the protocol header (if given), followed by the given segments,
         * starting at bit `Offset` (e.g. to leave room for Ethernet / Ethernet+UDP headers).
@@ -366,50 +388,19 @@ namespace lsp {
         * segments are chunk aligned: aligning by it costs an 8:1 mux instead of a full barrel shifter.
         * Pass it as `chunk_offset_t{n}`: a plain `{n}` selects the bit offset overloads. */
         struct chunk_offset_t {
-            ap_uint<lsp::constants::CHUNK_INDEX_WIDTH> index;
+            ap_uint<clog2(constants::CHUNKS_PER_BEAT + 1)> index;
         };
 
-        /** Because the matching stream/width of the data is required at compile time but is only known
-        at runtime, we first create the largest possible segment and then narrow it down
-        by dispatching it into the correct slot in lsp_segment_set_t.
-
-        `aligned` is expected to have the data segment header at bit 0!
-        */
-        inline lsp_data_segment_t<BEAT_WIDTH> _unpackMaxSizeSegment(const ap_uint<BEAT_WIDTH>& aligned) {
-            using MaxSegment = lsp_data_segment_t<BEAT_WIDTH>;
-            constexpr int STREAM_OFFSET = 0;
-            constexpr int VALID_BYTES_OFFSET = STREAM_OFFSET + AP_WIDTH(MaxSegment::stream);
-            constexpr int CHUNKS_OFFSET = VALID_BYTES_OFFSET + AP_WIDTH(MaxSegment::validBytesLastChunk);
-            constexpr int RESERVED_OFFSET = CHUNKS_OFFSET + AP_WIDTH(MaxSegment::chunks);
-            constexpr int PAYLOAD_OFFSET = RESERVED_OFFSET + AP_WIDTH(MaxSegment::_reserved);
-            static_assert(
-                PAYLOAD_OFFSET == MaxSegment::HEADER_WIDTH,
-                "Field offsets must cover exactly the segment header"
-            );
-
-            MaxSegment segment;
-            segment.stream = aligned.range(VALID_BYTES_OFFSET - 1, STREAM_OFFSET);
-            segment.validBytesLastChunk = aligned.range(CHUNKS_OFFSET - 1, VALID_BYTES_OFFSET);
-            segment.chunks = aligned.range(RESERVED_OFFSET - 1, CHUNKS_OFFSET);
-            segment._reserved = aligned.range(PAYLOAD_OFFSET - 1, RESERVED_OFFSET);
-            segment.payload = aligned.range(BEAT_WIDTH - 1, PAYLOAD_OFFSET);
-            return segment;
-        }
-
         /** Unpack the max size segment whose header starts at bit `offset`. The runtime bit shift
-        * synthesizes to a full barrel shifter, so only use this for segments that are not chunk aligned. */
-        inline lsp_data_segment_t<BEAT_WIDTH> unpackFromOffsetIntoMaxSizeSegment(
-            const ap_uint<BEAT_WIDTH>& data,
-            int offset
-        ) {
-            return _unpackMaxSizeSegment(data >> offset);
+        * synthesizes to a full barrel shifter, so only use this for segments that are not chunk aligned.
+        * Bits behind the end of the beat read as 0. */
+        inline max_segment_t unpackMaxSizeSegment(const ap_uint<BEAT_WIDTH>& data, int offset) {
+            return max_segment_t::unpack(data >> offset);
         }
 
-        /** Unpack the max size segment whose header starts at chunk `offset.index`. */
-        inline lsp_data_segment_t<BEAT_WIDTH> unpackFromOffsetIntoMaxSizeSegment(
-            const ap_uint<BEAT_WIDTH>& data,
-            chunk_offset_t offset
-        ) {
+        /** Unpack the max size segment whose header starts at chunk `offset.index`. Bits behind the end
+        * of the beat read as 0. */
+        inline max_segment_t unpackMaxSizeSegment(const ap_uint<BEAT_WIDTH>& data, chunk_offset_t offset) {
             // One constant shift per possible chunk index, selected by an 8:1 mux
             ap_uint<BEAT_WIDTH> aligned = 0;
             for (int i = 0; i < lsp::constants::CHUNKS_PER_BEAT; ++i) {
@@ -418,83 +409,15 @@ namespace lsp {
                     aligned = data >> (i * lsp::constants::CHUNK_SIZE_BITS);
                 }
             }
-            return _unpackMaxSizeSegment(aligned);
+            return max_segment_t::unpack(aligned);
         }
-
-
-        /** This struct is used as a bridge between the AXI streams from/to the user and the wire. Since
-        * the number and width of streams is known at compile time, but the order and choice of data segments
-        * only at runtime, we need a compatible dispatch between them.
-
-        The `set` method receives already built data segments. This can be done because no matter
-        which stream the data will be dispatched to, it can at max be as large as a BEAT. Thus we can simply
-        construct the largest possible data segment and afterwards bit slice the correct range.
-        */
-        template<int... Ws>
-        struct lsp_segment_set_t {
-            std::tuple<lsp_data_segment_t<Ws>...> segments;
-
-            // Flag to see if the data was read yet
-            bool read[sizeof...(Ws)];
-
-            // Initialize all read fields to true, so that data can be overwritten at the start.
-            lsp_segment_set_t() {
-                for (size_t i = 0; i < sizeof...(Ws); i++) {
-                    read[i] = true;
-                }
-            }
-
-            /** Write the correct data segment. This is useful to narrow down the size from BEAT width
-            to the actual width. Every stream on the user kernel has one matching lsp data segment. */
-            void set(const lsp_data_segment_t<BEAT_WIDTH>& data) {
-                setAll(data, std::make_index_sequence<sizeof...(Ws)>{});
-            }
-
-            /** The same as the set() overload with lsp_data_segment_t, but with the raw data.
-            For data only beats set offset to 0, for beats with the protocol header, skip the protocol
-            header by setting the offset accordingly. */
-            void set(const ap_uint<BEAT_WIDTH>& data, int offset) {
-                set(unpackFromOffsetIntoMaxSizeSegment(data, offset));
-            }
-
-            /** The same as set() with a bit offset, but with a chunk offset. Prefer this one for chunk
-            aligned segments, see chunk_offset_t. */
-            void set(const ap_uint<BEAT_WIDTH>& data, chunk_offset_t offset) {
-                set(unpackFromOffsetIntoMaxSizeSegment(data, offset));
-            }
-
-            private:
-            /** Set the data segment matching the stream ID from the data */
-            template<std::size_t... Is>
-            void setAll(const lsp_data_segment_t<BEAT_WIDTH>& data, std::index_sequence<Is...>) {
-                // C++14 replacement for a fold expression: calls setIf<Is> for every index in order
-                int expanded[] = {0, (setIf<Is>(data), 0)...};
-                (void) expanded;
-            }
-
-            /** Set the data segment if the stream ID of the supplied segment matches. */
-            template<std::size_t I>
-            void setIf(const lsp_data_segment_t<BEAT_WIDTH>& data) {
-                using Segment = std::tuple_element_t<I, decltype(segments)>;
-                static_assert(Segment::WIDTH <= BEAT_WIDTH, "Data segment does not fit into one beat");
-                auto& selected = std::get<I>(segments);
-                if (data.stream == I) {
-                    read[I] = false;
-                    selected.stream = data.stream;
-                    selected.validBytesLastChunk = data.validBytesLastChunk;
-                    selected.chunks = data.chunks;
-                    selected._reserved = data._reserved;
-                    selected.payload = data.payload.range(Segment::PAYLOAD_WIDTH - 1, 0);
-                }
-            }
-        };
 
 
         /** Helper to determine the result of a ring buffer update. */
         enum class lsp_stream_ring_buffer_update_result : unsigned char {
             SEGMENT_READ,
             SENDER_BLOCKED,
-            OUTDATED_SEGMENT,
+            UNKNOWN_STREAM,
             BUFFER_FULL,
             INVALID_CHUNK_BYTEMASK,
             UNEXPECTED_ERROR
@@ -520,6 +443,8 @@ namespace lsp {
             ap_uint<PointerWidth> writePointer = 0;
             ap_uint<PointerWidth> bufferSize = 0;      // Current usage. Not capacity.
             ap_uint<clog2(StreamWidth + 1)> inWordPointer = 0;
+            ap_uint<constants::CREDIT_LIMIT_WIDTH> creditLimit = Depth;
+            ap_uint<constants::CREDIT_LIMIT_WIDTH> lastCreditLimitSent = Depth;
 
             // ap_uint's default constructor leaves the value uninitialized, so `= {}` would not zero it
             lsp_stream_ring_buffer_t() {
@@ -528,117 +453,107 @@ namespace lsp {
                 }
             }
 
-            /** Return the available credits (free spaces in the buffer). */
-            ap_uint<PointerWidth> getAvailableCredits() const {
-                return Depth - bufferSize;
+            /** Return whether a credit limit update is due (if more than half of the buffer was freed.) */
+            bool creditLimitUpdateDue() {
+                return (creditLimit - lastCreditLimitSent) >= (Depth / 2);
             }
 
-            /**
-            Update the ring buffer with the data.
-            If there is no space in the buffer, this does nothing.
-            The caller should update all ring buffers always from the set,
-            as soon as new data arrives it is buffered. If there is no space the
-            data does not get invalidated.
-            */
-            template<int... Ws>
-            lsp_stream_ring_buffer_update_result updateFrom(lsp_segment_set_t<Ws...>& set) {
-                static_assert(StreamIndex < sizeof...(Ws), "Stream index out of range for segment set.");
-                auto& segment = std::get<StreamIndex>(set.segments);
+            /** Set internal memory of the last limit sent and return the limit to be sent
+            to the sender via a CREDIT update. */
+            ap_uint<constants::CREDIT_LIMIT_WIDTH> creditUpdate() {
+                lastCreditLimitSent = creditLimit;
+                return creditLimit;
+            }
 
+            template<int PayloadWidth>
+            lsp_stream_ring_buffer_update_result updateFrom(const lsp_data_segment_t<PayloadWidth>& segment) {
                 // Figure out how wide a pointer into the segments payload needs to be
-                constexpr size_t PAYLOAD_WIDTH = std::remove_reference_t<decltype(segment)>::PAYLOAD_WIDTH;
+                constexpr size_t PAYLOAD_WIDTH = PayloadWidth;
                 constexpr size_t SegmentPointerWidth = clog2(PAYLOAD_WIDTH + 1);
 
-                // Only append if this segment wasn't read yet
-                if (!set.read[StreamIndex]) {
-                    if (segment.chunks == 0) {
-                        // According to spec this indicates a BLOCKED message from the sender,
-                        // requiring a credit update.
-                        set.read[StreamIndex] = true;
-                        return lsp_stream_ring_buffer_update_result::SENDER_BLOCKED;
+                if (segment.chunks == 0) {
+                    // According to spec this indicates a BLOCKED message from the sender,
+                    // requiring a credit update.
+                    return lsp_stream_ring_buffer_update_result::SENDER_BLOCKED;
+                }
+                if (bufferSize != Depth) {
+                    // Calculate the number of bits to read:
+                    // Chunks * CHUNK_SIZE, then a number of bytes determined by the validBytesLastChunk field
+                    size_t bitsToRead = (
+                        (segment.chunks - 1) * constants::CHUNK_SIZE_BITS
+                        + segment.validBytesLastChunk * 8
+                    );
+
+                    // Some safety checks
+                    if (segment.validBytesLastChunk > 8 || segment.validBytesLastChunk < 1) {
+                        return lsp_stream_ring_buffer_update_result::INVALID_CHUNK_BYTEMASK;
                     }
-                    if (bufferSize != Depth) {
-                        // Calculate the number of bits to read:
-                        // Chunks * CHUNK_SIZE, then a number of bytes determined by the validBytesLastChunk field
-                        size_t bitsToRead = (
-                            (segment.chunks - 1) * constants::CHUNK_SIZE_BITS
-                            + segment.validBytesLastChunk * 8
+                    // Only catches more chunks than any beat holds. The exact limit, the rest of
+                    // the beat behind the header, is checked by the parser, which knows
+                    // where the header sits
+                    if (bitsToRead > PAYLOAD_WIDTH) {
+                        return lsp_stream_ring_buffer_update_result::UNEXPECTED_ERROR;
+                    }
+
+                    // For space computation
+                    const size_t expectedWordsToRead = ((inWordPointer + bitsToRead) + StreamWidth - 1) / StreamWidth;
+                    // Form comptime loop unrolling
+                    constexpr size_t MaxWordsToRead = (PAYLOAD_WIDTH + StreamWidth - 1) / StreamWidth + 1;
+
+                    if (expectedWordsToRead > (Depth - bufferSize)) {
+                        // No space to write all words, so nothing is written.
+                        // IMPORTANT: This should never happen because the credit system should
+                        // prevent the sender from emitting too many frames.
+                        return lsp_stream_ring_buffer_update_result::BUFFER_FULL;
+                    }
+
+                    // We have enough space to write all words, so we can simply advance the pointer
+                    // as much as required.
+                    ap_uint<SegmentPointerWidth> inSegmentPointer = 0;
+                    for (size_t it = 0; it < MaxWordsToRead; it++) {
+#pragma HLS PIPELINE II=1
+                        // If more than the rest of the word is left write exactly that much.
+                        // If less is left just write and advance the pointer.
+                        size_t toWrite = std::min<size_t>(StreamWidth - inWordPointer, bitsToRead);
+                        buffer[writePointer].range(
+                            inWordPointer + toWrite - 1, inWordPointer
+                        ) = segment.payload.range(
+                            inSegmentPointer + toWrite - 1, inSegmentPointer
                         );
 
-                        // Some safety checks
-                        if (segment.validBytesLastChunk > 8 || segment.validBytesLastChunk < 1) {
-                            set.read[StreamIndex] = true;
-                            return lsp_stream_ring_buffer_update_result::INVALID_CHUNK_BYTEMASK;
-                        }
-                        if (bitsToRead > PAYLOAD_WIDTH) {
-                            set.read[StreamIndex] = true;
-                            return lsp_stream_ring_buffer_update_result::UNEXPECTED_ERROR;
-                        }
+                        // Always move the inSegmentPointer
+                        inSegmentPointer += toWrite;
 
-                        // For space computation
-                        const size_t expectedWordsToRead = ((inWordPointer + bitsToRead) + StreamWidth - 1) / StreamWidth;
-                        // Form comptime loop unrolling
-                        constexpr size_t MaxWordsToRead = (PAYLOAD_WIDTH + StreamWidth - 1) / StreamWidth + 1;
-
-                        if (expectedWordsToRead > (Depth - bufferSize)) {
-                            // No space to write all words, so for now return and wait until
-                            // enough words can be written at once.
-                            // IMPORTANT: This should never happen because the credit system should
-                            // prevent the sender from emitting too many frames.
-                            return lsp_stream_ring_buffer_update_result::BUFFER_FULL;
-                        }
-
-                        // We have enough space to write all words, so we can simply advance the pointer
-                        // as much as required.
-                        ap_uint<SegmentPointerWidth> inSegmentPointer = 0;
-                        for (size_t it = 0; it < MaxWordsToRead; it++) {
-#pragma HLS PIPELINE II=1
-                            // If more than the rest of the word is left write exactly that much.
-                            // If less is left just write and advance the pointer.
-                            size_t toWrite = std::min<size_t>(StreamWidth - inWordPointer, bitsToRead);
-                            buffer[writePointer].range(
-                                inWordPointer + toWrite - 1, inWordPointer
-                            ) = segment.payload.range(
-                                inSegmentPointer + toWrite - 1, inSegmentPointer
-                            );
-
-                            // Always move the inSegmentPointer
-                            inSegmentPointer += toWrite;
-
-                            // Only move the writePointer if we crossed a word boundary
-                            if (inWordPointer + toWrite >= StreamWidth) {
-                                // Avoid modulo here (HLS)
-                                if (++writePointer == Depth) {
-                                    writePointer = 0;
-                                }
-
-                                // We can advance without a check because we already
-                                // saw above that there is enough space.
-                                bufferSize++;
-                            }
-
-                            // Always move the inWordPointer, regardless of word boundaries
+                        // Only move the writePointer if we crossed a word boundary
+                        if (inWordPointer + toWrite >= StreamWidth) {
                             // Avoid modulo here (HLS)
-                            inWordPointer += toWrite;
-                            if (inWordPointer > StreamWidth - 1) {
-                                inWordPointer -= StreamWidth;
+                            if (++writePointer == Depth) {
+                                writePointer = 0;
                             }
 
-                            // Update bits to read
-                            bitsToRead -= toWrite;
-
-                            // Jump out if we are done
-                            if (bitsToRead == 0) {
-                                break;
-                            }
+                            // We can advance without a check because we already
+                            // saw above that there is enough space.
+                            bufferSize++;
                         }
-                        // Only if all words in that segment were written do we mark it as read
-                        set.read[StreamIndex] = true;
-                        return lsp_stream_ring_buffer_update_result::SEGMENT_READ;
+
+                        // Always move the inWordPointer, regardless of word boundaries
+                        // Avoid modulo here (HLS)
+                        inWordPointer += toWrite;
+                        if (inWordPointer > StreamWidth - 1) {
+                            inWordPointer -= StreamWidth;
+                        }
+
+                        // Update bits to read
+                        bitsToRead -= toWrite;
+
+                        // Jump out if we are done
+                        if (bitsToRead == 0) {
+                            break;
+                        }
                     }
-                    return lsp_stream_ring_buffer_update_result::BUFFER_FULL;
+                    return lsp_stream_ring_buffer_update_result::SEGMENT_READ;
                 }
-                return lsp_stream_ring_buffer_update_result::OUTDATED_SEGMENT;
+                return lsp_stream_ring_buffer_update_result::BUFFER_FULL;
             }
 
             /** Try to write one word into the user stream. The write is non-blocking, so that a full user
@@ -653,6 +568,7 @@ namespace lsp {
                         readPointer = 0;
                     }
                     bufferSize--;
+                    creditLimit++;
                 }
             }
         };
@@ -684,6 +600,46 @@ namespace lsp {
         using lsp_stream_ring_buffers_t = typename _lsp_stream_ring_buffers<
             std::make_index_sequence<sizeof...(StreamWidths)>, Depths, StreamWidths...
         >::type;
+
+        /** Implementation of visitRing: one call of `f` per ring, only the matching one enabled. */
+        template<typename Rings, typename F, typename R, size_t... Is>
+        R _visitRing(Rings& rings, unsigned index, F& f, R result, std::index_sequence<Is...>) {
+            #pragma HLS inline
+            // C++14 replacement for a fold expression: checks every ring index in order
+            int expanded[] = {0, (index == Is ? (result = f(std::get<Is>(rings)), 0) : 0)...};
+            (void) expanded;
+            return result;
+        }
+
+        /** Call `f` with the ring buffer at runtime position `index` of an lsp_stream_ring_buffers_t
+        and return its result, or `fallback` if no ring has that index. Every ring has its own type,
+        so a runtime index cannot return a reference; `f` is a generic lambda instead, and its result
+        type must be the same for every ring, e.g.
+            visitRing(rings, stream, [](auto& ring) { return ring.getAvailableCredits(); }, 0u)
+        In hardware every ring gets its own copy of `f`, only the matching one enabled: no
+        multiplexer in front of the rings, one behind them for the result. */
+        template<typename... Rings, typename F, typename R>
+        R visitRing(std::tuple<Rings...>& rings, unsigned index, F f, R fallback) {
+            #pragma HLS inline
+            return _visitRing(rings, index, f, fallback, std::index_sequence_for<Rings...>{});
+        }
+
+        /** Append a segment to the ring buffer of its stream: ring I (of an lsp_stream_ring_buffers_t)
+        takes the segments whose stream ID is I, see #75 for the numbering. A stream ID without a ring
+        returns UNKNOWN_STREAM. */
+        template<typename... Rings, int PayloadWidth>
+        lsp_stream_ring_buffer_update_result dispatchSegment(
+            std::tuple<Rings...>& rings,
+            const lsp_data_segment_t<PayloadWidth>& segment
+        ) {
+            #pragma HLS inline
+            return visitRing(
+                rings,
+                segment.stream,
+                [&segment](auto& ring) { return ring.updateFrom(segment); },
+                lsp_stream_ring_buffer_update_result::UNKNOWN_STREAM
+            );
+        }
 
     }
 

@@ -12,26 +12,58 @@ using namespace lsp::receiver;
 // takeNewer replaces expectedFSN and gapOpen, and keeps a pending ackNow
 int testCtrlStatus() {
     bool failed = false;
-    ctrl_status_t held;
+    using status_t = ctrl_status_t<2>;
+    status_t held;
     assert_with_flag(held.expectedFSN == 0 && !held.gapOpen && !held.ackNow, failed,
         "Default status should be FSN 0 without gap and pending ACK.");
 
     // A newer status replaces all held values
-    held.takeNewer(ctrl_status_t{5, true, true});
+    held.takeNewer(status_t{5, true, true});
     assert_with_flag(held.expectedFSN == 5, failed, "expectedFSN = " << held.expectedFSN << ", expected 5.");
     assert_with_flag(held.gapOpen, failed, "gapOpen should be taken from the newer status.");
     assert_with_flag(held.ackNow, failed, "ackNow should be taken from the newer status.");
 
     // States are replaced, a pending ackNow stays set
-    held.takeNewer(ctrl_status_t{7, false, false});
+    held.takeNewer(status_t{7, false, false});
     assert_with_flag(held.expectedFSN == 7, failed, "expectedFSN = " << held.expectedFSN << ", expected 7.");
     assert_with_flag(!held.gapOpen, failed, "A closed gap should replace the open one.");
     assert_with_flag(held.ackNow, failed, "A pending ackNow should stay set until it is cleared.");
 
     // Once the controller_tx cleared ackNow after sending the ACK, it stays cleared
     held.ackNow = false;
-    held.takeNewer(ctrl_status_t{7, false, false});
+    held.takeNewer(status_t{7, false, false});
     assert_with_flag(!held.ackNow, failed, "A cleared ackNow should stay cleared.");
+
+    // Credit: limits are states and replaced, changed is an event and merged until cleared
+    auto withCredit = [](unsigned limit0, unsigned limit1, unsigned changed) {
+        status_t status{7, false, false};
+        status.limit[0] = limit0;
+        status.limit[1] = limit1;
+        status.changed = changed;
+        return status;
+    };
+    assert_eq_with_flag(held.limit[0], 0, failed, "Default limit of stream 0");
+    assert_eq_with_flag(held.limit[1], 0, failed, "Default limit of stream 1");
+    assert_eq_with_flag(held.changed, 0, failed, "Default changed mask");
+    assert_eq_with_flag(held.creditAckNow(), false, failed, "creditAckNow without ACK or credit due");
+
+    held.takeNewer(withCredit(100, 200, 0b01));
+    assert_eq_with_flag(held.limit[0], 100, failed, "Limit of stream 0 after the first update");
+    assert_eq_with_flag(held.limit[1], 200, failed, "Limit of stream 1 after the first update");
+    assert_eq_with_flag(held.changed, 0b01, failed, "changed after the first update");
+    assert_eq_with_flag(held.creditAckNow(), true, failed, "creditAckNow with credit due");
+
+    held.takeNewer(withCredit(150, 250, 0b10));
+    assert_eq_with_flag(held.limit[0], 150, failed, "Limit of stream 0 after the second update");
+    assert_eq_with_flag(held.limit[1], 250, failed, "Limit of stream 1 after the second update");
+    assert_eq_with_flag(held.changed, 0b11, failed, "changed should merge pending streams");
+
+    // Once the controller_tx cleared changed after sending the CREDIT_ACK, it stays cleared
+    held.changed = 0;
+    held.takeNewer(withCredit(160, 260, 0));
+    assert_eq_with_flag(held.limit[0], 160, failed, "Limit of stream 0 without credit due");
+    assert_eq_with_flag(held.changed, 0, failed, "A cleared changed mask should stay cleared");
+    assert_eq_with_flag(held.creditAckNow(), false, failed, "creditAckNow after clearing");
     return failed ? 1 : 0;
 }
 

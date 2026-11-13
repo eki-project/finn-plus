@@ -7,7 +7,7 @@
 
 namespace lsp {
     namespace receiver {
-        // TODO: template<typename Peers> controller_tx(egress, egressFrames, ringBuffers, ctrlStatus)
+        // TODO: template<typename Peers> controller_tx(egress, egressFrames, ctrlStatus)
     }
 }
 #endif  // LSP_RECEIVER_CONTROLLER_TX_HPP

@@ -10,16 +10,19 @@ namespace lsp {
     namespace receiver {
         using beat_t = ap_axiu<constants::BEAT_WIDTH, 1, 0, 0>;
 
-        // Number of beats of the largest frame (MTU plus L2 header). A CMAC side FIFO has to hold at
-        // least one whole frame: CMAC RX cannot be paused, and CMAC TX must not see a gap in a frame.
-        constexpr size_t CMAC_BEAT_BUFFER = (
-            (ETHERNET_MTU + MAX_ETHERNET_HEADER_LENGTH_BYTES) * 8 + constants::BEAT_WIDTH - 1
-        ) / constants::BEAT_WIDTH;
+        // Depth of a CMAC side FIFO: it has to hold at least one whole frame, because CMAC RX cannot
+        // be paused and CMAC TX must not see a gap in a frame.
+        constexpr size_t CMAC_BEAT_BUFFER = constants::MAX_BEATS_PER_FRAME;
 
-        /** CTRL status of one connection, sent by the connection to the controller_tx whenever it
-        changes. The controller_tx reads it non-blocking and keeps the newest one per connection (see
-        takeNewer), so the connection never has to wait for the controller_tx. */
+        /** CTRL status of one connection with Streams streams, sent by the connection to the
+        controller_tx whenever it changes. The controller_tx reads it non-blocking and keeps
+        the newest one per connection (see takeNewer), so the connection never has to wait for the
+        controller_tx. The connection decides when credit is due; the controller_tx
+        only copies the limits of the changed streams into the credit records. */
+        template<int Streams>
         struct ctrl_status_t {
+            static_assert(Streams >= 1, "A connection has at least one stream");
+
             // Next expected FSN: the cumulative ACK, and the FSN to NACK while gapOpen is set
             ap_uint<constants::FSN_WIDTH> expectedFSN = 0;
             // A gap was seen at expectedFSN and is still open: NACK it, and again if it stays open
@@ -27,21 +30,91 @@ namespace lsp {
             // Send a CREDIT_ACK at once instead of after the ACK delay, e.g. for an accepted probe or
             // a duplicate frame
             bool ackNow = false;
+            // Absolute credit limit per stream, consumed + ring capacity mod 2^32.
+            // Absolute, not the free space: the sender cannot tell which of its in-flight words a
+            // free count already covers, and a lost absolute limit is repaired by the next one
+            ap_uint<constants::CREDIT_LIMIT_WIDTH> limit[Streams] = {};
+            // Streams whose limit is due in a credit record, e.g. after half a ring was freed or at
+            // once for a BLOCKED stream. Only these limits are sent, so the others may be stale
+            ap_uint<Streams> changed = 0;
 
-            /** Take the values of a newer status. expectedFSN and gapOpen are states, so the newer
-            values replace the held ones. ackNow is an event, so a pending one stays set until the
-            controller_tx has sent the ACK and cleared it. */
+            /** Take the values of a newer status. expectedFSN, gapOpen and the limits are states, so
+            the newer values replace the held ones. ackNow and changed are events, so pending ones stay
+            set until the controller_tx has sent the CREDIT_ACK and cleared them. */
             void takeNewer(const ctrl_status_t& newer) {
                 #pragma HLS inline
                 expectedFSN = newer.expectedFSN;
                 gapOpen = newer.gapOpen;
                 ackNow = ackNow || newer.ackNow;
+                for (int s = 0; s < Streams; ++s) {
+                    #pragma HLS unroll
+                    if (newer.changed.bit(s) == 1) {
+                        limit[s] = newer.limit[s];
+                    }
+                }
+                changed |= newer.changed;
+            }
+
+            /** Whether a CREDIT_ACK must go out at once instead of after the ACK delay: an ACK or a
+            credit update is due. */
+            bool creditAckNow() const {
+                #pragma HLS inline
+                return ackNow || changed != 0;
+            }
+
+            template<typename ...Rings>
+            static ctrl_status_t makeCreditUpdateStatus(
+                ap_uint<constants::FSN_WIDTH> expectedFSN,
+                ap_uint<constants::STREAM_ID_WIDTH> stream,
+                std::tuple<Rings...>& buffers
+            ) {
+                ctrl_status_t<Streams> ctrl;
+                ctrl.ackNow = true;
+                ctrl.expectedFSN = expectedFSN;
+                ctrl.gapOpen = false;
+                // If we specified an invalid stream index do nothing
+                if (stream < Streams) {
+                    ap_uint<Streams> m = 0;
+                    m[stream] = 1;
+                    ctrl.changed = m;
+                }
+                ctrl.limit[stream] = visitRing(
+                    buffers,
+                    stream,
+                    [&](auto& ring){ return ring.creditUpdate(); },
+                    ap_uint<constants::CREDIT_LIMIT_WIDTH>(0)
+                );
+                return ctrl;
+            }
+
+            static ctrl_status_t makeNACKStatus(ap_uint<constants::FSN_WIDTH> expectedFSN) {
+                ctrl_status_t<Streams> ctrl;
+                ctrl.ackNow = false;
+                ctrl.expectedFSN = expectedFSN;
+                ctrl.gapOpen = true;
+                return ctrl;
+            }
+
+            static ctrl_status_t makeACKStatus(ap_uint<constants::FSN_WIDTH> expectedFSN) {
+                ctrl_status_t<Streams> ctrl;
+                ctrl.ackNow = false;
+                ctrl.expectedFSN = expectedFSN;
+                ctrl.gapOpen = false;
+                return ctrl;
+            }
+
+            static ctrl_status_t makeACKNowStatus(ap_uint<constants::FSN_WIDTH> expectedFSN) {
+                ctrl_status_t<Streams> ctrl;
+                ctrl.ackNow = true;
+                ctrl.expectedFSN = expectedFSN;
+                ctrl.gapOpen = false;
+                return ctrl;
             }
         };
 
         // Effectively a dict that maps the MAC addresses of the peers (Peers, an lsp_peers_t) to AXI
         // Streams. These streams are connected to the connecting kernels which read the beats.
-        // This struct strips the ethernet header and only passes LSP header + payload.
+        // Frames are forwarded unchanged; the connection parses the L2 header itself.
         template<typename Peers>
         struct mac_dispatcher {
             // Stream array used to forward data, indexed by connection index

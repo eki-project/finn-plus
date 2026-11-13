@@ -36,18 +36,15 @@ namespace lsp {
 
             hls::stream<beat_t> macStreams[PEERS::N];
 
-            // CTRL status per connection. Read non-blocking by the controller_tx, which keeps the
-            // newest one per connection and attaches it to the next CTRL frame
-            hls::stream<ctrl_status_t> ctrlStatus[PEERS::N];
+            hls::stream<ctrl_status_t<1>> ctrlStatus[PEERS::N];
 
-            lsp_receiver_ring_buffer& ringBuffers[2] = {...};
 
             // Connect the CMAC to the manager and the manager to macStreams
             cmacIngress(fromCMAC, ingress);
             manager<PEERS>(ingress, macStreams);
 
             // TX to send control frames back. Also on its own sends credit updates and ACKs
-            controller_tx<PEERS>(egress, egressFrames, ringBuffers, ctrlStatus);
+            controller_tx<PEERS>(egress, egressFrames, ctrlStatus);
             cmacEgress(egress, egressFrames, toCMAC);
 
             // Connect macstreams to the actual parsers for the devices/connections
