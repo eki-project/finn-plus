@@ -35,6 +35,7 @@ from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.split import StreamingSplit
+from finn.util.data_packing import hls_datatype_str
 
 
 @register_custom_op
@@ -80,11 +81,12 @@ class StreamingSplit_hls(StreamingSplit, HLSBackend):
 
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        input_elem_hls_type = self.get_input_datatype().get_hls_datatype_str()
-        simd = self.simd
-        in_stream = f"hls::stream<hls::vector<{input_elem_hls_type}, {simd}>> &in0_V"
+        input_elem_hls_type = hls_datatype_str(self.get_input_datatype())
+        n_elems = self.get_folded_input_shape()[-1]
+        in_stream = f"hls::stream<tensor<{input_elem_hls_type},{n_elems}>> &in0_V"
         out_streams = ", ".join(
-            f"hls::stream<hls::vector<{input_elem_hls_type}, {simd}>> &out{i}_V"
+            f"hls::stream<tensor<{input_elem_hls_type},{self.get_folded_output_shape(i)[-1]}>> "
+            f"&out{i}_V"
             for i in range(self.get_n_outputs())
         )
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
@@ -93,18 +95,16 @@ class StreamingSplit_hls(StreamingSplit, HLSBackend):
 
     def pragmas(self) -> None:
         """Return pragmas."""
-        # StreamingSplit is a pipelined hlslib function (II=1) called once per token. Without
-        # a dataflow region the (unpipelined) top function executes the call sequentially at
-        # its full latency, i.e. one token per 5 cycles; as a dataflow process it runs free
-        # at one token per cycle, like StreamingDup (see duplicatestreams_hls.py).
-        pragmas = [
-            "#pragma HLS dataflow disable_start_propagation",
-            "#pragma HLS INTERFACE axis port=in0_V",
-        ]
+        pragmas = ["#pragma HLS INTERFACE axis port=in0_V"]
         pragmas += [
             f"#pragma HLS INTERFACE axis port=out{i}_V" for i in range(self.get_n_outputs())
         ]
         pragmas.append("#pragma HLS INTERFACE ap_ctrl_none port=return")
+        # StreamingSplit is a pipelined hlslib function (II=1) called once per token. Without
+        # a dataflow region the (unpipelined) top function executes the call sequentially at
+        # its full latency, i.e. one token per 5 cycles; as a dataflow process it runs free
+        # at one token per cycle, like StreamingDup (see duplicatestreams_hls.py).
+        pragmas.append("#pragma HLS DATAFLOW disable_start_propagation")
         pragmas.append("#pragma HLS aggregate variable=in0_V compact=bit")
         pragmas += [
             f"#pragma HLS aggregate variable=out{i}_V compact=bit"

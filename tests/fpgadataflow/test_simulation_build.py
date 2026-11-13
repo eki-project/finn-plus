@@ -109,7 +109,6 @@ def _make_mvau_rtl(name: str, inp: str, weights: str, out: str) -> NodeProto:
         weightDataType="INT8",
         outputDataType="INT32",
         ActVal=0,
-        binaryXnorMode=0,
         noActivation=1,
         name=name,
     )
@@ -137,8 +136,6 @@ def _make_duplicate_stream(
         inputDataType=data_type,
         numInputVectors=shape,
         preferred_impl_style="hls",
-        cpp_interface="hls_vector",
-        hls_style="freerunning",
         name=name,
     )
 

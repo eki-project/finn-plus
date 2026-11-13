@@ -82,8 +82,6 @@ class InferDuplicateStreamsLayer(Transformation):
                 NumOutputStreams=n_outputs,
                 outFIFODepths=[2] * n_outputs,
                 name="DuplicateStreams_" + output_tensor,
-                cpp_interface="hls_vector",
-                hls_style="freerunning",
             )
 
             graph.node.insert(0, dup_node)
@@ -153,8 +151,6 @@ class InferDuplicateStreamsLayer(Transformation):
                         NumOutputStreams=n_outputs,
                         outFIFODepths=[2] * n_outputs,
                         name="DuplicateStreams_" + node.name,
-                        cpp_interface="hls_vector",
-                        hls_style="freerunning",
                     )
 
                     graph.node.insert(node_ind, dup_node)

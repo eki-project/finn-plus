@@ -10,16 +10,24 @@ Designed to run in GitHub Actions quicktest (no synthesis tools required).
 
 import pytest
 
+import json
 import os
+from onnx import TensorProto, helper
 from pathlib import Path
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import get_ops_in_domain
+from qonnx.transformation.general import GiveUniqueNodeNames
+from qonnx.util.basic import qonnx_make_model
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.res_estimation import res_estimation, res_estimation_complete
+from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import make_build_dir
 
 
@@ -107,6 +115,7 @@ def test_estimate_only_flow_produces_reports():
 
     cfg = build.DataflowBuildConfig(
         output_dir=output_dir,
+        enable_build_pdb_debug=False,
         synth_clk_period_ns=10.0,
         fpga_part="xc7z020clg400-1",
         steps=build_cfg.estimate_only_dataflow_steps,
@@ -119,3 +128,71 @@ def test_estimate_only_flow_produces_reports():
     assert os.path.isfile(
         output_dir + "/report/estimate_network_performance.json"
     ), "estimate_network_performance.json not generated"
+
+
+def _no_synthesis(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202, ARG001
+    """Fail the test if anything tries to generate IP or simulate."""
+    raise AssertionError("heuristic_analytical FIFO sizing must not synthesize or simulate")
+
+
+@pytest.mark.util
+def test_estimate_only_heuristic_analytical_without_synthesis(monkeypatch):
+    """heuristic_analytical sizes FIFOs in an estimate-only build without any tool run.
+
+    A node without a tree model (here a 32->24 bit DWC) is left uncharacterized, is
+    reported, and still gets its FIFOs."""
+    monkeypatch.setattr(HLSBackend, "ipgen_singlenode_code", _no_synthesis)
+    monkeypatch.setattr(HLSBackend, "prepare_rtlsim", _no_synthesis)
+    monkeypatch.setattr(RTLBackend, "prepare_rtlsim", _no_synthesis)
+    monkeypatch.setattr(RTLBackend, "generate_hdl", _no_synthesis)
+
+    # inp -> DWC 8:32 (has a tree model) -> DWC 32:24 (has none) -> outp
+    shape = [1, 8, 24]
+    dwcs = [(8, 32, "inp", "mid"), (32, 24, "mid", "outp")]
+    nodes = [
+        helper.make_node(
+            "StreamingDataWidthConverter_hls",
+            [src],
+            [dst],
+            domain="finn.custom_op.fpgadataflow.hls",
+            backend="fpgadataflow",
+            inShape=shape,
+            outShape=shape,
+            inWidth=inw,
+            outWidth=outw,
+            dataType="INT8",
+        )
+        for inw, outw, src, dst in dwcs
+    ]
+    vi = {
+        t: helper.make_tensor_value_info(t, TensorProto.FLOAT, shape)
+        for t in ["inp", "mid", "outp"]
+    }
+    graph = helper.make_graph(nodes, "dwcs", [vi["inp"]], [vi["outp"]], value_info=[vi["mid"]])
+    model = ModelWrapper(qonnx_make_model(graph, producer_name="dwcs"))
+    for t in vi:
+        model.set_tensor_datatype(t, DataType["INT8"])
+    model = model.transform(GiveUniqueNodeNames())
+
+    output_dir = Path(make_build_dir("test_estimate_heuristic_analytical_"))
+    model_file = output_dir / "model.onnx"
+    model.save(str(model_file))
+    cfg = build_cfg.DataflowBuildConfig(
+        output_dir=output_dir,
+        enable_build_pdb_debug=False,
+        synth_clk_period_ns=10.0,
+        fpga_part="xc7z020clg400-1",
+        # the model already is the hardware graph
+        steps=["step_set_fifo_depths"],
+        generate_outputs=[build_cfg.DataflowOutputType.ESTIMATE_REPORTS],
+        auto_fifo_depths=True,
+        auto_fifo_strategy=build_cfg.AutoFIFOSizingMethod.HEURISTIC_ANALYTICAL,
+    )
+    assert build.build_dataflow_cfg(str(model_file), cfg) == 0, "estimate-only build failed"
+    sized = ModelWrapper(str(output_dir / "intermediate_models" / "step_set_fifo_depths.onnx"))
+    assert any(
+        n.op_type.startswith("StreamingFIFO") for n in sized.graph.node
+    ), "FIFO sizing did not run"
+    with (output_dir / "report" / "fifo_sizing.json").open() as f:
+        report = json.load(f)
+    assert len(report["nodes_without_tree_model"]) == 1

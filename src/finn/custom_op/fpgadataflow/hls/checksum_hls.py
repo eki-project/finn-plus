@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any, cast
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
+from finn.util.data_packing import hls_datatype_str
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
@@ -176,43 +177,41 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
 
     def global_includes(self) -> None:
         """Return global includes."""
-        self.code_gen_dict["$GLOBALS$"] = ['#include "checksum.hpp"']
+        self.code_gen_dict["$GLOBALS$"] = ['#include "checksum.hpp"', '#include "tensor.hpp"']
 
     def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        items_per_word = self.items_per_word
-        words_per_frame = self.words_per_frame
-        word_size = self.get_instream_width()
-        my_defines = []
-        my_defines.append(f"#define WORDS_PER_FRAME {words_per_frame}")
-        my_defines.append(f"#define ITEMS_PER_WORD {items_per_word}")
-        my_defines.append(f"#define WORD_SIZE {word_size}")
-        self.code_gen_dict["$DEFINES$"] = my_defines
+        self.code_gen_dict["$DEFINES$"] = [
+            f"""static constexpr unsigned WORDS_PER_FRAME = {self.words_per_frame};
+            static constexpr unsigned ITEMS_PER_WORD = {self.items_per_word};
+            static constexpr unsigned WORD_SIZE = {self.get_instream_width()};"""
+        ]
 
     def read_npy_data(self) -> None:
         """Return read npy data."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
-        dtype = self.get_input_datatype()
-        packed_bits = self.get_instream_width()
-        packed_hls_type = f"ap_uint<{packed_bits}>"
-        elem_hls_type = dtype.get_hls_datatype_str()
         npy_type = "float"
         npy_in = f"{code_gen_dir}/input_0.npy"
         self.code_gen_dict["$READNPYDATA$"] = []
-        # note: the innermost dim is reversed for the input
         self.code_gen_dict["$READNPYDATA$"].append(
-            f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, {npy_type}>"
-            f'("{npy_in}", in0_V, false);'
+            f'npy2tensorstream<{npy_type}>("{npy_in}", in0_V);'
         )
 
     def strm_decl(self) -> None:
         """Return strm decl."""
+        elem_hls_type = hls_datatype_str(self.get_input_datatype())
+        i_n = self.get_folded_input_shape()[-1]
+        o_elem = hls_datatype_str(self.get_output_datatype())
+        o_n = self.get_folded_output_shape()[-1]
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            f'hls::stream<ap_uint<{self.get_instream_width()}>> in0_V ("in0_V");'
+            f'hls::stream<tensor<{elem_hls_type},{i_n}>> in0_V ("in0_V");'
         )
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            f'hls::stream<ap_uint<{self.get_outstream_width()}>> out0_V ("out0_V");'
+            f'hls::stream<tensor<{o_elem},{o_n}>> out0_V ("out0_V");'
+        )
+        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+            f'hls::stream<tensor<{o_elem},{o_n}>> strm0 ("strm0");'
         )
         self.code_gen_dict["$STREAMDECLARATIONS$"].append("ap_uint<32> chk;")
         # set drain = false for cppsim
@@ -221,30 +220,22 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
     def docompute(self) -> None:
         """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            "checksum<WORDS_PER_FRAME, ITEMS_PER_WORD>(in0_V, out0_V, chk, drain);"
+            """checksum<WORDS_PER_FRAME, ITEMS_PER_WORD>(in0_V, out0_V, chk, drain,
+            [](auto const &x, unsigned j) -> ap_uint<WORD_SIZE/ITEMS_PER_WORD> {
+                return  x[j];
+            });"""
         ]
 
     def dataoutstrm(self) -> None:
         """Return dataoutstrm."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
-        dtype = self.get_output_datatype()
-        if dtype == DataType["BIPOLAR"]:
-            # use binary for bipolar storage
-            dtype = DataType["BINARY"]
-        packed_bits = self.get_outstream_width()
-        packed_hls_type = f"ap_uint<{packed_bits}>"
-        elem_hls_type = dtype.get_hls_datatype_str()
         npy_type = "float"
         npy_out = f"{code_gen_dir}/output_0.npy"
         shape = tuple(self.get_folded_output_shape())
         shape_cpp_str = str(shape).replace("(", "{").replace(")", "}")
 
-        # note: the innermost dim is not reversed for the output
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
-            (
-                f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {npy_type}>"
-                f'(out0_V, {shape_cpp_str}, "{npy_out}", false);'
-            ),
+            f'tensorstream2npy<{npy_type}>(strm0, {shape_cpp_str}, "{npy_out}");',
             "std::vector<unsigned int> checksum(1);",
             "checksum[0] = chk;",
             f'cnpy::npy_save("{code_gen_dir}/output_1.npy",&checksum[0],{{1}});',
@@ -252,9 +243,15 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
 
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
+        elem_hls_type = hls_datatype_str(self.get_input_datatype())
+        n_elems = self.get_folded_input_shape()[-1]
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            f"""using T = ap_uint<WORD_SIZE>;\n void {self.onnx_node.name}(hls::stream<T> &in0_V,
-            hls::stream<T> &out0_V, ap_uint<32> &chk, ap_uint<1> &drain)"""
+            (
+                f"void {self.onnx_node.name}("
+                f"hls::stream<tensor<{elem_hls_type},{n_elems}>> &in0_V, "
+                f"hls::stream<tensor<{elem_hls_type},{n_elems}>> &out0_V, "
+                "ap_uint<32> &chk, ap_uint<1> &drain)"
+            )
         ]
 
     def pragmas(self) -> None:
@@ -268,8 +265,7 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
             "#pragma HLS interface s_axilite port=drain bundle=checksum"
         )
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS interface ap_ctrl_none port=return")
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS dataflow")
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS dataflow disable_start_propagation")
+        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS DATAFLOW disable_start_propagation")
 
     def get_verilog_top_module_intf_names(self) -> dict:
         """Return verilog top module intf names."""

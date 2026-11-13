@@ -185,5 +185,5 @@ class LabelSelect(HWCustomOp):
         context[node.output[0]] = np.asarray(result[1], dtype=np.float32).reshape(oshape)
 
     def get_exp_cycles(self) -> int:
-        """Return exp cycles."""
-        return int(self.labels / self.pe)
+        """Return exp cycles: one cycle per folded input word plus one per K output."""
+        return int(self.labels // self.pe + self.k)

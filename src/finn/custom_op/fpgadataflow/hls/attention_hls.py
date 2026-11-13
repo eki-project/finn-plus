@@ -27,7 +27,7 @@ from finn.custom_op.fpgadataflow.attention import ScaledDotProductAttention
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 
 # Base class for specializing HW operators as implemented via HLS
-from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.custom_op.fpgadataflow.hlsbackend_legacy import LegacyHLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 
 # Convert and pack (numpy) data for C++ code generation
@@ -44,7 +44,7 @@ RAM_STYLES = {
 
 
 @register_custom_op
-class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
+class ScaledDotProductAttention_hls(ScaledDotProductAttention, LegacyHLSBackend):
     """HLS Backend specialization of the Scaled Dot-product Attention Operator."""
 
     def _dtype(self, attr: str) -> BaseDataType:
@@ -55,8 +55,8 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
         """Return node attributes matching the HLS operator."""
         # Start from parent operator class attributes
         attrs = ScaledDotProductAttention.get_nodeattr_types(self)
-        # Add the HLSBackend default attributes on top
-        attrs.update(HLSBackend.get_nodeattr_types(self))
+        # Add the LegacyHLSBackend default attributes on top
+        attrs.update(LegacyHLSBackend.get_nodeattr_types(self))
         # Add/Specialize implementation specific attributes here...
         # Return the updated attributes dictionary
         return attrs

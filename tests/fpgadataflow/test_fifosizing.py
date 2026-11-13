@@ -389,6 +389,61 @@ def test_fifosizing_linear(topology: Literal["tfc", "cnv"]) -> None:
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.fpgadataflow
+@pytest.mark.parametrize("topology", ["tfc"])
+def test_fifosizing_heuristic_analytical(topology: Literal["tfc", "cnv"]) -> None:
+    """Size the FIFOs of a linear topology with the analytical heuristic (tree models only,
+    no simulation during sizing) and check in rtlsim that the design reaches its throughput."""
+    tmp_output_dir = fetch_test_model(topology)
+    cfg = build_cfg.DataflowBuildConfig(
+        output_dir=tmp_output_dir,
+        auto_fifo_depths=True,
+        auto_fifo_strategy=build_cfg.AutoFIFOSizingMethod.HEURISTIC_ANALYTICAL,
+        target_fps=10000 if topology == "tfc" else 1000,
+        synth_clk_period_ns=10.0,
+        board="Pynq-Z1",
+        generate_outputs=[
+            build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
+            build_cfg.DataflowOutputType.RTLSIM_PERFORMANCE,
+        ],
+        steps=[
+            "step_qonnx_to_finn",
+            "step_tidy_up",
+            "step_streamline",
+            "step_convert_to_hw",
+            "step_create_dataflow_partition",
+            "step_specialize_layers",
+            "step_target_fps_parallelization",
+            "step_apply_folding_config",
+            "step_minimize_bit_width",
+            "step_generate_estimate_reports",
+            "step_generate_hardware",
+            "step_measure_rtlsim_performance",
+        ],
+    )
+    build.build_dataflow_cfg(str(tmp_output_dir / "model.onnx"), cfg)
+
+    with (tmp_output_dir / "report/fifo_sizing.json").open() as f:
+        fifo_sizing_report = json.load(f)
+    assert len(fifo_sizing_report["fifo_depths"]) > 0, "No FIFOs inserted"
+    assert all(depth >= 2 for depth in fifo_sizing_report["fifo_depths"].values())
+    # every operator of these topologies has a tree model, nothing is sized around blindly
+    assert "nodes_without_tree_model" not in fifo_sizing_report
+
+    with (tmp_output_dir / "report/estimate_network_performance.json").open() as f:
+        est_data = json.load(f)
+    with (tmp_output_dir / "report/rtlsim_performance.json").open() as f:
+        sim_data = json.load(f)
+    assert len(sim_data) > 0, "performance simulation did not produce any output samples"
+    for output_stream in sim_data:
+        ratio = float(output_stream["throughput_fps"]) / float(est_data["estimated_throughput_fps"])
+        assert ratio > 0.9, f"analytically sized FIFOs reach only {ratio:.0%} of the estimate"
+
+    shutil.rmtree(tmp_output_dir)
+
+
+@pytest.mark.slow
+@pytest.mark.vivado
+@pytest.mark.fpgadataflow
 def test_fifosizing_multi_io() -> None:
     """Construct small onnx graph with addstreams, followed by duplicate streams
     to have test model with multiple inputs and multiple outputs."""

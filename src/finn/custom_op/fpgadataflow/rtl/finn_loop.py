@@ -334,9 +334,11 @@ class FINNLoop(RTLBackend, HWCustomOp):
         iteration = self.iteration
         perf = loop_body.analysis(dataflow_performance)
         body_latency = cast("int", perf["critical_path_cycles"])
-        body_throughput = cast("int", perf["max_cycles"])
-        overhead_per_iter = 40
-        return body_latency + (iteration - 1) * body_throughput + overhead_per_iter * iteration
+        # For a single input the iterations run serially: an intermediate frame
+        # can only be read back once it has been fully written. body_latency is
+        # an overlap-free sum of node cycles, so this is a conservative estimate.
+        overhead_between_iter = 40
+        return body_latency * iteration + overhead_between_iter * (iteration - 1)
 
     def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return the output stream width of the last node in the loop body."""

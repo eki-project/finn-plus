@@ -1,6 +1,14 @@
 git_deps:
     finn-hlslib:
         url: "https://github.com/Xilinx/finn-hlslib.git"
+        commit: "6ca75afb514b84524e66521ec92fe6e114924580"
+        pip_install: False
+        install_editable: False
+    # finn-hlslib as of before Xilinx/finn#1728 (tensor interface). The attention-hlslib and the
+    # FINN+-only HLS operators built on LegacyHLSBackend still include the headers it removed
+    # (bnn-library.h, flatten.hpp, interpret.hpp, streamtools.h).
+    finn-hlslib-legacy:
+        url: "https://github.com/Xilinx/finn-hlslib.git"
         commit: "8d979e2bdced486dd25d26607d1ff5ae327ed6a8"
         pip_install: False
         install_editable: False

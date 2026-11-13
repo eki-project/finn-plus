@@ -1,5 +1,8 @@
 from collections.abc import Iterator
 
+# Whether Design accepts xsim_dir (XSI >= 2023.1).
+has_xsim_dir: bool
+
 class Kernel:
     def __init__(self, name: str) -> None: ...
 
@@ -26,7 +29,12 @@ class Port:
 
 class Design:
     def __init__(
-        self, kernel: Kernel, design_lib: str, log_file: str | None, wdb_file: str | None
+        self,
+        kernel: Kernel,
+        design_lib: str,
+        log_file: str | None = None,
+        wdb_file: str | None = None,
+        xsim_dir: str | None = None,
     ) -> None: ...
     def close(self) -> None: ...
     def is_open(self) -> bool: ...

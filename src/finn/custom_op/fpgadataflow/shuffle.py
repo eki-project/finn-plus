@@ -199,9 +199,7 @@ class Shuffle(HWCustomOp):
         simd = self.simd
         data_type = self.get_nodeattr("data_type")
 
-        p_list, operation_types = decompose_transpose_with_constraints(
-            perm, transpose_in_shape, simd
-        )
+        p_list, operation_types = decompose_transpose_with_constraints(perm, transpose_in_shape)
 
         if len(p_list) == 0:
             return 0

@@ -255,7 +255,17 @@ class AbsorbSignBiasIntoMultiThreshold(AbsorbScalarBiasIntoMultiThreshold):
 
 class AbsorbAddIntoMultiThreshold(Transformation):
     """Absorb preceding Add ops into MultiThreshold by updating the threshold
-    values. Only scalar/1D add vectors can be absorbed."""
+    values. Only scalar/1D add vectors can be absorbed.
+
+    If preserve_thresh_shape is True, a channelwise Add is not merged into a
+    per-tensor MultiThreshold, as this would change the first dim of the threshold
+    array from 1 to the number of channels (e.g. (1, 255) to (C, 255) for int8).
+    The Add then remains as a standalone operation."""
+
+    def __init__(self, preserve_thresh_shape: bool = False) -> None:
+        """Initialize the transformation, optionally preserving per-tensor threshold shapes."""
+        super().__init__()
+        self.preserve_thresh_shape = preserve_thresh_shape
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Absorb Add nodes into MultiThreshold thresholds."""
@@ -277,6 +287,15 @@ class AbsorbAddIntoMultiThreshold(Transformation):
                     t = cast("npt.NDArray[Any]", t)
                     start_name = n.input[0]
                     is_scalar = a.ndim == 0 or all(x == 1 for x in a.shape)
+                    if self.preserve_thresh_shape and t.shape[0] == 1 and not is_scalar:
+                        log.warning(
+                            "preserve_thresh_shape is set to True "
+                            f"and merging {n.name} into {consumer.name} "
+                            "would change the threshold array shape. "
+                            "If you would like the merge to still happen, "
+                            "set preserve_thresh_shape to False."
+                        )
+                        continue
 
                     # Get the shape of the parameter tensor of the add
                     shape = a.shape
@@ -330,7 +349,15 @@ class AbsorbAddIntoMultiThreshold(Transformation):
 
 class AbsorbMulIntoMultiThreshold(Transformation):
     """Absorb preceding Mul ops into MultiThreshold by updating the threshold
-    values. Only *positive* scalar/1D mul vectors can be absorbed."""
+    values. Only *positive* scalar/1D mul vectors can be absorbed.
+
+    If preserve_thresh_shape is True, a channelwise Mul is not merged into a
+    per-tensor MultiThreshold, see AbsorbAddIntoMultiThreshold."""
+
+    def __init__(self, preserve_thresh_shape: bool = False) -> None:
+        """Initialize the transformation, optionally preserving per-tensor threshold shapes."""
+        super().__init__()
+        self.preserve_thresh_shape = preserve_thresh_shape
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Absorb Mul nodes into MultiThreshold thresholds when allowed."""
@@ -359,9 +386,28 @@ class AbsorbMulIntoMultiThreshold(Transformation):
                     if t is None:
                         raise FINNInternalError("Initializer for thresholds is not set.")
                     t = cast("npt.NDArray[Any]", t)
+                    if self.preserve_thresh_shape and t.shape[0] == 1 and not is_scalar:
+                        log.warning(
+                            "preserve_thresh_shape is set to True "
+                            f"and merging {n.name} into {consumer.name} "
+                            "would change the threshold array shape. "
+                            "If you would like the merge to still happen, "
+                            "set preserve_thresh_shape to False."
+                        )
+                        continue
                     start_name = n.input[0]
                     # compute new thresholds and set initializer
-                    t_new = t / a.reshape(-1, 1)
+                    a_col = a.reshape(-1, 1)
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        t_new = t / a_col
+                    # A zero scale makes the MultiThreshold input constantly 0 for
+                    # that channel: thresholds <= 0 are always met, all others
+                    # never. Map them to -inf/+inf explicitly instead of dividing
+                    # by zero (which yields NaN for T == 0 and puts +inf before
+                    # -inf), so the thresholds stay sorted in ascending order.
+                    t_new = np.where(a_col == 0, np.where(t <= 0, -np.inf, np.inf), t_new).astype(
+                        t_new.dtype
+                    )
                     # TODO: need to handle negative A values correctly; produce
                     # mul sign mask and merge into preceding matmul?
                     model.set_initializer(threshold_name, t_new)

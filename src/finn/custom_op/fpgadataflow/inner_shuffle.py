@@ -8,6 +8,7 @@
 ############################################################################
 """Parallel 2D transpose (inner shuffle) hardware custom operator."""
 
+import math
 import numpy as np
 from onnx import NodeProto
 from qonnx.core.datatype import BaseDataType, DataType
@@ -16,11 +17,37 @@ from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
-from finn.util.exception import FINNInternalError
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
     from onnx import GraphProto
+
+
+def auto_size_simd(i_dim: int, simd: int) -> int | None:
+    """Return the smallest divisor d of i_dim such that d > simd.
+
+    If no such divisor exists, return None.
+    """
+    if i_dim <= 0:
+        raise ValueError("i_dim must be a positive integer")
+    if simd < 0:
+        raise ValueError("simd must be a non-negative integer")
+
+    candidates = []
+    limit = math.isqrt(i_dim)
+    for a in range(1, limit + 1):
+        if i_dim % a == 0:
+            b = i_dim // a
+            if a > simd:
+                candidates.append(a)
+            if b > simd:
+                candidates.append(b)
+
+    if not candidates:
+        return None
+
+    return min(candidates)
 
 
 @register_custom_op
@@ -33,6 +60,17 @@ class InnerShuffle(HWCustomOp):
     def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
+
+        # SIMD must divide I, the axis that becomes the output's innermost axis.
+        i_dim = self.transpose_in_shape[-2]
+        if i_dim % self.simd != 0:
+            new_simd = auto_size_simd(i_dim, self.simd)
+            if new_simd is None:
+                raise FINNUserError(
+                    f"{self.onnx_node.name}: unable to determine a SIMD value that divides "
+                    f"the transpose dimension ({i_dim})"
+                )
+            self.set_nodeattr("SIMD", new_simd)
 
     def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""

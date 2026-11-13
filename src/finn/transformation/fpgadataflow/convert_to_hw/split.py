@@ -98,8 +98,6 @@ class InferSplitLayer(Transformation):
                     backend="fpgadataflow",
                     name="StreamingSplit_" + node.name,
                     SIMD=1,
-                    cpp_interface="hls_vector",
-                    hls_style="freerunning",
                     ChannelsPerStream=channels_per_stream,
                     inputDataType=model.get_tensor_datatype(node.input[0]).name,
                     numInputVectors=inp_vec,

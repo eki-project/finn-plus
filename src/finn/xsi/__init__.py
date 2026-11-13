@@ -55,7 +55,7 @@ if TYPE_CHECKING:
         reset_rtlsim,
         rtlsim_multi_io,
     )
-    from finn_xsi.sim_engine import SimEngine  # noqa
+    from finn_xsi.sim_engine import SimEngine, SimulationError  # noqa
 
 # Track if auto-install has been attempted
 _auto_install_attempted = False
@@ -67,6 +67,7 @@ _sim_engine_module: Any | None = None
 _LAZY_NAMES = frozenset(
     {
         "SimEngine",
+        "SimulationError",
         "locate_glbl",
         "compile_sim_obj",
         "get_simkernel_so",
@@ -108,7 +109,11 @@ def is_available() -> bool:
 
     version_file = xsi_path / "VERSION"
 
-    if not xsi_so.exists() or not version_file.exists():
+    # An xsi.so that is older than its C++ sources (e.g. after pulling changes to the
+    # binding) is rebuilt like a missing one
+    from finn.xsi.setup import sources_newer_than_build
+
+    if not xsi_so.exists() or not version_file.exists() or sources_newer_than_build(xsi_path):
         # Attempt auto-install if not yet tried
         _attempt_auto_install()
         # Check again after auto-install attempt
@@ -219,6 +224,7 @@ def _load_modules() -> bool:
         # fast attribute lookup - exactly like a normal eager import.
         module = sys.modules[__name__]
         module.SimEngine = finn_xsi.sim_engine.SimEngine  # type: ignore
+        module.SimulationError = finn_xsi.sim_engine.SimulationError  # type: ignore
         module.locate_glbl = finn_xsi.adapter.locate_glbl  # type: ignore
         module.compile_sim_obj = finn_xsi.adapter.compile_sim_obj  # type: ignore
         module.get_simkernel_so = finn_xsi.adapter.get_simkernel_so  # type: ignore

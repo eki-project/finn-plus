@@ -19,7 +19,7 @@ from finn.custom_op.fpgadataflow.attention_heads import MergeMultiHeads, SplitMu
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 
 # Base class for specializing HW operators as implemented via HLS
-from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.custom_op.fpgadataflow.hlsbackend_legacy import LegacyHLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 
 # FINN internal error raised for broken compiler invariants
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 # HLS Backend specialization of the multi-head attention splitting operator
 @register_custom_op
-class SplitMultiHeads_hls(SplitMultiHeads, HLSBackend):
+class SplitMultiHeads_hls(SplitMultiHeads, LegacyHLSBackend):
     """HLS backend implementation for splitting attention heads."""
 
     # Node attributes matching the HLS operator
@@ -40,8 +40,8 @@ class SplitMultiHeads_hls(SplitMultiHeads, HLSBackend):
         """Return attribute definitions including HLS backend settings."""
         # Start from parent operator class attributes
         attrs = SplitMultiHeads.get_nodeattr_types(self)
-        # Add the HLSBackend default attributes on top
-        attrs.update(HLSBackend.get_nodeattr_types(self))
+        # Add the LegacyHLSBackend default attributes on top
+        attrs.update(LegacyHLSBackend.get_nodeattr_types(self))
         # Add/Specialize implementation specific attributes here...
         # Return the updated attributes dictionary
         return attrs
@@ -297,7 +297,7 @@ class SplitMultiHeads_hls(SplitMultiHeads, HLSBackend):
 
 # HLS Backend specialization of the multi-head attention merging operator
 @register_custom_op
-class MergeMultiHeads_hls(MergeMultiHeads, HLSBackend):
+class MergeMultiHeads_hls(MergeMultiHeads, LegacyHLSBackend):
     """HLS backend implementation for merging attention heads."""
 
     # Node attributes matching the HLS operator
@@ -305,8 +305,8 @@ class MergeMultiHeads_hls(MergeMultiHeads, HLSBackend):
         """Return attribute definitions including HLS backend settings."""
         # Start from parent operator class attributes
         attrs = MergeMultiHeads.get_nodeattr_types(self)
-        # Add the HLSBackend default attributes on top
-        attrs.update(HLSBackend.get_nodeattr_types(self))
+        # Add the LegacyHLSBackend default attributes on top
+        attrs.update(LegacyHLSBackend.get_nodeattr_types(self))
         # Add/Specialize implementation specific attributes here...
         # Return the updated attributes dictionary
         return attrs

@@ -1,5 +1,6 @@
 import pytest
 
+import glob
 import numpy as np
 import os
 import re
@@ -20,7 +21,7 @@ import finn.core.onnx_exec as oxe
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.util.basic import make_build_dir
+from finn.util.basic import get_vivado_version, make_build_dir
 
 verif_steps = [
     "folded_hls_cppsim",
@@ -109,11 +110,7 @@ def make_loop_modelwrapper(
     T2 = np.sort(
         generate_random_threshold_values(dtype, 1, dtype.get_num_possible_values() - 1), axis=1
     )
-    T3_dtype = dtype
-    T3 = np.sort(
-        generate_random_threshold_values(T3_dtype, 1, dtype.get_num_possible_values() - 1), axis=1
-    )
-    # Requant scale/bias for non-float path (per-tensor, magnitudes in safe range)
+    # Requant scale/bias (per-tensor, magnitudes in safe range)
     # Scale must be >= ~0.125 (exponent >= -3) for INT8 output due to fixed-point constraints
     requant_scale = np.random.uniform(0.5, 2.0, [1]).astype(np.float32)
     requant_bias = np.random.uniform(-4.0, 4.0, [1]).astype(np.float32)
@@ -133,23 +130,15 @@ def make_loop_modelwrapper(
     output_shapes = {f"mm{name_suffix}": [1, 3, 3, mh], f"ofm{name_suffix}": (1, 3, 3, mh)}
 
     tensor_infos = {k: create_tensor_info(k, v) for k, v in tensor_shapes.items()}
-    # For float path: 4 thresholds (including thresh3 for final Thresholding)
-    # For int path: 3 thresholds + scale/bias for final Requant
-    if is_float:
-        thresholds = [
-            create_threshold(f"thresh{i}{name_suffix}", (1, dtype.get_num_possible_values() - 1))
-            for i in range(4)
-        ]
-        requant_inputs = []
-    else:
-        thresholds = [
-            create_threshold(f"thresh{i}{name_suffix}", (1, dtype.get_num_possible_values() - 1))
-            for i in range(3)
-        ]
-        requant_inputs = [
-            helper.make_tensor_value_info(f"scale{name_suffix}", TensorProto.FLOAT, [1]),
-            helper.make_tensor_value_info(f"bias{name_suffix}", TensorProto.FLOAT, [1]),
-        ]
+    # Both paths use a final Requant_rtl: 3 thresholds + scale/bias
+    thresholds = [
+        create_threshold(f"thresh{i}{name_suffix}", (1, dtype.get_num_possible_values() - 1))
+        for i in range(3)
+    ]
+    requant_inputs = [
+        helper.make_tensor_value_info(f"scale{name_suffix}", TensorProto.FLOAT, [1]),
+        helper.make_tensor_value_info(f"bias{name_suffix}", TensorProto.FLOAT, [1]),
+    ]
 
     nodes = [
         create_node(
@@ -163,8 +152,6 @@ def make_loop_modelwrapper(
                 "PE": helper_pe,
                 "inputDataType": dtype.name,
                 "outFIFODepths": [2, 2],
-                "cpp_interface": "hls_vector",
-                "hls_style": "freerunning",
             },
         ),
         create_node(
@@ -182,7 +169,6 @@ def make_loop_modelwrapper(
                 "weightDataType": wdtype.name,
                 "outputDataType": "INT32",
                 "ActVal": 0,
-                "binaryXnorMode": 0,
                 "noActivation": 1,
             },
         ),
@@ -216,7 +202,6 @@ def make_loop_modelwrapper(
                 "weightDataType": wdtype.name,
                 "outputDataType": "INT32",
                 "ActVal": 0,
-                "binaryXnorMode": 0,
                 "noActivation": 1,
             },
         ),
@@ -250,7 +235,6 @@ def make_loop_modelwrapper(
                 "weightDataType": wdtype.name,
                 "outputDataType": "INT32",
                 "ActVal": 0,
-                "binaryXnorMode": 0,
                 "noActivation": 1,
             },
         ),
@@ -329,43 +313,24 @@ def make_loop_modelwrapper(
     else:
         thresholding_input_tensor = f"ofm_ew{name_suffix}"
 
-    # Use Requant_rtl for integer path, Thresholding_rtl for float path
-    # (Requant only supports integer inputs)
-    if is_float:
-        nodes.append(
-            create_node(
-                "Thresholding_rtl",
-                [thresholding_input_tensor, f"thresh3{name_suffix}"],
-                [f"ofm_final{name_suffix}"],
-                f"Thresholding_rtl4{name_suffix}",
-                {
-                    "NumChannels": mh,
-                    "PE": helper_pe,
-                    "numSteps": dtype.get_num_possible_values() - 1,
-                    "inputDataType": thresholding_input_dtype.name,
-                    "weightDataType": thresholding_input_dtype.name,
-                    "outputDataType": dtype.name,
-                    "ActVal": int(dtype.min()),
-                },
-            ),
-        )
-    else:
-        nodes.append(
-            create_node(
-                "Requant_rtl",
-                [thresholding_input_tensor, f"scale{name_suffix}", f"bias{name_suffix}"],
-                [f"ofm_final{name_suffix}"],
-                f"Requant_rtl_0{name_suffix}",
-                {
-                    "NumChannels": mh,
-                    "PE": helper_pe,
-                    "inputDataType": thresholding_input_dtype.name,
-                    "outputDataType": dtype.name,
-                    "narrow": 0,
-                    "numInputVectors": [1, 3, 3],
-                },
-            ),
-        )
+    # Final layer is Requant_rtl for both paths. On the float path the input is
+    # FLOAT32 (requantf.sv / Versal); on the int path it is INT32.
+    nodes.append(
+        create_node(
+            "Requant_rtl",
+            [thresholding_input_tensor, f"scale{name_suffix}", f"bias{name_suffix}"],
+            [f"ofm_final{name_suffix}"],
+            f"Requant_rtl_0{name_suffix}",
+            {
+                "NumChannels": mh,
+                "PE": helper_pe,
+                "inputDataType": thresholding_input_dtype.name,
+                "outputDataType": dtype.name,
+                "narrow": 0,
+                "numInputVectors": [1, 3, 3],
+            },
+        ),
+    )
 
     # Build value_info list
     value_info_list = [
@@ -414,16 +379,13 @@ def make_loop_modelwrapper(
     loop_body_model.set_initializer(f"thresh2{name_suffix}", T2)
     loop_body_model.set_initializer(f"mul_param{name_suffix}", EltwParam)
 
-    # Add final-node-specific initializers
+    # Final Requant scale/bias (both paths)
+    loop_body_model.set_initializer(f"scale{name_suffix}", requant_scale)
+    loop_body_model.set_initializer(f"bias{name_suffix}", requant_bias)
+    # Float path also has an extra RTL elementwise mul before the Requant
     if is_float:
-        # Float path: Thresholding with thresh3
-        loop_body_model.set_initializer(f"thresh3{name_suffix}", T3)
         EltwParamRtl = gen_finn_dt_tensor(DataType["FLOAT32"], rhs_shape)
         loop_body_model.set_initializer(f"mul_param_rtl{name_suffix}", EltwParamRtl)
-    else:
-        # Int path: Requant with scale/bias
-        loop_body_model.set_initializer(f"scale{name_suffix}", requant_scale)
-        loop_body_model.set_initializer(f"bias{name_suffix}", requant_bias)
 
     # Set tensor datatypes
     tensors = [
@@ -447,13 +409,11 @@ def make_loop_modelwrapper(
         f"mul_param{name_suffix}", DataType[actual_eltw_param_dtype]
     )
 
-    # Set final-node-specific datatypes
+    # Final Requant scale/bias datatypes (both paths)
+    loop_body_model.set_tensor_datatype(f"scale{name_suffix}", DataType["FLOAT32"])
+    loop_body_model.set_tensor_datatype(f"bias{name_suffix}", DataType["FLOAT32"])
     if is_float:
-        loop_body_model.set_tensor_datatype(f"thresh3{name_suffix}", T3_dtype)
         loop_body_model.set_tensor_datatype(f"mul_param_rtl{name_suffix}", DataType["FLOAT32"])
-    else:
-        loop_body_model.set_tensor_datatype(f"scale{name_suffix}", DataType["FLOAT32"])
-        loop_body_model.set_tensor_datatype(f"bias{name_suffix}", DataType["FLOAT32"])
 
     return loop_body_model
 
@@ -491,7 +451,6 @@ def make_single_mvau_loop_body(
                 "weightDataType": "INT8",
                 "outputDataType": "INT32",
                 "ActVal": 0,
-                "binaryXnorMode": 0,
                 "noActivation": 1,
             },
         ),
@@ -580,14 +539,14 @@ def create_chained_loop_bodies(
     return loop_body_models
 
 
-def assert_finnloop_cycle_estimate(build_dir, x, rtol=0.35, atol=50):
+def assert_finnloop_cycle_estimate(build_dir, x, max_ratio=3):
     """Compare FINNLoop.get_exp_cycles() against the measured rtlsim cycle count.
 
     Reuses the loop-body IP already built by an MLO end-to-end build (no extra
     synthesis): loads the node-by-node rtlsim child model saved by the build,
     re-runs rtlsim on the single FINNLoop node (which populates its
     ``cycles_rtlsim`` nodeattr, see HWCustomOp.rtlsim_multi_io) and asserts the
-    estimate is close to the measured value, mirroring the FMPadding cycle check.
+    estimate is an upper bound that is at most max_ratio times the measured value.
     """
     child_fn = build_dir + "/intermediate_models/verify_node_by_node_rtlsim.onnx"
     assert os.path.isfile(child_fn), f"missing node-by-node rtlsim model {child_fn}"
@@ -604,21 +563,21 @@ def assert_finnloop_cycle_estimate(build_dir, x, rtol=0.35, atol=50):
     cycles_rtlsim = inst.get_nodeattr("cycles_rtlsim")
     exp_cycles = inst.get_exp_cycles()
     assert exp_cycles != 0
-    # The FINNLoop estimate is a conservative liveness bound and tends to slightly
-    # over-count (measured ~2928 vs ~2310 rtlsim, i.e. ~27% high, for the canonical
-    # config), which is the safe direction for the watchdog. A relative tolerance is
-    # used because the per-iteration overhead heuristic makes the error scale with
-    # the iteration count.
-    assert np.isclose(exp_cycles, cycles_rtlsim, rtol=rtol, atol=atol), (
-        f"FINNLoop cycle estimate {exp_cycles} not close to rtlsim {cycles_rtlsim} "
-        f"(rtol={rtol}, atol={atol})"
+    # The FINNLoop estimate is conservative: it assumes serial iterations, each
+    # taking the overlap-free body latency, so it over-counts. It must never
+    # under-count, since it sets the FIFO sizing period.
+    assert cycles_rtlsim <= exp_cycles <= max_ratio * cycles_rtlsim, (
+        f"FINNLoop cycle estimate {exp_cycles} is not between rtlsim {cycles_rtlsim} "
+        f"and {max_ratio}x rtlsim"
     )
 
 
 # MVAU folding as a jointly-valid tuple (dim, mvau_pe, mvau_simd, mvau_th, helper_pe).
 # TH=1 selects the standard MVAU; TH>1 selects the tiled MVAU (Versal DSP58).
 # The dimensions must satisfy the tiling constraints: MW % SIMD == 0, MH % PE == 0
-# and (PE * SIMD) % TH == 0, so pe/simd/th cannot be stacked independently.
+# and TH must divide the number of input vectors, so pe/simd/th cannot be stacked
+# independently. TH need not divide PE*SIMD: the weight stream then carries WSIMD,
+# the smallest divisor of PE*SIMD with NW = PE*SIMD/WSIMD <= TH.
 # Every case of this end-to-end test builds, sizes and simulates a complete MLO design
 # and takes one to two and a half hours. Only a representative subset runs by default;
 # the remaining combinations of the grid are marked xslow, which the CI test variants
@@ -633,11 +592,24 @@ _MLO_DEFAULT_CASES = {
     ((12, 6, 3, 3, 6), "ElementwiseAdd_rtl", 16, "FLOAT32", False),
 }
 
+# The MVAU foldings of the grid. The last two exercise TH not dividing PE*SIMD.
+_MLO_MVAU_CFGS = [
+    (16, 2, 2, 1, 2),
+    (12, 6, 3, 3, 6),
+    (12, 4, 4, 3, 4),  # PE*SIMD=16, TH=3: WSIMD=8, NW=2 < TH
+    (12, 2, 2, 9, 2),  # TH > PE*SIMD=4: WSIMD=1, NW=4 < TH
+]
+
 
 def _mlo_cases():
     """The full grid of test_finnloop_end2end_mlo, with all but _MLO_DEFAULT_CASES marked xslow."""
     cases = []
-    for mvau_cfg in [(16, 2, 2, 1, 2), (12, 6, 3, 3, 6)]:
+    for mvau_cfg in _MLO_MVAU_CFGS:
+        # the first two foldings keep the test ids they always had; the later ones
+        # share a TH with them and are told apart by their PE and SIMD
+        cfg_id = f"th{mvau_cfg[3]}"
+        if mvau_cfg not in _MLO_MVAU_CFGS[:2]:
+            cfg_id += f"-pe{mvau_cfg[1]}-simd{mvau_cfg[2]}"
         for elemwise_optype in ["ElementwiseMul_hls", "ElementwiseAdd_rtl"]:
             for rhs_shape in [[1], [16]]:
                 for eltw_param_dtype in ["INT8", "FLOAT32"]:
@@ -660,7 +632,7 @@ def _mlo_cases():
                                 non_mlo_nodes,
                                 marks=marks,
                                 id=f"{non_mlo_nodes}-{eltw_param_dtype}-rhs{rhs_shape[0]}-"
-                                f"{elemwise_optype}-3-th{mvau_cfg[3]}",
+                                f"{elemwise_optype}-3-{cfg_id}",
                             )
                         )
     return cases
@@ -669,7 +641,7 @@ def _mlo_cases():
 # mvau_cfg: MVAU folding as a jointly-valid tuple (dim, mvau_pe, mvau_simd, mvau_th,
 # helper_pe). TH=1 selects the standard MVAU; TH>1 selects the tiled MVAU (Versal DSP58).
 # The dimensions must satisfy the tiling constraints: MW % SIMD == 0, MH % PE == 0 and
-# (PE * SIMD) % TH == 0, so pe/simd/th cannot be stacked independently.
+# TH must divide the number of input vectors, so pe/simd/th cannot be stacked independently.
 # iteration: number of models chained together. elemwise_optype/rhs_shape/eltw_param_dtype:
 # the elementwise operation, its parameter shape and datatype. non_mlo_nodes: insert
 # non-MLO head/tail nodes (and a non-HW parent node) around the FINNLoop.
@@ -696,12 +668,9 @@ def test_finnloop_end2end_mlo(
         and not (eltw_param_dtype == "FLOAT32" and non_mlo_nodes)
     ):
         pytest.skip("Tiled MVAU only exercised on selected elementwise configs")
-    # Check vivado version
-    vivado_path = os.environ.get("XILINX_VIVADO")
-    match = re.search(r"\b(20\d{2})\.(1|2)\b", vivado_path)
-    year, minor = int(match.group(1)), int(match.group(2))
-    if (year, minor) < (2024, 2):
-        pytest.skip("""At least Vivado version 2024.2 needed for MLO.""")
+    vivado_version = get_vivado_version()
+    if vivado_version is None or vivado_version < (2024, 2):
+        pytest.skip("At least Vivado version 2024.2 needed for MLO.")
     loop_body_models = create_chained_loop_bodies(
         dim,
         dim,
@@ -764,8 +733,6 @@ def test_finnloop_end2end_mlo(
                 "CropEast": 0,
                 "SIMD": 1,
                 "numInputVectors": [1],
-                "cpp_interface": "hls_vector",
-                "hls_style": "freerunning",
             },
         )
         for i, inp in enumerate(first_body_node.input):
@@ -850,8 +817,13 @@ def test_finnloop_end2end_mlo(
         and not non_mlo_nodes
     )
 
+    # Cycle-count verification runs on the same plain FINNLoop, where the measured
+    # rtlsim cycles are the loop's alone and not inflated by head/tail nodes.
+    run_cycle_check = run_fifo_debug
+
     cfg = build_cfg.DataflowBuildConfig(
         output_dir=tmp_output_dir,
+        enable_build_pdb_debug=False,
         steps=steps,
         synth_clk_period_ns=10.0,
         board="V80",
@@ -939,7 +911,7 @@ def test_finnloop_end2end_mlo(
     # Cycle-count verification for the FINNLoop: compare get_exp_cycles() against the
     # measured rtlsim cycles (FMPadding-style). Gated to the single canonical config so
     # it reuses the already-built loop-body IP with just one extra rtlsim run.
-    if run_fifo_debug:
+    if run_cycle_check:
         assert_finnloop_cycle_estimate(tmp_output_dir, x)
 
     # debug_fifo makes the (behavioral) rtlsim verification write per-FIFO transaction
@@ -978,15 +950,26 @@ def test_finnloop_end2end_mlo(
 
 
 @pytest.mark.parametrize(
-    "dim, simd, pe, bitwidth, weight_bitwidth",
+    "board, dim, simd, pe, mvau_th, helper_pe, bitwidth, weight_bitwidth",
     [
         # Coverage matrix over {folding} x {256-divisibility of the element widths}.
-        # (each case takes about two hours; the first two are xslow, see test_finnloop_end2end_mlo)
-        pytest.param(16, 1, 1, 8, 8, marks=pytest.mark.xslow),  # unfolded, divisor (8|256)
-        pytest.param(8, 8, 4, 4, 4, marks=pytest.mark.xslow),  # folded, divisor (4|256, DMA_PE=64):
-        #   guards word-aligned image stays byte-identical for divisors at the real folding
-        (8, 8, 4, 3, 3),  # folded, non-divisor (3 wasted bits/word): exercises the
-        #   DMA-word-aligned fix on both the activation and weight paths
+        # (each case takes about two hours; all but the third are xslow, see
+        # test_finnloop_end2end_mlo)
+        pytest.param(
+            "AUP-ZU3_8GB", 16, 1, 1, 1, 2, 8, 8, marks=pytest.mark.xslow
+        ),  # unfolded, divisor (8|256)
+        pytest.param(
+            "AUP-ZU3_8GB", 8, 8, 4, 1, 2, 4, 4, marks=pytest.mark.xslow
+        ),  # folded, divisor (4|256, DMA_PE=64): guards word-aligned image stays
+        #   byte-identical for divisors at the real folding
+        ("AUP-ZU3_8GB", 8, 8, 4, 1, 2, 3, 3),  # folded, non-divisor (3 wasted bits/word):
+        #   exercises the DMA-word-aligned fix on both the activation and weight paths
+        pytest.param(
+            "AUP-ZU3_8GB", 12, 3, 6, 1, 6, 8, 8, marks=pytest.mark.xslow
+        ),  # folded, helper PE > 2: VCK190 folding on ZynqMP
+        pytest.param(
+            "VCK190", 12, 3, 6, 3, 6, 8, 8, marks=pytest.mark.xslow
+        ),  # embedded Versal, tiled MVAU (DSP58)
     ],
 )
 # iteration count, number of models chained together
@@ -1001,9 +984,12 @@ def test_finnloop_end2end_mlo(
 @pytest.mark.vivado
 @pytest.mark.slow
 def test_finnloop_end2end_mlo_ddr(
+    board,
     dim,
     simd,
     pe,
+    mvau_th,
+    helper_pe,
     iteration,
     elemwise_optype,
     rhs_shape,
@@ -1012,18 +998,31 @@ def test_finnloop_end2end_mlo_ddr(
     tail_node,
     request,
 ):
-    # End-to-end MLO+DDR flow parametrized by data/weight bitwidth and MVAU folding.
+    # End-to-end MLO+DDR flow parametrized by board, data/weight bitwidth and MVAU
+    # folding. The shell flow (VIVADO_ZYNQ / VIVADO_VERSAL) is resolved from the board.
     data_dtype = DataType[f"INT{bitwidth}"]
     eltw_param_dtype = data_dtype.name
     # output dtype of adding two `data_dtype` values needs one extra bit
     add_out_dtype = DataType[f"INT{data_dtype.bitwidth() + 1}"]
 
-    # Check vivado version
-    vivado_path = os.environ.get("XILINX_VIVADO")
-    match = re.search(r"\b(20\d{2})\.(1|2)\b", vivado_path)
-    year, minor = int(match.group(1)), int(match.group(2))
-    if (year, minor) < (2024, 2):
-        pytest.skip("""At least Vivado version 2024.2 needed for MLO.""")
+    vivado_version = get_vivado_version()
+    if vivado_version is None or vivado_version < (2024, 2):
+        pytest.skip("At least Vivado version 2024.2 needed for MLO.")
+    shell_flow_type = build_cfg.ShellFlowType.VIVADO_ZYNQ
+    if board == "VCK190":
+        # the Versal PYNQ flow and its golden reference files come with upstream's
+        # make_pynq_proj; imported here so that the ZynqMP cases do not depend on them
+        from finn.util.basic import get_pynq_golden_dir, pynq_golden_files
+
+        if vivado_version != (2025, 2):
+            pytest.skip("Vivado version 2025.2 required for the VIVADO_VERSAL flow.")
+        golden_dir = get_pynq_golden_dir(board)
+        missing = [f for f in pynq_golden_files if not os.path.isfile(os.path.join(golden_dir, f))]
+        if missing:
+            pytest.skip(
+                f"VCK190 golden reference files missing from {golden_dir}: {', '.join(missing)}"
+            )
+        shell_flow_type = build_cfg.ShellFlowType.VIVADO_VERSAL
     loop_body_models = create_chained_loop_bodies(
         dim,
         dim,
@@ -1034,6 +1033,8 @@ def test_finnloop_end2end_mlo_ddr(
         dtype=data_dtype,
         mvau_simd=simd,
         mvau_pe=pe,
+        mvau_th=mvau_th,
+        helper_pe=helper_pe,
         weight_bitwidth=weight_bitwidth,
     )
     nodes_per_body = len(loop_body_models[0].graph.node)
@@ -1106,10 +1107,11 @@ def test_finnloop_end2end_mlo_ddr(
 
     cfg = build_cfg.DataflowBuildConfig(
         output_dir=tmp_output_dir,
+        enable_build_pdb_debug=False,
         steps=steps,
         synth_clk_period_ns=10.0,
-        board="AUP-ZU3_8GB",
-        shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ,
+        board=board,
+        shell_flow_type=shell_flow_type,
         standalone_thresholds=True,
         mlo=True,
         fifosim_save_waveform=True,
@@ -1131,6 +1133,11 @@ def test_finnloop_end2end_mlo_ddr(
         ],
     )
     build.build_dataflow_cfg(tmp_output_dir + "/mlo_model.onnx", cfg)
+
+    verify_fails = glob.glob(tmp_output_dir + "/verification_output/*FAIL*")
+    if verify_fails:
+        names = ", ".join(sorted(os.path.basename(p) for p in verify_fails))
+        pytest.fail(f"verification mismatch in build output: {names}")
 
     # check if expected files are there
     assert os.path.isfile(tmp_output_dir + "/loop-body-template.onnx")

@@ -146,11 +146,15 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             "$IN_RANGE$": f"[{in_width - 1}:0]",
             "$OUT_RANGE$": f"[{in_width - 1}:0]",
             "$WIDTH$": str(in_width),
+            # only the unpadded payload is stored, see fifo_template.v
+            "$REAL_WIDTH$": str(self.get_instream_width()),
             "$DEPTH$": str(depth),
             # fifo.sv's RAM_STYLE_EFF ladder still uses the legacy "shift" token for the
             # SRL backing; map the FINN-facing "srl" onto it at the RTL boundary
             "$RAM_STYLE$": "shift" if ram_style == "srl" else ram_style,
             "$DATA_LOGFILE$": cast("str", self.get_nodeattr("debug_log_path")),
+            "$LOG_VERBOSE$": str(int(cast("int", self.get_nodeattr("fifo_log_verbose")))),
+            "$LOG_FLUSH_CYCLES$": str(int(cast("int", self.get_nodeattr("fifo_log_flush_cycles")))),
         }
         # apply code generation to templates
         template = template_path.read_text()

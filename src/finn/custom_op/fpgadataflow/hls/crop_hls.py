@@ -19,6 +19,7 @@ from finn.custom_op.fpgadataflow.crop import Crop
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.util.data_packing import hls_datatype_str
 
 if TYPE_CHECKING:
     from onnx import GraphProto, NodeProto
@@ -64,7 +65,7 @@ class Crop_hls(Crop, HLSBackend):
             constexpr unsigned  CROP_E = {self.crop_east};
             constexpr unsigned  CROP_S = {self.crop_south};
             constexpr unsigned  CROP_W = {self.crop_west};
-            using  TV = hls::vector<{dtype.get_hls_datatype_str()}, SIMD>;
+            using  TV = tensor<{hls_datatype_str(dtype)}, SIMD>;
             """
         ]
 

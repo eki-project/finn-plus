@@ -67,4 +67,5 @@ import finn.custom_op.fpgadataflow.rtl.selecttoken_rtl
 import finn.custom_op.fpgadataflow.rtl.streamingdatawidthconverter_rtl
 import finn.custom_op.fpgadataflow.rtl.streamingfifo_rtl
 import finn.custom_op.fpgadataflow.rtl.thresholding_rtl
+import finn.custom_op.fpgadataflow.rtl.tlastmarker_rtl
 import finn.custom_op.fpgadataflow.rtl.vectorvectoractivation_rtl

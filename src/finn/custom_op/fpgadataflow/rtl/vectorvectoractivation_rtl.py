@@ -36,7 +36,6 @@ dataflow architectures.
 import numpy as np
 from onnx import GraphProto, NodeProto
 from pathlib import Path
-from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import Literal, cast
 
@@ -100,12 +99,7 @@ class VVAU_rtl(VVAU, RTLBackend):
                         raise FINNInternalError("Input datatype is not float32 as expected.")
                     expected_inp_shape = self.get_folded_input_shape()
                     reshaped_input = context[inputs].reshape(expected_inp_shape)
-                    if self.get_input_datatype(0) == DataType["BIPOLAR"]:
-                        # store bipolar activations as binary
-                        reshaped_input = (reshaped_input + 1) / 2
-                        export_idt = DataType["BINARY"]
-                    else:
-                        export_idt = self.get_input_datatype(0)
+                    export_idt = self.get_input_datatype(0)
                     # make copy before saving the array
                     reshaped_input = reshaped_input.copy()
                     np.save(Path(code_gen_dir) / f"input_{in_ind}.npy", reshaped_input)
@@ -124,10 +118,6 @@ class VVAU_rtl(VVAU, RTLBackend):
             if mem_mode in ("external", "internal_decoupled"):
                 wnbits = self.get_instream_width(1)
                 export_wdt = self.get_input_datatype(1)
-                # we have converted bipolar weights to binary for export,
-                # so use it as such for weight generation
-                if self.get_input_datatype(1) == DataType["BIPOLAR"]:
-                    export_wdt = DataType["BINARY"]
                 wei = npy_to_rtlsim_input(f"{code_gen_dir}/weights.npy", export_wdt, wnbits)
                 dim_h, dim_w = self.dim
                 num_w_reps = dim_h * dim_w
@@ -297,6 +287,11 @@ class VVAU_rtl(VVAU, RTLBackend):
             [str(1)] if (self.get_input_datatype(0).min() < 0) else [str(0)]
         )
         code_gen_dict["$SEGMENTLEN$"] = [str(self._resolve_segment_len(clk))]
+        code_gen_dict["$TH$"] = [str(1)]
+        code_gen_dict["$WSIMD$"] = [
+            str(int(self.get_nodeattr("PE")) * int(self.get_nodeattr("SIMD")))
+        ]
+        code_gen_dict["$N_DCPL_STAGES$"] = [str(2)]
 
         return template_path, code_gen_dict
 

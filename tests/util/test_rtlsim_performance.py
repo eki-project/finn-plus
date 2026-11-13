@@ -5,6 +5,8 @@ import pytest
 
 from finn.util.rtlsim import annotate_rtlsim_performance
 
+pytestmark = pytest.mark.util
+
 
 def test_rtlsim_performance_rejects_single_frame_interval():
     stats = {

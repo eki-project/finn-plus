@@ -54,7 +54,6 @@ def make_two_layer_mvau_model(
                 weightDataType=wdt.name,
                 outputDataType=odt.name,
                 ActVal=odt.min(),
-                binaryXnorMode=0,
                 noActivation=0,
             )
         )

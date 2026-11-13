@@ -8,13 +8,13 @@ import numpy as np
 from onnx import GraphProto
 
 from finn.custom_op.fpgadataflow.hls import register_custom_op
-from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.custom_op.fpgadataflow.hlsbackend_legacy import LegacyHLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.unsqueeze import Unsqueeze
 
 
 @register_custom_op
-class Unsqueeze_hls(Unsqueeze, HLSBackend):
+class Unsqueeze_hls(Unsqueeze, LegacyHLSBackend):
     """HLS backend implementation of the Unsqueeze operator.
 
     Inserts single-dimension entries into the shape of a tensor using HLS synthesis.
@@ -24,7 +24,7 @@ class Unsqueeze_hls(Unsqueeze, HLSBackend):
         """Return the dictionary of node attributes for the HLS Unsqueeze operator."""
         attrs: NodeAttrTypes = {}
         attrs.update(Unsqueeze.get_nodeattr_types(self))
-        attrs.update(HLSBackend.get_nodeattr_types(self))
+        attrs.update(LegacyHLSBackend.get_nodeattr_types(self))
         return attrs
 
     def global_includes(self) -> None:
@@ -38,8 +38,8 @@ class Unsqueeze_hls(Unsqueeze, HLSBackend):
         self.code_gen_dict["$DEFINES$"] = []
 
     def execute_node(self, context: dict[str, np.ndarray], graph: GraphProto) -> None:
-        """Execute node via the generic HLSBackend implementation (cppsim/rtlsim)."""
-        HLSBackend.execute_node(self, context, graph)
+        """Execute node via the generic LegacyHLSBackend implementation (cppsim/rtlsim)."""
+        LegacyHLSBackend.execute_node(self, context, graph)
 
     def docompute(self) -> None:
         """Generate the C++ code for the computation part of the operator."""

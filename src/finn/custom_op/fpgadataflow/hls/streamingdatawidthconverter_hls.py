@@ -36,7 +36,7 @@ from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
-from finn.util.exception import FINNInternalError
+from finn.util.data_packing import hls_datatype_str
 
 # does not do anything at the ONNX node-by-node level, and input-output
 # tensor shapes are the same. performs data width conversion at the rtlsim level
@@ -83,83 +83,49 @@ class StreamingDataWidthConverter_hls(StreamingDataWidthConverter, HLSBackend):
 
     def global_includes(self) -> None:
         """Return global includes."""
-        self.code_gen_dict["$GLOBALS$"] = ['#include "streamtools.h"']
+        self.code_gen_dict["$GLOBALS$"] = ['#include "dwc.hpp"']
 
     def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        num_reps = 1
-        num_in_words = int(np.prod(self.get_folded_input_shape()[:-1]))
-        in_width = cast("int", self.get_nodeattr("inWidth"))
-        out_width = cast("int", self.get_nodeattr("outWidth"))
-        self.code_gen_dict["$DEFINES$"] = [
-            f"#define InWidth {in_width} ",
-            f"#define OutWidth {out_width} ",
-            f"#define NumInWords {num_in_words} ",
-            f"#define numReps {num_reps}",
-        ]
-        if self._needs_element_width_split():
-            elem_width = self.get_input_datatype().bitwidth()
-            if in_width % elem_width != 0:
-                raise FINNInternalError(
-                    f"{self.onnx_node.name}: DWC input width must be element-aligned"
-                )
-            if out_width % elem_width != 0:
-                raise FINNInternalError(
-                    f"{self.onnx_node.name}: DWC output width must be element-aligned"
-                )
-            num_middle_words = num_in_words * (in_width // elem_width)
-            if num_middle_words % (out_width // elem_width) != 0:
-                raise FINNInternalError(
-                    f"{self.onnx_node.name}: error in DWC element-width split calculation"
-                )
-            self.code_gen_dict["$DEFINES$"].append(f"#define IntermediateWidth {elem_width}")
-            self.code_gen_dict["$DEFINES$"].append(f"#define NumMiddleWords {num_middle_words}")
-        elif self.needs_lcm():
-            lcm_width = self.get_iowidth_lcm()
-            if num_in_words % (lcm_width / in_width) != 0:
-                raise FINNInternalError(f"{self.onnx_node.name}: error in DWC LCM calculation")
-            num_lcm_to_out = int(num_in_words // (lcm_width / in_width))
-            self.code_gen_dict["$DEFINES$"].append(f"#define LCMWidth {lcm_width}")
-            self.code_gen_dict["$DEFINES$"].append(f"#define NumLCMToOut {num_lcm_to_out}")
-
-    def strm_decl(self) -> None:
-        """Return strm decl."""
-        self.code_gen_dict["$STREAMDECLARATIONS$"] = [
-            f'hls::stream<ap_uint<{self.get_instream_width()}>> in0_V ("in0_V");',
-            f'hls::stream<ap_uint<{self.get_outstream_width()}>> out0_V ("out0_V");',
-        ]
+        self.code_gen_dict["$DEFINES$"] = []
 
     def docompute(self) -> None:
         """Return docompute."""
-        op = "StreamingDataWidthConverter_Batch"
+        elem_hls_type = hls_datatype_str(self.get_input_datatype())
+        n_in = self.get_folded_input_shape()[-1]
+        n_out = self.get_folded_output_shape()[-1]
+        op = "StreamingDWC"
         if self._needs_element_width_split():
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                'hls::stream<ap_uint<IntermediateWidth>> intermediate ("intermediate");',
-                f"{op}<InWidth, IntermediateWidth, NumInWords>(in0_V, intermediate, numReps);",
-                (
-                    f"{op}<IntermediateWidth, OutWidth, NumMiddleWords>"
-                    "(intermediate, out0_V, numReps);"
-                ),
+                f'hls::stream<tensor<{elem_hls_type},1>> intermediate ("intermediate");',
+                f"{op}<{elem_hls_type},{n_in},1>(in0_V, intermediate);",
+                f"{op}<{elem_hls_type},1,{n_out}>(intermediate, out0_V);",
             ]
         elif self.needs_lcm():
+            elem_bits = self.get_input_datatype().bitwidth()
+            lcm_elems = self.get_iowidth_lcm() // elem_bits
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                f'hls::stream<ap_uint<{self.get_iowidth_lcm()}>> intermediate ("intermediate");',
-                f"{op}<InWidth, LCMWidth, NumInWords>(in0_V, intermediate, numReps);",
-                f"{op}<LCMWidth, OutWidth, NumLCMToOut>(intermediate, out0_V, numReps);",
+                (
+                    f"hls::stream<tensor<{elem_hls_type},{lcm_elems}>> "
+                    'intermediate ("intermediate");'
+                ),
+                f"{op}<{elem_hls_type},{n_in},{lcm_elems}>(in0_V, intermediate);",
+                f"{op}<{elem_hls_type},{lcm_elems},{n_out}>(intermediate, out0_V);",
             ]
         else:
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                f"{op}<InWidth, OutWidth, NumInWords>(in0_V, out0_V, numReps);"
+                f"{op}<{elem_hls_type},{n_in},{n_out}>(in0_V, out0_V);"
             ]
 
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        in_packed_hls_type = f"ap_uint<{self.get_instream_width()}>"
-        out_packed_hls_type = f"ap_uint<{self.get_outstream_width()}>"
+        elem_hls_type = hls_datatype_str(self.get_input_datatype())
+        n_in = self.get_folded_input_shape()[-1]
+        n_out = self.get_folded_output_shape()[-1]
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             (
-                f"void {self.onnx_node.name}(hls::stream<{in_packed_hls_type} > &in0_V, "
-                f"hls::stream<{out_packed_hls_type} > &out0_V)"
+                f"void {self.onnx_node.name}(hls::stream<tensor<{elem_hls_type},{n_in}>> &in0_V, "
+                f"hls::stream<tensor<{elem_hls_type},{n_out}>> &out0_V)"
             )
         ]
 
@@ -169,9 +135,12 @@ class StreamingDataWidthConverter_hls(StreamingDataWidthConverter, HLSBackend):
             "#pragma HLS INTERFACE axis port=in0_V",
             "#pragma HLS INTERFACE axis port=out0_V",
             "#pragma HLS INTERFACE ap_ctrl_none port=return",
+            "#pragma HLS aggregate variable=in0_V compact=bit",
+            "#pragma HLS aggregate variable=out0_V compact=bit",
+            # StreamingDWC moves one word per call, so the top has to call it
+            # free-running, also when it is a single converter
+            "#pragma HLS DATAFLOW disable_start_propagation",
         ]
-        if self.needs_lcm():
-            self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS DATAFLOW disable_start_propagation")
 
     def execute_node(self, context: dict[str, np.ndarray], graph: GraphProto) -> None:
         """Execute node."""
@@ -183,3 +152,7 @@ class StreamingDataWidthConverter_hls(StreamingDataWidthConverter, HLSBackend):
             context[self.onnx_node.output[0]] = output
         elif mode == "rtlsim":
             HLSBackend.execute_node(self, context, graph)
+
+    def ipgen_extra_directives(self) -> list[str]:
+        """Return a list of extra tcl directives for HLS synthesis."""
+        return ["config_compile -pipeline_style flp"]

@@ -29,7 +29,6 @@
 
 """Module for iodma hls."""
 
-import math
 import numpy as np
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import TYPE_CHECKING, Any, cast
@@ -37,6 +36,8 @@ from typing import TYPE_CHECKING, Any, cast
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
+from finn.templates import load_codegen_template
+from finn.util.data_packing import hls_datatype_str
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
@@ -243,128 +244,58 @@ class IODMA_hls(HLSBackend, HWCustomOp):
 
     def global_includes(self) -> None:
         """Return global includes."""
-        self.code_gen_dict["$GLOBALS$"] = ['#include "dma.h"']
-        self.code_gen_dict["$GLOBALS$"].append('#include "streamtools.h"')
+        self.code_gen_dict["$GLOBALS$"] = ['#include "dma.hpp"', '#include "tensor.hpp"']
 
     def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
         itype_bits = self.get_input_datatype().bitwidth()
+        elem_hls_type = hls_datatype_str(self.get_input_datatype())
         total_bits = itype_bits * int(np.prod(self.get_normal_input_shape()))
         if total_bits % 8 != 0:
             raise FINNUserError("DMA input not a multiple of 1 Byte")
         total_bytes = total_bits // 8
+        intfw = self.intf_width
+        if intfw % itype_bits != 0:
+            raise FINNUserError("intfWidth must be a multiple of element bits")
+        n_intf = intfw // itype_bits
         self.code_gen_dict["$DEFINES$"] = [
-            f"#define NumBytes1 {total_bytes}\n#define DataWidth1 {self.intf_width}\n"
+            f"static constexpr unsigned NumBytes1 = {total_bytes};",
+            f"using DmaWord = tensor<{elem_hls_type}, {n_intf}>;",
         ]
 
     def get_ap_int_max_w(self) -> int:
         """Return the maximum width of any ap_int used in this module."""
-        instream = self.get_instream_width()
-        outstream = self.get_outstream_width()
-        return (instream * outstream) // math.gcd(instream, outstream)
+        return self.intf_width
 
     def docompute(self) -> None:
         """Return docompute."""
         direction = self.direction
         mode = self.burst_mode
-        dwc_func = "StreamingDataWidthConverter_Batch"
         if direction == "in":
             func = "Mem2Stream_Batch_external_wmem" if mode == "wrap" else "Mem2Stream_Batch"
         elif direction == "out":
             func = "Stream2Mem_Batch"
         else:
             raise FINNUserError("Invalid IODMA direction, please set to in or out")
-
-        # templates for instantiation
-        def dma_inst(src: str, dst: str) -> str:
-            """Render a DMA function instantiation line."""
-            return f"{func}<DataWidth1, NumBytes1>({src}, {dst}, numReps);"
-
-        def dwc_inst(w_in: int, w_out: int, n_reps: int, src: str, dst: str) -> str:
-            """Render a data-width-converter instantiation line."""
-            return f"{dwc_func}<{w_in}, {w_out}, {n_reps}>({src}, {dst}, numReps);"
-
-        # do stream infrastructure and instantiations
-        intfw = self.intf_width
-        strmw = self.stream_width
-        width_lcm = (strmw * intfw) // math.gcd(strmw, intfw)
-        # we always need two streams: one of width_lcm, and one of intfw width
-        # because we use WidthAdjustedInputStream,
-        dtype_bits = self.get_input_datatype().bitwidth()
-        total_bits = dtype_bits * int(np.prod(self.get_normal_input_shape()))
-
-        if direction == "in":
-            # AXI MM -> IODMA -> (DWCs) -> out
-            # DWCs depend on AXI MM and out interface width
-            if strmw == intfw:
-                # case 0: AXI MM width = out width, no DWCs needed
-                self.code_gen_dict["$DOCOMPUTE$"] = [dma_inst("in0_V", "out0_V")]
-            elif (strmw % intfw == 0) or (intfw % strmw == 0):
-                # case 1: AXI MM width divisible by out width or vice versa
-                # single DWC + single extra stream needed
-                self.code_gen_dict["$DOCOMPUTE$"] = [
-                    f"hls::stream<ap_uint<{intfw}> > dma2dwc;",
-                    dma_inst("in0_V", "dma2dwc"),
-                    dwc_inst(intfw, strmw, total_bits // intfw, "dma2dwc", "out0_V"),
-                ]
-            else:
-                # case 2: AXI MM width not divisible by out width or vice versa
-                # need 2 DWCs (going through the least common multiple width)
-                # and 2 streams
-                self.code_gen_dict["$DOCOMPUTE$"] = [
-                    f"hls::stream<ap_uint<{intfw}> > dma2lcm;",
-                    f"hls::stream<ap_uint<{width_lcm}> > lcm2out;",
-                    dma_inst("in0_V", "dma2lcm"),
-                    dwc_inst(intfw, width_lcm, total_bits // intfw, "dma2lcm", "lcm2out"),
-                    dwc_inst(width_lcm, strmw, total_bits // width_lcm, "lcm2out", "out0_V"),
-                ]
-        elif direction == "out":
-            # in0 -> (DWCs) -> IODMA -> AXI MM
-            # DWCs depend on AXI MM and out interface width
-            if strmw == intfw:
-                # case 0: in width = AXI MM width, no DWCs needed
-                self.code_gen_dict["$DOCOMPUTE$"] = [dma_inst("in0_V", "out0_V")]
-            elif (strmw % intfw == 0) or (intfw % strmw == 0):
-                # case 1: AXI MM width divisible by in width or vice versa
-                # single DWC + single extra stream needed
-                self.code_gen_dict["$DOCOMPUTE$"] = [
-                    f"hls::stream<ap_uint<{intfw}> > dwc2dma;",
-                    dwc_inst(strmw, intfw, total_bits // strmw, "in0_V", "dwc2dma"),
-                    dma_inst("dwc2dma", "out0_V"),
-                ]
-            else:
-                # case 2: AXI MM width not divisible by out width or vice versa
-                # need 2 DWCs (going through the least common multiple width)
-                # and 2 streams
-                self.code_gen_dict["$DOCOMPUTE$"] = [
-                    f"hls::stream<ap_uint<{width_lcm}> > in2lcm;",
-                    f"hls::stream<ap_uint<{intfw}> > lcm2dma;",
-                    dwc_inst(strmw, width_lcm, total_bits // strmw, "in0_V", "in2lcm"),
-                    dwc_inst(width_lcm, intfw, total_bits // width_lcm, "in2lcm", "lcm2dma"),
-                    dma_inst("lcm2dma", "out0_V"),
-                ]
-        else:
-            raise FINNUserError(f"Unknown IODMA direction: {direction}")
+        # Width conversion (if any) is handled by external DWC nodes inserted
+        # by InsertIODMA._insert_iodma_dwc, so streamWidth == intfWidth here.
+        self.code_gen_dict["$DOCOMPUTE$"] = [f"{func}<DmaWord, NumBytes1>(in0_V, out0_V, numReps);"]
 
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        packed_ibits = self.get_instream_width()
-        packed_hls_type_in = f"ap_uint<{packed_ibits}>"
-        packed_obits = self.get_outstream_width()
-        packed_hls_type_out = f"ap_uint<{packed_obits}>"
         direction = self.direction
         if direction == "in":
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
                 (
-                    f"void {self.onnx_node.name}({packed_hls_type_in} *in0_V, "
-                    f"hls::stream<{packed_hls_type_out} > &out0_V, unsigned int numReps)"
+                    f"void {self.onnx_node.name}(DmaWord *in0_V, hls::stream<DmaWord> &out0_V, "
+                    "unsigned int numReps)"
                 )
             ]
         elif direction == "out":
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
                 (
-                    f"void {self.onnx_node.name}(hls::stream<{packed_hls_type_in} > &in0_V, "
-                    f"{packed_hls_type_out} *out0_V, unsigned int numReps)"
+                    f"void {self.onnx_node.name}(hls::stream<DmaWord> &in0_V, DmaWord *out0_V, "
+                    "unsigned int numReps)"
                 )
             ]
         else:
@@ -393,6 +324,12 @@ class IODMA_hls(HLSBackend, HWCustomOp):
                 "#pragma HLS INTERFACE s_axilite port=in0_V bundle=control"
             )
             self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
+            self.code_gen_dict["$PRAGMAS$"].append(
+                "#pragma HLS aggregate variable=in0_V compact=bit"
+            )
+            self.code_gen_dict["$PRAGMAS$"].append(
+                "#pragma HLS aggregate variable=out0_V compact=bit"
+            )
         elif direction == "out":
             self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=in0_V")
             if intfname == "":
@@ -406,9 +343,23 @@ class IODMA_hls(HLSBackend, HWCustomOp):
             self.code_gen_dict["$PRAGMAS$"].append(
                 "#pragma HLS INTERFACE s_axilite port=out0_V bundle=control"
             )
+            self.code_gen_dict["$PRAGMAS$"].append(
+                "#pragma HLS aggregate variable=in0_V compact=bit"
+            )
+            self.code_gen_dict["$PRAGMAS$"].append(
+                "#pragma HLS aggregate variable=out0_V compact=bit"
+            )
         else:
             raise FINNUserError("Invalid IODMA direction, please set to in or out")
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS DATAFLOW")
+        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS DATAFLOW disable_start_propagation")
+
+    def cppsim_template(self) -> str:
+        """Return the blocking cppsim template.
+
+        IODMA uses bounded Mem2Stream/Stream2Mem loops, so the top function is called
+        once instead of free-running until the output stays empty.
+        """
+        return load_codegen_template("execute_single_node.cpp")
 
     def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute node (no-op for the IODMA)."""

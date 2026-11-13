@@ -28,15 +28,21 @@ from finn.util.exception import FINNInternalError
 # update this code to handle export configs from subgraphs
 # where the subgraph is found in a node's attribute as a graph type
 def extract_model_config(
-    model: "ModelWrapper", subgraph_hier: str | None, attr_names_to_extract: Sequence[str]
+    model: "ModelWrapper",
+    subgraph_hier: str | None,
+    attr_names_to_extract: Sequence[str],
+    apply_to_subgraphs: bool = False,
 ) -> dict[str, dict[str, int | float | str | bool | npt.NDArray | list[str | int | float] | None]]:
     """Create a dictionary with layer name -> attribute mappings extracted from the
     model. The created dictionary can be later applied on a model with
-    finn.transform.general.ApplyConfig.
+    finn.transformation.general.ApplyConfig.
 
-    Nodes in subgraphs are prefixed with their parent hierarchy using '_' as separator.
-    For example, a node 'Conv_0' inside a subgraph of node 'IfNode_0' will be exported
-    as 'IfNode_0_Conv_0' in the config."""
+    When apply_to_subgraphs is True, nodes in subgraphs are also extracted and
+    prefixed with their parent hierarchy using '_' as separator. For example, a
+    node 'Conv_0' inside a subgraph of node 'IfNode_0' will be exported as
+    'IfNode_0_<attr>_Conv_0' in the config. This matches the hierarchical key
+    convention consumed by ApplyConfig(config, apply_to_subgraphs=True), so the
+    two form a symmetric export/import pair. Defaults to False (top-level only)."""
     cfg = {}
     cfg["Defaults"] = {}
     for n in model.graph.node:
@@ -53,18 +59,20 @@ def extract_model_config(
                     layer_dict[attr] = oi.get_nodeattr(attr)
 
         # Process node attributes - handle both subgraphs and extractable attributes
-        for attr in n.attribute:
-            if attr.type == onnx.AttributeProto.GRAPH:
-                # If the attribute is a graph, extract configs from the subgraph recursively
-                # Include the subgraph attribute name in the hierarchy
-                subgraph_hier_with_attr = new_hier + "_" + attr.name
-                cfg.update(
-                    extract_model_config(
-                        model.make_subgraph_modelwrapper(attr.g),
-                        subgraph_hier_with_attr,
-                        attr_names_to_extract,
+        if apply_to_subgraphs:
+            for attr in n.attribute:
+                if attr.type == onnx.AttributeProto.GRAPH:
+                    # If the attribute is a graph, extract configs from the subgraph
+                    # recursively. Include the subgraph attribute name in the hierarchy
+                    subgraph_hier_with_attr = new_hier + "_" + attr.name
+                    cfg.update(
+                        extract_model_config(
+                            model.make_subgraph_modelwrapper(attr.g),
+                            subgraph_hier_with_attr,
+                            attr_names_to_extract,
+                            apply_to_subgraphs=apply_to_subgraphs,
+                        )
                     )
-                )
 
         # Add the node's config if we extracted any attributes
         if is_custom and len(layer_dict) > 0:
@@ -74,11 +82,14 @@ def extract_model_config(
 
 
 def extract_model_config_to_json(
-    model: ModelWrapper, json_filename: str | Path, attr_names_to_extract: Sequence[str]
+    model: ModelWrapper,
+    json_filename: str | Path,
+    attr_names_to_extract: Sequence[str],
+    apply_to_subgraphs: bool = False,
 ) -> None:
     """Create a json file with layer name -> attribute mappings extracted from the
     model. The created json file can be later applied on a model with
-    finn.transform.general.ApplyConfig.
+    finn.transformation.general.ApplyConfig.
     """
     target_json = Path(json_filename)
     if not target_json.suffix == ".json":
@@ -91,7 +102,10 @@ def extract_model_config_to_json(
     with target_json.open("w") as f:
         json.dump(
             extract_model_config(
-                model, subgraph_hier=None, attr_names_to_extract=attr_names_to_extract
+                model,
+                subgraph_hier=None,
+                attr_names_to_extract=attr_names_to_extract,
+                apply_to_subgraphs=apply_to_subgraphs,
             ),
             f,
             indent=2,
@@ -99,10 +113,12 @@ def extract_model_config_to_json(
 
 
 def extract_model_config_consolidate_shuffles(
-    model: "ModelWrapper", output_file: Path, hw_attrs: list[str]
+    model: "ModelWrapper", output_file: Path, hw_attrs: list[str], apply_to_subgraphs: bool = False
 ) -> None:
     """Export flow that takes into consideration how Shuffle operations have been decomposed."""
-    extract_model_config_to_json(model, output_file, hw_attrs)
+    extract_model_config_to_json(
+        model, output_file, hw_attrs, apply_to_subgraphs=apply_to_subgraphs
+    )
 
     with output_file.open() as f:
         config = json.load(f)

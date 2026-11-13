@@ -36,12 +36,13 @@ import onnx.numpy_helper as nph
 import torch
 import torchvision.transforms.functional as torchvision_util
 import warnings
+import xml.etree.ElementTree as ET
 from brevitas_examples import bnn_pynq, imagenet_classification
 from pathlib import Path
 from PIL import Image
 from pkgutil import get_data
 from qonnx.core.modelwrapper import ModelWrapper
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, VitisOptStrategy
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
@@ -54,6 +55,22 @@ from finn.util.basic import (
     robust_rmtree,
 )
 from finn.util.exception import FINNUserError
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+
+# The tree-model validation helpers live in their own module; upstream FINN has them in
+# finn.util.test, so they are re-exported here to keep the test imports aligned.
+from .tree_model import (
+    compare_chr_funcs_up_to_rotation,
+    compare_two_chr_funcs,
+    derive_token_access_vectors_using_rtlsim,
+    get_characteristic_fnc,
+    get_tav_io_dict,
+    tav_tolerance,
+    tree_model_test,
+    tree_model_test_up_to_rotation,
+)
 
 # map of (wbits,abits) -> model
 example_map = {
@@ -118,6 +135,22 @@ class _RuntimeWeightOp(Protocol):
     def make_weight_file(self, weights: np.ndarray, mode: str, path: str, /) -> None:
         """Write ``weights`` to the file ``path`` in the given file ``mode``."""
         ...
+
+
+def get_hls_synth_interval(op_inst: "HLSBackend") -> int:
+    """Return the initiation interval of an HLS node's synthesized top function as
+    reported by Vitis HLS. PrepareIP and HLSSynthIP must have been run."""
+    node_name = op_inst.onnx_node.name
+    code_gen_dir = Path(cast("str", op_inst.get_nodeattr("code_gen_dir_ipgen")))
+    report = code_gen_dir / f"project_{node_name}/sol1/syn/report/{node_name}_csynth.xml"
+    latency = ET.parse(report).getroot().find("PerformanceEstimates/SummaryOfOverallLatency")
+    assert latency is not None, f"no latency summary in {report}"
+    # pipelined tops report PipelineInitiationInterval, dataflow tops only Interval-min
+    interval = latency.find("PipelineInitiationInterval")
+    if interval is None:
+        interval = latency.find("Interval-min")
+    assert interval is not None and interval.text is not None, f"no interval in {report}"
+    return int(interval.text)
 
 
 def make_runtime_weight_stream(op_inst: _RuntimeWeightOp, weights: np.ndarray) -> list[int]:

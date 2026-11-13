@@ -59,16 +59,21 @@ namespace {
 }  // namespace
 
 PYBIND11_MODULE(xsi, m) {
+    // Whether Design accepts xsim_dir (XSI >= 2023.1).
+    m.attr("has_xsim_dir") = py::bool_(has_xsim_dir);
+
     py::class_<Kernel, std::shared_ptr<Kernel>>(m, "Kernel").def(py::init<std::string const&>());
 
     py::class_<Design, std::unique_ptr<Design, DesignDeleter>>(m, "Design")
-        .def(py::init([](std::shared_ptr<Kernel> const& kernel, std::string const& design_lib, char const* const log_file, char const* const wdb_file) {
-            assert_no_open_design(design_lib);
-            std::unique_ptr<Design, DesignDeleter> d{new Design(*kernel, design_lib, log_file, wdb_file)};
-            std::lock_guard<std::mutex> lock(use_mutex);
-            use_map.emplace(d.get(), DesignUse{kernel, design_lib});
-            return d;
-        }))
+        .def(py::init([](std::shared_ptr<Kernel> const& kernel, std::string const& design_lib, char const* const log_file, char const* const wdb_file,
+                         char const* const xsim_dir) {
+                 assert_no_open_design(design_lib);
+                 std::unique_ptr<Design, DesignDeleter> d{new Design(*kernel, design_lib, log_file, wdb_file, xsim_dir)};
+                 std::lock_guard<std::mutex> lock(use_mutex);
+                 use_map.emplace(d.get(), DesignUse{kernel, design_lib});
+                 return d;
+             }),
+             py::arg("kernel"), py::arg("design_lib"), py::arg("log_file") = nullptr, py::arg("wdb_file") = nullptr, py::arg("xsim_dir") = nullptr)
         .def("close", &Design::close)
         .def("is_open", &Design::is_open)
         .def("trace_all", &Design::trace_all)

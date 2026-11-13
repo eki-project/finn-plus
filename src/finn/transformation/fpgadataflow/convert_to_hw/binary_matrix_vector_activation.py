@@ -31,6 +31,7 @@
 from onnx import helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
@@ -46,6 +47,10 @@ class InferBinaryMatrixVectorActivation(Transformation):
     """Convert XnorPopcountMatMul layers to MatrixVectorActivation layers.
 
     Any immediately following MultiThreshold layers will also be absorbed into the MVAU.
+
+    XnorPopcountMatMul (from qonnx) uses BINARY {0,1} encoding. We convert
+    back to BIPOLAR {-1,+1} so that the native Bipolar type in finn-hlslib
+    handles the XNOR-popcount MAC correctly.
     """
 
     def __init__(self) -> None:
@@ -82,13 +87,40 @@ class InferBinaryMatrixVectorActivation(Transformation):
                         f"{n.name}: Second input (weights) for xnorpopcount is not set to "
                         "FINN DataType BINARY."
                     )
-                idt = DataType["BINARY"]
-                wdt = DataType["BINARY"]
+                # convert from BINARY {0,1} back to BIPOLAR {-1,+1}
+                idt = DataType["BIPOLAR"]
+                wdt = DataType["BIPOLAR"]
                 mm_output = n.output[0]
                 if (w := cast("np.ndarray | None", model.get_initializer(mm_weight))) is None:
                     raise FINNUserError(
                         f"{n.name}: Cannot infer binary MVAU, weights are not static."
                     )
+                # convert binary weights {0,1} to bipolar {-1,+1}
+                model.set_initializer(mm_weight, 2 * w - 1)
+                model.set_tensor_datatype(mm_weight, wdt)
+                model.set_tensor_datatype(mm_input, idt)
+                # Switch the layer producing the activations back to BIPOLAR as
+                # well, so that InferDataTypes() preserves the BIPOLAR annotation.
+                # This is either a MultiThreshold, or a previous binary layer that
+                # already absorbed its MultiThreshold (MVAU) or was converted to
+                # Thresholding. Only the direct producer is switched: layout ops
+                # such as MaxPool in between have to stay BINARY, since the
+                # finn-hlslib Bipolar type has no ordering.
+                act_producers = ["MultiThreshold", "MVAU", "Thresholding"]
+                producer = model.find_producer(mm_input)
+                if (
+                    producer is not None
+                    and producer.op_type in act_producers
+                    and model.get_tensor_datatype(producer.output[0]).bitwidth() == 1
+                ):
+                    if producer.op_type == "MultiThreshold":
+                        # exact inverse of ConvertBipolarMatMulToXnorPopcount
+                        mt_inst = getCustomOp(producer)
+                        mt_inst.set_nodeattr("out_dtype", "BIPOLAR")
+                        mt_inst.set_nodeattr("out_scale", 2.0)
+                        mt_inst.set_nodeattr("out_bias", -1.0)
+                    else:
+                        getCustomOp(producer).set_nodeattr("outputDataType", "BIPOLAR")
                 # extract weight shape, note that ONNX and finn-hlslib
                 # make different assumptions about dim order here
                 # ONNX assumes W has (in, out) shape
@@ -147,7 +179,6 @@ class InferBinaryMatrixVectorActivation(Transformation):
                         weightDataType=wdt.name,
                         outputDataType=odt.name,
                         ActVal=actval,
-                        binaryXnorMode=1,
                         noActivation=0,
                         numInputVectors=list(mm_in_shape[:-1]),
                         name=n.name,
@@ -177,7 +208,6 @@ class InferBinaryMatrixVectorActivation(Transformation):
                         weightDataType=wdt.name,
                         outputDataType=odt.name,
                         ActVal=0,
-                        binaryXnorMode=1,
                         noActivation=1,
                         numInputVectors=list(mm_in_shape[:-1]),
                         name=n.name,

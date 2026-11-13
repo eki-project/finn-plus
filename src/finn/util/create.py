@@ -122,21 +122,6 @@ def hls_mlp_maker(layer_spec: list[dict[str, Any]]) -> ModelWrapper:
             global_out = helper.make_tensor_value_info(current_out_name, TensorProto.FLOAT, [1, mh])
             model.graph.output.append(global_out)
 
-        # there are two ways to implement bipolar weights and inputs for
-        # MatrixVectorActivation:
-        # - specify their datatypes as such
-        # - specify their datatypes as BINARY as use binaryXnorMode
-        if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
-            # we'll internally convert weights/inputs to binary and specify the
-            # datatypes as such, and also set the binaryXnorMode attribute to 1
-            export_wdt = DataType["BINARY"]
-            export_idt = DataType["BINARY"]
-            binary_xnor_mode = 1
-        else:
-            export_wdt = wdt
-            export_idt = idt
-            binary_xnor_mode = 0
-
         if thresholds is not None:
             no_act = 0
             node_inp_list = [current_in_name, current_w_name, current_t_name]
@@ -156,11 +141,10 @@ def hls_mlp_maker(layer_spec: list[dict[str, Any]]) -> ModelWrapper:
             MH=mh,
             SIMD=simd,
             PE=pe,
-            inputDataType=export_idt.name,
-            weightDataType=export_wdt.name,
+            inputDataType=idt.name,
+            weightDataType=wdt.name,
             outputDataType=odt.name,
             ActVal=actval,
-            binaryXnorMode=binary_xnor_mode,
             noActivation=no_act,
         )
 
@@ -168,11 +152,7 @@ def hls_mlp_maker(layer_spec: list[dict[str, Any]]) -> ModelWrapper:
         model.set_tensor_datatype(current_in_name, idt)
         model.set_tensor_datatype(current_out_name, odt)
         model.set_tensor_datatype(current_w_name, wdt)
-        if binary_xnor_mode:
-            # convert bipolar to binary
-            model.set_initializer(current_w_name, (weights + 1) / 2)
-        else:
-            model.set_initializer(current_w_name, weights)
+        model.set_initializer(current_w_name, weights)
         if thresholds is not None:
             model.set_tensor_datatype(current_t_name, tdt)
             model.set_initializer(current_t_name, thresholds)

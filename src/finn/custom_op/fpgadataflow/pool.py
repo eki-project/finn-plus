@@ -50,18 +50,12 @@ _SUPPORTED_FUNCTIONS = ("MaxPool", "AvgPool", "AccPool", "QuantAvgPool")
 class Pool(HWCustomOp):
     """Abstraction layer for HW implementation of Pool.
 
-    Requires ``ConvolutionInputGenerator(depthwise == 1)`` to format its input.
+    Consolidated pooling node that fuses sliding-window generation (input_gen),
+    optional padding (pad), and the pooling reduction (pool<F>) into a single
+    HLS kernel.
 
-    Input shape ``(BatchSize, OutImgDim, OutImgDim, TotalKernelSize * Channels)``
-    Output shape ``(BatchSize, OutImgDim, OutImgDim, Channels)``
-
-    Notes:
-    * The input shape was chosen to be compatible with im2col (only true when there
-      is not folding).
-    * The actual data layout produced by the hlslib kernels is different
-      for depthwise ops.
-
-        * depthwise SWG: ``(1, OFMDim, OFMDim, IFMChannels/PE, K, K, PE)``
+    Input shape ``(BatchSize, IFMDim_H, IFMDim_W, Channels)`` (raw feature map)
+    Output shape ``(BatchSize, OutImgDim_H, OutImgDim_W, Channels)``
 
     Channels can be folded using PE (SIMD from the input perspective).
     """
@@ -78,7 +72,16 @@ class Pool(HWCustomOp):
             "KernelSize": ("ints", True, []),
             # Pooling function to use corresponding to hlslib functions
             "Function": ("s", True, "", set(_SUPPORTED_FUNCTIONS)),
+            # Input feature map spatial dimensions [H, W]
+            "IFMDim": ("ints", True, []),
+            # Output feature map spatial dimensions [H, W]
             "OutImgDims": ("ints", True, []),
+            # Stride [SH, SW]
+            "Stride": ("ints", True, []),
+            # Padding [H_begin, W_begin, H_end, W_end]
+            "Padding": ("ints", False, [0, 0, 0, 0]),
+            # Pad value (datatype min for MaxPool, 0 otherwise)
+            "PadValue": ("i", False, 0),
             # FINN DataTypes for inputs/outputs
             "InputDataType": ("s", True, ""),
             "OutputDataType": ("s", True, ""),
@@ -103,6 +106,26 @@ class Pool(HWCustomOp):
     def kernel_size(self) -> list[int]:
         """Get the pooling kernel size per spatial axis."""
         return list(cast("list[int]", self.get_nodeattr("KernelSize")))
+
+    @property
+    def ifm_dim(self) -> list[int]:
+        """Get the input feature-map spatial dimensions [H, W]."""
+        return list(cast("list[int]", self.get_nodeattr("IFMDim")))
+
+    @property
+    def stride(self) -> list[int]:
+        """Get the pooling stride [SH, SW]."""
+        return list(cast("list[int]", self.get_nodeattr("Stride")))
+
+    @property
+    def padding(self) -> list[int]:
+        """Get the padding [H_begin, W_begin, H_end, W_end]."""
+        return list(cast("list[int]", self.get_nodeattr("Padding")))
+
+    @property
+    def pad_value(self) -> int:
+        """Get the padding value (datatype min for MaxPool, 0 otherwise)."""
+        return cast("int", self.get_nodeattr("PadValue"))
 
     @property
     def out_img_dims(self) -> list[int]:
@@ -152,14 +175,13 @@ class Pool(HWCustomOp):
                     f"{self.onnx_node.name}: QuantAvgPool cannot mix signed and unsigned datatypes"
                 )
         else:
-            raise FINNUserError(f"{self.onnx_node.name}: Pool_Batch does not support {fxn}")
+            raise FINNUserError(f"{self.onnx_node.name}: Pool does not support {fxn}")
 
         return odt
 
     def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
-        """Return shape of the input tensor."""
-        k_prod = int(np.prod(self.kernel_size))
-        return (self.batch_size, *self.out_img_dims, k_prod * self.channels)
+        """Return shape of the input tensor (the raw feature map)."""
+        return (self.batch_size, *self.ifm_dim, self.channels)
 
     def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return shape of the folded input tensor."""
@@ -168,7 +190,7 @@ class Pool(HWCustomOp):
             raise FINNInternalError(
                 f"{self.onnx_node.name}: PE ({self.pe}) must divide Channels ({self.channels})"
             )
-        fold = normal_ishape[-1] // self.pe
+        fold = self.channels // self.pe
         return (*normal_ishape[:-1], fold, self.pe)
 
     def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
@@ -186,11 +208,61 @@ class Pool(HWCustomOp):
 
     def get_exp_cycles(self) -> int:
         """Return estimation of expected cycles for set folding."""
-        # (Channels * kernel * kernel) / PE * odim * odim * batch_size
-        k_prod = int(np.prod(self.kernel_size))
-        exp_cycles = (
-            ((self.channels * k_prod) / self.pe) * np.prod(self.out_img_dims) * self.batch_size
+        # Fused kernel: [pad] -> input_gen -> pool<F> in HLS dataflow.
+        #
+        # Output bound: input_gen reads elements from a circular buffer
+        # driven by a Nest<> loop nest. Output i reads buffer address addrs[i],
+        # whose data becomes available WP_DELAY+1 cycles after it enters the
+        # buffer (plus PAD_LATENCY when pad<> precedes input_gen). Outputs are
+        # serialised at 1/cycle, so:
+        #   earliest[i] = max(earliest[i-1]+1, addrs[i] + base_delay)
+        # and the last output is due at max_slack + base_delay + total_out - 1
+        # with max_slack = max over i of (addrs[i] - i). For the pooling nest
+        # (oh, ow, cf, kh, kw), addrs[i] - i is linear in every loop index, so
+        # its maximum is attained at a corner of the index box.
+        #
+        # Input bound: the whole (padded) feature map streams through, also
+        # where no window reads it (floor remainder), and the
+        # simulation only completes once all input has been consumed.
+        cf = self.channels // self.pe
+        k_h, k_w = self.kernel_size
+        s_h, s_w = self.stride
+        ifm_dim_h, ifm_dim_w = self.ifm_dim
+        ofm_dim_h, ofm_dim_w = self.out_img_dims
+        pad = self.padding
+        has_padding = any(p != 0 for p in pad)
+
+        # Padded spatial dimensions (what input_gen sees)
+        h_padded = ifm_dim_h + pad[0] + pad[2]
+        w_padded = ifm_dim_w + pad[1] + pad[3]
+
+        # Total output elements from input_gen
+        total_out = ofm_dim_h * ofm_dim_w * k_h * k_w * cf
+
+        def slack(oh: int, ow: int, c: int, kh: int, kw: int) -> int:
+            """Return buffer address minus output index for one loop-nest point."""
+            addr = ((oh * s_h + kh) * w_padded + (ow * s_w + kw)) * cf + c
+            idx = (((oh * ofm_dim_w + ow) * cf + c) * k_h + kh) * k_w + kw
+            return addr - idx
+
+        max_slack = max(
+            slack(oh, ow, c, kh, kw)
+            for oh in (0, ofm_dim_h - 1)
+            for ow in (0, ofm_dim_w - 1)
+            for c in (0, cf - 1)
+            for kh in (0, k_h - 1)
+            for kw in (0, k_w - 1)
         )
+
+        # HLS pipeline constants
+        wp_delay = 4
+        pipeline_flush = 3
+        pad_latency = 4 if has_padding else 0
+
+        base_delay = wp_delay + 1 + pad_latency
+        out_bound = max_slack + base_delay + total_out - 1 + pipeline_flush
+        in_bound = h_padded * w_padded * cf + pad_latency + pipeline_flush
+        exp_cycles = max(out_bound, in_bound) * self.batch_size
         return int(exp_cycles)
 
     def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
@@ -290,7 +362,7 @@ class Pool(HWCustomOp):
         if len(self.onnx_node.input) == 1:
             info_messages.append("The number of inputs is correct")
         else:
-            info_messages.append("""Pool_Batch needs 1 data input""")
+            info_messages.append("""Pool needs 1 data input""")
 
         # check supported function
         if self.function in _SUPPORTED_FUNCTIONS:
@@ -306,30 +378,51 @@ class Pool(HWCustomOp):
         # simulate behavior with Python functionality
         node = self.onnx_node
         fxn = self.function
-        k = self.kernel_size
+        if fxn not in _SUPPORTED_FUNCTIONS:
+            raise FINNInternalError(f"{self.onnx_node.name}: Pool does not support {fxn}")
+        kh, kw = self.kernel_size
+        sh, sw = self.stride
         ch = self.channels
-        k2 = k[0] * k[1]
+        pad = self.padding
+        k2 = kh * kw
 
+        # inp_values shape: (batch, IFM_H, IFM_W, Channels)
         inp_values = context[node.input[0]]
-        ishape = inp_values.shape
-        # reshape array to apply max or avg function only on kernel
-        tmp_values = inp_values.reshape((*ishape[:-1], k2, ch))
-        if fxn == "MaxPool":
-            result = np.max(tmp_values, axis=3)
-        elif fxn == "AccPool":
-            result = np.sum(tmp_values, axis=3)
-        elif fxn == "AvgPool":
-            result = np.mean(tmp_values, axis=3)
-        elif fxn == "QuantAvgPool":
-            # determine bits to shift
-            ibits = self.get_input_datatype().bitwidth()
-            obits = self.get_output_datatype().bitwidth()
-            max_value = (2**ibits - 1) * k2
-            max_bit_width = int(max_value).bit_length()
-            shift_bits = max(max_bit_width - obits, 0)
-            result = np.sum(tmp_values, axis=3)
-            result = np.right_shift(result.astype(int), shift_bits)
-        else:
-            raise FINNInternalError(f"{self.onnx_node.name}: Pool_Batch does not support {fxn}")
+
+        # Apply padding if needed
+        if any(p != 0 for p in pad):
+            inp_values = np.pad(
+                inp_values,
+                ((0, 0), (pad[0], pad[2]), (pad[1], pad[3]), (0, 0)),
+                mode="constant",
+                constant_values=self.pad_value,
+            )
+
+        batch = inp_values.shape[0]
+        ofm_h, ofm_w = self.out_img_dims
+
+        # Extract sliding windows and reduce
+        # result shape: (batch, ofm_h, ofm_w, ch)
+        result = np.zeros((batch, ofm_h, ofm_w, ch), dtype=inp_values.dtype)
+        for b in range(batch):
+            for oh in range(ofm_h):
+                for ow in range(ofm_w):
+                    window = inp_values[b, oh * sh : oh * sh + kh, ow * sw : ow * sw + kw, :]
+                    if fxn == "MaxPool":
+                        result[b, oh, ow, :] = np.max(window, axis=(0, 1))
+                    elif fxn == "AccPool":
+                        result[b, oh, ow, :] = np.sum(window, axis=(0, 1))
+                    elif fxn == "AvgPool":
+                        result[b, oh, ow, :] = np.mean(window, axis=(0, 1))
+                    else:  # QuantAvgPool
+                        # determine bits to shift
+                        ibits = self.get_input_datatype().bitwidth()
+                        obits = self.get_output_datatype().bitwidth()
+                        max_value = (2**ibits - 1) * k2
+                        max_bit_width = int(max_value).bit_length()
+                        shift_bits = max(0, max_bit_width - obits)
+                        acc = np.sum(window, axis=(0, 1))
+                        result[b, oh, ow, :] = np.right_shift(acc.astype(int), shift_bits)
+
         oshape = context[node.output[0]].shape
         context[node.output[0]] = np.asarray(result, dtype=np.float32).reshape(oshape)

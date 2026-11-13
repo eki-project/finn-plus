@@ -47,6 +47,7 @@ from qonnx.core.modelwrapper import DataType, ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.bipolar_to_xnor import ConvertBipolarMatMulToXnorPopcount
+from qonnx.transformation.composed import ComposedTransformation
 from qonnx.transformation.fold_constants import FoldConstants
 from qonnx.transformation.general import (
     GiveReadableTensorNames,
@@ -131,6 +132,12 @@ from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation imp
 from finn.transformation.fpgadataflow.convert_to_hw.where import InferWhereLayer
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
+from finn.transformation.fpgadataflow.derive_characteristic import (
+    DeriveTokenAccessVectors,
+    nodes_without_tree_model,
+)
+from finn.transformation.fpgadataflow.export_portable_rtl import ExportPortableRTL
+from finn.transformation.fpgadataflow.fifo_sizing.derive_fifo_sizes import DeriveFIFOSizes
 from finn.transformation.fpgadataflow.floorplan import Floorplan
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
@@ -198,11 +205,16 @@ from finn.transformation.multi_dnn.nodecontainer_transformations import (
     GenerateNodeContainerStitched,
     NameNodeContainerNodes,
 )
-from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
+from finn.transformation.qonnx.convert_qonnx_to_finn import QONNX_QUANT_OP_TYPES, ConvertQONNXtoFINN
 from finn.transformation.qonnx.give_unique_node_names_recursive import GiveUniqueNodeNamesRecursive
 from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
 from finn.transformation.streamline import Streamline
-from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
+from finn.transformation.streamline.reorder import (
+    MakeMaxPoolNHWC,
+    MoveTransposePastEltwise,
+    MoveTransposePastFork,
+    MoveTransposePastJoinAdd,
+)
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import (
     get_metadata_prop_path,
@@ -213,7 +225,7 @@ from finn.util.basic import (
 from finn.util.config import extract_model_config_to_json
 from finn.util.exception import FINNInternalError, FINNMultiFPGAUserError, FINNUserError
 from finn.util.execution import execute_parent
-from finn.util.fpgadataflow import is_mlo, warn_hls_rtl_dsp_conflict
+from finn.util.fpgadataflow import cleanup_characterization, is_mlo, warn_hls_rtl_dsp_conflict
 from finn.util.logging import log
 from finn.util.slurmutil import detect_slurm_hosts, get_local_cores, parse_hosts
 from finn.util.verification import nodewise_verification
@@ -223,6 +235,9 @@ if TYPE_CHECKING:
     from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
     from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
 
+
+#: Shell flows built as a Vivado PYNQ project (ZynqBuild): Zynq and, from Xilinx/finn#1717, Versal
+PYNQ_SHELL_FLOWS = (ShellFlowType.VIVADO_ZYNQ, ShellFlowType.VIVADO_VERSAL)
 
 BuildDataflowStep = Callable[..., ModelWrapper]
 build_dataflow_step_lookup: dict[str, BuildDataflowStep] = {}
@@ -629,6 +644,8 @@ def step_hw_codegen(
                 node_inst.set_nodeattr(
                     "debug_log_path", str(fifo_log_dir / f"{prefix}{node.name}.log")
                 )
+                node_inst.set_nodeattr("fifo_log_verbose", int(cfg.fifo_log_verbose))
+                node_inst.set_nodeattr("fifo_log_flush_cycles", int(cfg.fifo_log_flush_cycles))
     model = model.transform(
         PrepareIP(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period()),
         apply_to_subgraphs=True,
@@ -700,6 +717,74 @@ def step_hw_ipgen(
                     getCustomOp(node).set_nodeattr("rtlsim_trace", "")
 
     return model
+
+
+def _set_fifo_depths_heuristic_analytical(
+    model: ModelWrapper, cfg: DataflowBuildConfig, parent_node: str | None = None
+) -> ModelWrapper:
+    """Size and insert all FIFOs with the analytical token-access-vector heuristic.
+
+    This is the ``heuristic_analytical`` strategy of upstream FINN (Xilinx/finn#1185)
+    restricted to its analytical half: every operator with a tree model contributes
+    its token access vectors (``DeriveTokenAccessVectors``), the chained-TAV pass
+    (``DeriveFIFOSizes``) turns them into per-edge depths, and ``InsertFIFO`` creates
+    the FIFOs. No IP generation, synthesis or simulation is involved.
+
+    Deviation from upstream: operators without a tree model are not characterized by
+    rtlsim. They get no token access vectors and are treated as transparent by the
+    sizing pass, as upstream does in estimate-only builds. Their names are logged and
+    written to the FIFO sizing report by the caller's report section.
+
+    Args:
+        model: Model after folding, before FIFO insertion.
+        cfg: Build configuration.
+        parent_node: Name prefix for nodes if the model is a subgraph.
+
+    Returns:
+        Model with DWCs and sized FIFOs inserted and specialized.
+
+    Raises:
+        FINNUserError: If the model contains FINNLoop (MLO) nodes, which have no tree
+            model and cannot be sized analytically.
+    """
+    if is_mlo(model):
+        raise FINNUserError(
+            "auto_fifo_strategy heuristic_analytical does not support MLO models: FINNLoop has "
+            "no tree model and FINN+ does not carry the rtlsim characterization fallback."
+        )
+    model = model.transform(InsertDWC())
+    model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
+    model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
+    model = model.transform(AnnotateCycles())
+
+    model = model.transform(DeriveTokenAccessVectors("tree_model"))
+    unmodelled = nodes_without_tree_model(model)
+    if unmodelled:
+        log.warning(
+            f"heuristic_analytical FIFO sizing: no tree model for {len(unmodelled)} node(s) "
+            f"({', '.join(unmodelled)}). They are treated as transparent, so the FIFOs around "
+            "them are sized without knowledge of their schedule and may be too small."
+        )
+    model.set_metadata_prop("fifo_sizing_nodes_without_tree_model", json.dumps(unmodelled))
+
+    # Period of the graph: the slowest token access vector, and for the nodes that have
+    # none their cycle estimate (upstream measures those by rtlsim instead).
+    period = int(
+        cast(
+            "int",
+            model.analysis(partial(dataflow_performance, use_characterized=True))["max_cycles"],
+        )
+    )
+    for name in unmodelled:
+        node_inst = getHWCustomOp(model.get_node_from_name(name))
+        period = max(period, int(cast("int", node_inst.get_nodeattr("cycles_estimate"))))
+    model = model.transform(DeriveFIFOSizes(period=period))
+    model = model.transform(InsertFIFO(create_shallow_fifos=True))
+    cleanup_characterization(model)
+
+    model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
+    model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
+    return model.transform(GiveReadableTensorNames())
 
 
 @register_build_dataflow_step()
@@ -818,7 +903,7 @@ def step_set_fifo_depths(
 
             # Save the exact folding configuration for the live-sizing follow-up build.
             cfg_path = cfg.get_report_directory() / "folding_config.json"
-            extract_model_config_to_json(model, cfg_path, hw_attrs)
+            extract_model_config_to_json(model, cfg_path, hw_attrs, apply_to_subgraphs=True)
             model.set_metadata_prop("folding_config", str(cfg_path))
 
             # Disable runtime-writable weights, external weights, and dynamic mode
@@ -863,6 +948,8 @@ def step_set_fifo_depths(
                 node_inst.set_nodeattr("impl_style", "virtual")
                 node_inst.set_nodeattr("fifo_id", idf)
 
+        elif cfg.auto_fifo_strategy == AutoFIFOSizingMethod.HEURISTIC_ANALYTICAL:
+            model = _set_fifo_depths_heuristic_analytical(model, cfg, parent_node)
         elif cfg.auto_fifo_strategy == AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS:
             # Insert all FIFOs (and DWCs) but keep them at their minimal default depth,
             # i.e. no sizing simulation is run at all.
@@ -931,6 +1018,10 @@ def step_set_fifo_depths(
         total_fifo_size += fifo_size
         total_fifo_size_effective += fifo_size_effective
     fifo_info["total_fifo_size_kiB"] = total_fifo_size / 8.0 / 1024.0
+    # heuristic_analytical: nodes that were sized around without a tree model
+    unmodelled = model.get_metadata_prop("fifo_sizing_nodes_without_tree_model")
+    if unmodelled:
+        fifo_info["nodes_without_tree_model"] = json.loads(unmodelled)
     fifo_info["total_fifo_size_effective_kiB"] = total_fifo_size_effective / 8.0 / 1024.0
 
     report_dir = Path(cfg.output_dir) / "report"
@@ -943,6 +1034,15 @@ def step_set_fifo_depths(
 
     model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
     model = model.transform(GiveReadableTensorNames())
+
+    # The analytical heuristic needs no generated hardware, so it can size the FIFOs of an
+    # estimate-only build. Nothing is generated for the inserted FIFOs and DWCs then either.
+    if (
+        cfg.auto_fifo_depths
+        and cfg.auto_fifo_strategy == AutoFIFOSizingMethod.HEURISTIC_ANALYTICAL
+        and all(out == DataflowOutputType.ESTIMATE_REPORTS for out in cfg.generate_outputs)
+    ):
+        return model
 
     # after FIFOs are ready to go, call PrepareIP and HLSSynthIP again
     # this will only run for the new nodes (e.g. FIFOs and DWCs)
@@ -1012,14 +1112,15 @@ def step_prepare_nodecontainer(model: ModelWrapper, cfg: DataflowBuildConfig) ->
 
 @register_build_dataflow_step()
 def step_qonnx_to_finn(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
-    """Step will only execute if QONNX nodes are found.
-    These include the following op_types: "Quant" , "Trunc" and "BinaryQuant".
+    """Step will only execute if QONNX quantization nodes are found, i.e. nodes with one
+    of the op_types in QONNX_QUANT_OP_TYPES ("IntQuant", "Quant", "BipolarQuant",
+    "FloatQuant" and "Trunc") or the legacy "BinaryQuant".
     If such nodes are found the step will run the tidy-up step from QONNX
     and then convert the QONNX model to the FINN-ONNX dialect.
     """
-    # Check if any QONNX nodes exist, i.e. BipolarQuant, BinaryQuant, Quant or Trunc
+    # Check if any QONNX quantization nodes exist
     q_count = 0
-    for op_type in ["BipolarQuant", "BinaryQuant", "Quant", "Trunc"]:
+    for op_type in {*QONNX_QUANT_OP_TYPES, "BinaryQuant"}:
         q_count += len(model.get_nodes_by_op_type(op_type))
     if q_count == 0:
         return model
@@ -1109,6 +1210,25 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
             model = model.transform(transform)
         return model
 
+    # Cancel channels-last (NCHW<->NHWC) layout transposes to a fixpoint before HW
+    # op-conversion, so they absorb into MultiThresholds (fixing their data_layout)
+    # instead of freezing into shuffle layers. Idempotent once linear graphs are
+    # detangled; the fixpoint is what resolves residual fork/join chains (e.g. ResNet).
+    if len(model.get_nodes_by_op_type("Transpose")) > 0:
+        model = model.transform(InferDataLayouts())
+        model = model.transform(
+            ComposedTransformation(
+                [
+                    MoveTransposePastJoinAdd(),
+                    MoveTransposePastFork(),
+                    MoveTransposePastEltwise(),
+                    absorb.AbsorbConsecutiveTransposes(),
+                    absorb.AbsorbTransposeIntoMultiThreshold(),
+                ]
+            )
+        )
+        model = model.transform(InferDataLayouts())
+
     # Thresholding layers (standalone mode)
     if cfg.standalone_thresholds:
         # First: Convert high-bitwidth MultiThreshold and all Quant nodes to Requant
@@ -1152,9 +1272,6 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
         model, ["MatMul"], InferVectorVectorActivation(), "vector-vector activation"
     )
 
-    # Classification/output layers
-    model = apply_if_relevant(model, ["TopK"], InferLabelSelectLayer(), "label select layers")
-
     # Input quantization (if any) - high-bitwidth MultiThreshold and Quant as Requant,
     # low-bitwidth MultiThreshold as Thresholding
     model = apply_if_relevant(
@@ -1168,33 +1285,17 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
     )
     model = apply_if_relevant(model, ["Pad"], InferFMPadding(), "padding layers")
 
-    # Convolution-related transformations
+    # Piecewise polynomial activations (GELU, SiLU, Sigmoid, Tanh)
     model = apply_if_relevant(
         model,
-        ["MaxPool", "AveragePool", "MaxPoolNHWC", "QuantAvgPool2d"],
-        InferPool(),
-        "pooling layers",
-    )
-    model = apply_if_relevant(
-        model,
-        ["ReduceMax", "ReduceSum", "ReduceMean"],
-        InferPoolFromReduce(),
-        "reduce layers",
-    )
-    model = apply_if_relevant(model, ["Im2Col"], InferConvInpGen(), "conv input generator")
-    # If ConvInpGen derived, run remove cnv to fc flatten transform
-    model = apply_if_relevant(
-        model, ["ConvolutionInputGenerator"], RemoveCNVtoFCFlatten(), "Flatten"
+        ["PWPolyF", "Gelu", "Sigmoid", "Tanh", "Erf"],
+        InferPWPolyFLayer(),
+        "piecewise polynomial activations",
     )
 
-    # Streaming operations
-    model = apply_if_relevant(
-        model, ["Concat"], InferPad1DLayer(), "1D padding and CLS token insertion"
-    )
-    model = apply_if_relevant(model, ["Concat"], InferConcatLayer(), "concat layers")
-    model = apply_if_relevant(model, ["Split"], InferSplitLayer(), "split layers")
-
-    # Elementwise operations
+    # Elementwise binary ops (Add/Mul/...). Before InferPool: promoting a preceding
+    # integer-valued Add/Mul to an integer ElementwiseAdd/Mul lets the pool's
+    # integer-input gate pass (e.g. QuantAvgPool2d).
     model = apply_if_relevant(
         model,
         [
@@ -1214,13 +1315,48 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
         InferElementwiseBinaryOperation(),
         "elementwise binary operations",
     )
+
+    # Classification/output layers. After the elementwise ops: a final bias Add
+    # in front of TopK only becomes integer once it is an ElementwiseAdd, and
+    # InferLabelSelectLayer skips non-integer inputs.
+    model = apply_if_relevant(model, ["TopK"], InferLabelSelectLayer(), "label select layers")
+
+    # Convolution-related transformations
+    model = apply_if_relevant(
+        model,
+        ["MaxPool", "AveragePool", "MaxPoolNHWC", "QuantAvgPool2d"],
+        InferPool(),
+        "pooling layers",
+    )
+    model = apply_if_relevant(
+        model,
+        ["ReduceMax", "ReduceSum", "ReduceMean"],
+        InferPoolFromReduce(),
+        "reduce layers",
+    )
+    model = apply_if_relevant(model, ["Im2Col"], InferConvInpGen(), "conv input generator")
+    # Remove a flatten-into-FC pattern (standalone flatten between two dataflow
+    # nodes, or a [0,3,1,2] transpose+flatten absorbed into the following MVAU).
+    # The transform is fully self-gating and a no-op unless the exact pattern is
+    # present. Runs before InferShuffle so genuinely-absorbable transposes are
+    # eliminated rather than turned into (resource-costing) shuffle layers.
+    model = apply_if_relevant(model, ["Flatten", "Reshape"], RemoveCNVtoFCFlatten(), "Flatten")
+
+    # Streaming operations
+    model = apply_if_relevant(
+        model, ["Concat"], InferPad1DLayer(), "1D padding and CLS token insertion"
+    )
+    model = apply_if_relevant(model, ["Concat"], InferConcatLayer(), "concat layers")
+    model = apply_if_relevant(model, ["Split"], InferSplitLayer(), "split layers")
+
+    # Elementwise operations
     model = apply_if_relevant(model, ["Where"], InferWhereLayer(), "where selection")
     model = apply_if_relevant(
         model, ["Relu"], InferReLUAsElementwiseMax(), "ReLU as elementwise max"
     )
 
     # Upsampling and resizing
-    model = apply_if_relevant(model, ["Upsample"], InferUpsample(), "upsample layers")
+    model = apply_if_relevant(model, ["Upsample", "Resize"], InferUpsample(), "upsample layers")
 
     # Global pooling
     model = apply_if_relevant(
@@ -1235,13 +1371,6 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
 
     # Activation functions
     model = apply_if_relevant(model, ["Softmax"], InferHWSoftmax(), "softmax layers")
-    # Piecewise polynomial activations (GELU, SiLU, Sigmoid, Tanh)
-    model = apply_if_relevant(
-        model,
-        ["PWPolyF", "Gelu", "Sigmoid", "Tanh", "Erf"],
-        InferPWPolyFLayer(),
-        "piecewise polynomial activations",
-    )
 
     # Normalization layers
     model = apply_if_relevant(
@@ -1374,7 +1503,10 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
         "preferred_impl_style",
     ]
     extract_model_config_to_json(
-        model, Path(cfg.output_dir) / "template_specialize_layers_config.json", attrs
+        model,
+        Path(cfg.output_dir) / "template_specialize_layers_config.json",
+        attrs,
+        apply_to_subgraphs=True,
     )
 
     return model
@@ -1389,7 +1521,9 @@ def step_specialize_layers(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
     a warning will be printed and the implementation style will be set to a default."""
     if cfg.specialize_layers_config_file is not None:
         model = model.transform(GiveUniqueNodeNamesRecursive())
-        model = model.transform(ApplyConfig(cfg.specialize_layers_config_file))
+        model = model.transform(
+            ApplyConfig(cfg.specialize_layers_config_file, apply_to_subgraphs=True)
+        )
     model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
     model = model.transform(GiveUniqueNodeNamesRecursive())
     model = model.transform(InferShapes())
@@ -1467,7 +1601,10 @@ def step_target_fps_parallelization(model: ModelWrapper, cfg: DataflowBuildConfi
             "depth_trigger_bram",
         ]
         extract_model_config_to_json(
-            model, cfg.get_report_directory() / "auto_folding_config.json", hw_attrs
+            model,
+            cfg.get_report_directory() / "auto_folding_config.json",
+            hw_attrs,
+            apply_to_subgraphs=True,
         )
 
     else:
@@ -1482,7 +1619,7 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
     and other attributes, if config file is specified."""
     model = model.transform(GiveUniqueNodeNamesRecursive())
     if cfg.folding_config_file is not None:
-        model = model.transform(ApplyConfig(cfg.folding_config_file), apply_to_subgraphs=True)
+        model = model.transform(ApplyConfig(cfg.folding_config_file, apply_to_subgraphs=True))
 
         # Write the changed configuration back as confirmation for the user
         hw_attrs = [
@@ -1505,7 +1642,10 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
             "depth_trigger_bram",
         ]
         extract_model_config_to_json(
-            model, cfg.get_report_directory() / "applied_folding_config.json", hw_attrs
+            model,
+            cfg.get_report_directory() / "applied_folding_config.json",
+            hw_attrs,
+            apply_to_subgraphs=True,
         )
     else:
         log.info("No folding config json provided, skipping step_apply_folding_config.")
@@ -1713,10 +1853,6 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
             InsertTLastMarker(
                 # only insert marker on output (input TLAST is ignored for these use-cases anyway)
                 both=False,
-                # use ap_axiu instead of qdma_axis
-                external=False,
-                # static number of iterations (based on what the compiler/folding sets up)
-                dynamic=False,
             )
         )
         # give a proper name to the inserted node, important for codegen
@@ -1793,6 +1929,45 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
 
 
 @register_build_dataflow_step()
+def step_export_portable_rtl(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Export a self-contained, portable RTL project.
+
+    If STITCHED_IP was not requested, this step runs CreateStitchedIP internally
+    (without synthesis) to generate the wrapper and file lists needed for the export.
+
+    The export contains:
+    - All Verilog/SystemVerilog source files with relative paths
+    - All .dat memory initialization files
+    - A filelist.f for simulator tools (Verilator, QuestaSim, ModelSim)
+    - A sources.tcl for Vivado non-IPI projects
+    """
+    if DataflowOutputType.PORTABLE_RTL not in cfg.generate_outputs:
+        log.info(
+            "DataflowOutputType.PORTABLE_RTL not in requested outputs, "
+            "skipping step_export_portable_rtl."
+        )
+        return model
+
+    # If the stitched IP wasn't created yet, run CreateStitchedIP to generate
+    # the wrapper and file lists (without synthesis)
+    if not model.get_metadata_prop("vivado_stitch_proj"):
+        log.info("Creating stitched IP for portable RTL export (synthesis disabled)...")
+        model = model.transform(
+            CreateStitchedIP(
+                cfg._resolve_fpga_part(),
+                cfg.synth_clk_period_ns,
+                run_synth=False,
+                signature=cfg.signature,
+            )
+        )
+
+    export_dir = Path(cfg.output_dir) / "portable_rtl"
+    model = model.transform(ExportPortableRTL(str(export_dir)))
+    log.info(f"Portable RTL export written to {export_dir}")
+    return model
+
+
+@register_build_dataflow_step()
 def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Measure performance + latency of stitched-IP model in rtlsim (xsi).
     Depends on the DataflowOutputType.STITCHED_IP output product."""
@@ -1815,8 +1990,13 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
         os.environ["RTLSIM_TRACE_DEPTH"] = "3"
         model.set_metadata_prop("rtlsim_trace", str(report_dir.resolve() / "rtlsim_perf_trace.wdb"))
 
+    # strategies that size without simulating the design cannot guarantee freedom from deadlock
+    unverified_strategies = (
+        AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS,
+        AutoFIFOSizingMethod.HEURISTIC_ANALYTICAL,
+    )
     if (not cfg.auto_fifo_depths and cfg.fifo_config_file is not None) or (
-        cfg.auto_fifo_depths and cfg.auto_fifo_strategy == AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS
+        cfg.auto_fifo_depths and cfg.auto_fifo_strategy in unverified_strategies
     ):
         # Use critical path estimate to set the timeout limit for FIFO sim
         model = model.transform(AnnotateCycles())
@@ -1824,9 +2004,8 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
         latency = cast("int", perf["critical_path_cycles"])
         max_iters = latency * 100
     else:
-        max_iters = (
-            None  # Auto FIFO depths are garanteed to prevent deadlock, no need for a timeout
-        )
+        # simulation-based auto FIFO depths are guaranteed to prevent deadlock, no timeout
+        max_iters = None
     # prepare simulation
     sim = NodeConnectedSimulation(
         model,
@@ -2084,7 +2263,7 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                 )
             )
 
-        case ShellFlowType.VIVADO_ZYNQ:
+        case ShellFlowType.VIVADO_ZYNQ | ShellFlowType.VIVADO_VERSAL:
             log.warning(
                 "Currently there is nothing to be done to prepare Zynq flow synthesis runs."
             )
@@ -2163,8 +2342,9 @@ def copy_and_rename_bitfiles(
     # Determine file suffix
     suffix = ""
     single_device_suffix = ""
-    if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
-        suffix = ".bit"
+    if cfg.shell_flow_type in PYNQ_SHELL_FLOWS:
+        # .bit for Zynq, .pdi for Versal
+        suffix = Path(bitfiles).suffix or ".bit"
     elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
         suffix = ".xclbin"
         single_device_suffix = "-0"
@@ -2176,7 +2356,7 @@ def copy_and_rename_bitfiles(
         bitfile_path = bitfile_dir / f"finn-accel{single_device_suffix}{suffix}"
         copy(next(iter(bitfile_json.values())), bitfile_path)
         log.info("Stored bitfile at: " + str(bitfile_path))
-        if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
+        if cfg.shell_flow_type in PYNQ_SHELL_FLOWS:
             model.set_metadata_prop("bitfile_output", str(bitfile_path.absolute()))
         elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
             model.set_metadata_prop("bitfile_output", json.dumps({0: str(bitfile_path.absolute())}))
@@ -2190,7 +2370,7 @@ def copy_and_rename_bitfiles(
         model.set_metadata_prop("bitfile_output", json.dumps(paths))
 
     # For Zynq, copy the hwh file too
-    if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
+    if cfg.shell_flow_type in PYNQ_SHELL_FLOWS:
         # Store synthesis artifacts
         hw_handoff = get_metadata_prop_path(model, "hw_handoff", must_exist=True)
         copy(hw_handoff, bitfile_dir / "finn-accel.hwh")
@@ -2201,7 +2381,7 @@ def generate_resource_report(
 ) -> None:
     """Generate the resource report JSON in the specified directory."""
     post_synth_resources = model.analysis(post_synth_res)
-    if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
+    if cfg.shell_flow_type in PYNQ_SHELL_FLOWS:
         # TODO: Currently pynq is only single-fpga, thus we remove the device id information
         post_synth_resources = post_synth_resources[0]
         target = report_dir / "post_synth_resources.json"
@@ -2216,13 +2396,17 @@ def generate_resource_report(
 
 def copy_timing_report(model: ModelWrapper, report_dir: Path) -> None:
     """Copy the timing report from the Pynq project into the report directory."""
-    # Store the post-route timing report
-    timing_report = (
-        get_metadata_prop_path(model, "vivado_pynq_proj", must_exist=True)
-        / "finn_zynq_link.runs"
-        / "impl_1"
-        / "top_wrapper_timing_summary_routed.rpt"
-    )
+    # Store the post-route timing report. The project build records its location; fall back
+    # to the Zynq project layout for models built before that property existed.
+    if model.get_metadata_prop("vivado_timing_rpt"):
+        timing_report = get_metadata_prop_path(model, "vivado_timing_rpt", must_exist=True)
+    else:
+        timing_report = (
+            get_metadata_prop_path(model, "vivado_pynq_proj", must_exist=True)
+            / "finn_zynq_link.runs"
+            / "impl_1"
+            / "top_wrapper_timing_summary_routed.rpt"
+        )
     target = report_dir / "post_route_timing.rpt"
     copy(timing_report, target)
     log.info(f"Stored timing report at: {target}")
@@ -2277,7 +2461,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
     partition_model_dir = cfg.get_intermediate_models_directory() / "kernel_partitions"
 
     # The actual synthesis step!
-    if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
+    if cfg.shell_flow_type in PYNQ_SHELL_FLOWS:
         if cfg.board is None:
             raise FINNUserError("Please specify the 'board' parameter for Zynq builds.")
         if cfg.instrumentation_no_dma is None:
@@ -2332,7 +2516,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
     generate_resource_report(model, cfg, report_dir)
 
     # Copy timing reports to <output_dir>/report/
-    if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
+    if cfg.shell_flow_type in PYNQ_SHELL_FLOWS:
         copy_timing_report(model, report_dir)
         # Copy DFX partial bitstreams and PR region reports, if the build produced any
         copy_partial_reconfiguration_artifacts(model, bitfile_dir, report_dir)

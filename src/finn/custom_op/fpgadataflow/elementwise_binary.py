@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, cast
 from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.memstream import MemStreamOp
+from finn.util.data_packing import hls_datatype_str
 from finn.util.exception import FINNInternalError
 
 # FINN logging
@@ -454,6 +455,10 @@ class ElementwiseBinaryOperation(MemStreamOp):
                     _mag = _max if _min > 0 else _min if (abs(_min) > _max) else (-_max - 1)
                     # Smallest data type large enough to represent this range of values
                     lhs_dtype = DataType.get_smallest_possible(_mag)
+                    # BIPOLAR uses {-1,+1} encoding which is incompatible
+                    # with elementwise binary constant handling; use BINARY
+                    if lhs_dtype == DataType["BIPOLAR"]:
+                        lhs_dtype = DataType["BINARY"]
                 elif lhs_dtype.is_fixed_point():
                     # Convert the fixed-point array to corresponding integers and get
                     # smallest integer representation
@@ -495,6 +500,8 @@ class ElementwiseBinaryOperation(MemStreamOp):
                     _mag = _max if _min > 0 else _min if (abs(_min) > _max) else (-_max - 1)
                     # Smallest data type large enough to represent this range of values
                     rhs_dtype = DataType.get_smallest_possible(_mag)
+                    if rhs_dtype == DataType["BIPOLAR"]:
+                        rhs_dtype = DataType["BINARY"]
                 elif rhs_dtype.is_fixed_point():
                     # Convert the fixed-point array to corresponding integers and get
                     # smallest integer representation
@@ -1091,7 +1098,7 @@ class ElementwiseMax(ElementwiseBinaryOperation):
     @property
     def cpp_op(self) -> str:
         """Return the C++ operator template string."""
-        odt_hls_name = self.out_dtype.get_hls_datatype_str()
+        odt_hls_name = hls_datatype_str(self.out_dtype)
         return f"({{0}} >= {{1}} ? ({odt_hls_name}){{0}} : ({odt_hls_name}){{1}})"
 
     # RTL operation template available as property

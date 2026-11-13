@@ -122,9 +122,10 @@ class InsertFIFO(Transformation):
                     consumer = consumers[0]
                     if self._suitable_node(consumer) is True:
                         n0 = getHWCustomOp(first_node)
-                        # determine fifo node attributes
-                        fld_shape = n0.get_folded_output_shape()
-                        dtype = n0.get_output_datatype()
+                        # determine fifo node attributes, from the output this
+                        # fifo buffers (a split's outputs differ in shape)
+                        fld_shape = n0.get_folded_output_shape(idx_out)
+                        dtype = n0.get_output_datatype(idx_out)
                         n0_otensor = model.get_tensor_valueinfo(output_name)
                         if n0_otensor is None:
                             raise FINNInternalError(
@@ -152,7 +153,7 @@ class InsertFIFO(Transformation):
                                 f"the folded input shape of node {consumer.name}. "
                                 f"A streaming FIFO can't be implemented in between these nodes."
                             )
-                        n_shape = n0.get_normal_output_shape()
+                        n_shape = n0.get_normal_output_shape(idx_out)
 
                         # check if outFIFOdepths attribute of first node
                         # and inFIFOdepths attribute of consumer node is equal
@@ -176,7 +177,7 @@ class InsertFIFO(Transformation):
                             fifo_output_tensor = oh.make_tensor_value_info(
                                 model.make_new_valueinfo_name(),
                                 n0_tensor_dtype,
-                                self._shape_to_onnx(n0.get_normal_output_shape()),
+                                self._shape_to_onnx(n_shape),
                             )
                             graph.value_info.append(fifo_output_tensor)
                             model.set_tensor_datatype(fifo_output_tensor.name, dtype)
@@ -282,7 +283,7 @@ class InsertFIFO(Transformation):
                     not final_node.op_type.startswith("StreamingFIFO")
                     and final_node.op_type != "IODMA_hls"
                 ):
-                    if final_node.op_type == "TLastMarker_hls":
+                    if final_node.op_type.startswith("TLastMarker"):
                         raise FINNUserError(
                             "Inserting tlast marker should be done after inserting the FIFOs"
                         )

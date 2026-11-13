@@ -35,6 +35,7 @@ from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.labelselect import LabelSelect
+from finn.util.data_packing import hls_datatype_str
 from finn.util.exception import FINNInternalError
 
 if TYPE_CHECKING:
@@ -100,7 +101,7 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
 
     def global_includes(self) -> None:
         """Return global includes."""
-        self.code_gen_dict["$GLOBALS$"] = ['#include "maxpool.h"']
+        self.code_gen_dict["$GLOBALS$"] = ['#include "topk.hpp"']
 
     def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
@@ -109,37 +110,41 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
     def read_npy_data(self) -> None:
         """Return read npy data."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
-        dtype = self.get_input_datatype()
-        packed_hls_type = f"ap_uint<{self.get_instream_width()}>"
-        elem_hls_type = dtype.get_hls_datatype_str()
+        npy_type = "float"
         npy_in = f"{code_gen_dir}/input_0.npy"
-
-        # Calling npy2apintstream with reverse_inner = false to have LE packing
-        # as required by HLS fxn LabelSelect_Batch
-        # Also notice that StreamingDataWidthConverter_Batch performs LE packing
         self.code_gen_dict["$READNPYDATA$"] = [
-            (
-                f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, float>"
-                f'("{npy_in}", in0_V, false);'
-            )
+            (f'npy2tensorstream<{npy_type}>("{npy_in}", in0_V);')
         ]
 
     def docompute(self) -> None:
         """Return docompute."""
-        in_hls_type = self.get_input_datatype().get_hls_datatype_str()
-        out_hls_type = self.get_output_datatype().get_hls_datatype_str()
+        # PE and the input/output element types are inferred from the stream
+        # types tensor<TI, PE> / tensor<TO, 1> declared by strm_decl/blackboxfunction
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            (
-                f"LabelSelect_Batch<{self.labels}, {self.pe}, {self.k}, {in_hls_type}, "
-                f"{out_hls_type} > (in0_V, out0_V, 1);"
-            )
+            f"LabelSelect_Batch<{self.labels}, {self.k}>(in0_V, out0_V);"
         ]
+
+    def timeout_value(self) -> None:
+        """Set the number of consecutive calls without output after which cppsim stops.
+
+        LabelSelect_Batch is function-pipelined and processes one input per call.
+        It needs Labels/PE calls before the first output, so the default timeout
+        of 1000 is insufficient for 1000 or more labels (e.g. ImageNet).
+        """
+        total_inputs = self.labels // self.pe
+        self.code_gen_dict["$TIMEOUT_VALUE$"] = [str(total_inputs + 1000)]
+
+    def ipgen_extra_directives(self) -> list[str]:
+        """Return a list of extra tcl directives for HLS synthesis."""
+        return ["config_compile -pipeline_style frp"]
 
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        in_bits = self.get_input_datatype().bitwidth()
-        out_bits = self.get_output_datatype().bitwidth()
+        idt = hls_datatype_str(self.get_input_datatype())
+        odt = hls_datatype_str(self.get_output_datatype())
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            f"""void {self.onnx_node.name}(hls::stream<ap_uint<{self.pe}*{in_bits}>> &in0_V,
-                hls::stream<ap_uint<{out_bits}> > &out0_V)"""
+            (
+                f"void {self.onnx_node.name}(hls::stream<tensor<{idt}, {self.pe}>> &in0_V, "
+                f"hls::stream<tensor<{odt}, 1>> &out0_V)"
+            )
         ]

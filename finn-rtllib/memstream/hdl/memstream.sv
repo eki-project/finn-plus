@@ -207,10 +207,14 @@ module memstream #(
 		// shorter chain takes Dat2 into the last RAM's output register. The caller
 		// picks the height (see memstream_cascade_height in custom_op/fpgadataflow/memstream.py).
 		//
+		// Vivado maps a single-word memory to registers and drops its $readmemh
+		// initialization in the process. Therefore, the memory is forced to be at least two deep.
+		localparam int unsigned  MEM_DEPTH = (SETS*DEPTH < 2)? 2 : SETS*DEPTH;
+
 		// Execute Memory Operation (memory datapath without reset)
 		if(CASCADE_HEIGHT == 0) begin : genFreeCascade
 			(* RAM_STYLE = RAM_STYLE *)
-			data_t  Mem[SETS*DEPTH];
+			data_t  Mem[MEM_DEPTH];
 			if(INIT_FILE != "")  initial $readmemh(INIT_FILE, Mem);
 
 			data_t  Dat2 = 'x; /* absorbed register */
@@ -222,7 +226,7 @@ module memstream #(
 		end : genFreeCascade
 		else begin : genBoundCascade
 			(* RAM_STYLE = RAM_STYLE, CASCADE_HEIGHT = CASCADE_HEIGHT *)
-			data_t  Mem[SETS*DEPTH];
+			data_t  Mem[MEM_DEPTH];
 			if(INIT_FILE != "")  initial $readmemh(INIT_FILE, Mem);
 
 			data_t  Dat2 = 'x; /* absorbed register */

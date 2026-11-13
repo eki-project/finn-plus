@@ -15,6 +15,9 @@ import numpy as np
 import os
 import re
 import weakref
+
+# provided via pybind11
+import xsi
 from collections.abc import Mapping
 from finn_xsi.sim_engine import SimEngine
 from finn_xsi.srcutil import order_pkg_first
@@ -232,18 +235,46 @@ def load_sim_obj(
     """Load the compiled simulation object (.so) and return a SimEngine instance."""
     if simkernel_so is None:
         simkernel_so = get_simkernel_so()
-    oldcwd = Path.cwd()
+    # The xsim kernel opens some snapshot files lazily during simulation, e.g.
+    # xsim.dir/<top>/xsim.svtype on the first executed $readmemh (XPM memories with
+    # a MEMORY_INIT_FILE do so at #10). With a relative design path, these lookups
+    # use the process CWD at that later time and abort the process (exit(1)) if it
+    # is no longer sim_out_dir. Hence, load by absolute paths and pass the snapshot
+    # directory as xsimDir, which does not change the CWD at all.
+    sim_out_dir = Path(sim_out_dir).absolute()
     if not sim_out_dir.is_dir() or not wait_for_file(sim_out_dir / out_so_relative_path):
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), sim_out_dir)
     _close_stale_sim()
-    os.chdir(sim_out_dir)
-    try:
-        sim = SimEngine(simkernel_so, str(out_so_relative_path), "finnxsi_rtlsim.log", tracefile)
-        if tracefile:
-            sim.top.trace_all()
-    finally:
-        os.chdir(oldcwd)
+    transcript = sim_out_dir / "rtlsim.log"
+    if tracefile:
+        # relative trace files land in sim_out_dir
+        tracefile = str(sim_out_dir / tracefile)
+    # has_xsim_dir is missing from an xsi module built before xsimDir support was added
+    if getattr(xsi, "has_xsim_dir", False):
+        sim = SimEngine(
+            simkernel_so,
+            str(sim_out_dir / out_so_relative_path),
+            tracefile,
+            str(sim_out_dir / "xsim.dir"),
+            transcript,
+        )
+    else:
+        # XSI < 2023.1 lacks xsimDir: fall back to a temporary chdir around the
+        # design load. Only covers lazy file accesses during the load itself (e.g.
+        # $readmemh at t=0), not ones after the first time advance.
+        oldcwd = Path.cwd()
+        os.chdir(sim_out_dir)
+        try:
+            sim = SimEngine(
+                simkernel_so, str(out_so_relative_path), tracefile, transcript=transcript
+            )
+        finally:
+            os.chdir(oldcwd)
     _register_sim(sim)
+    if tracefile:
+        sim.top.trace_all()
+    # messages from the design load, incl. t=0 initial blocks
+    sim.drain_messages()
     return sim
 
 
@@ -261,17 +292,29 @@ def reset_rtlsim(
 
 
 def close_rtlsim(sim: SimEngine) -> None:
-    """Close the RTL simulation, ensuring that any pending traces are flushed."""
-    # Drive sim_finish (if the design exposes it, see finn-rtllib/sim/hdl/sim_ctrl.v) so that
-    # simulation-only `final` blocks (e.g. FIFO gauge logs) are flushed before teardown
+    """Close the RTL simulation, ensuring that any pending traces are flushed.
+
+    Raises SimulationError if the design reported an $error/$fatal since the last
+    run, e.g. from a `final` block. The design is closed in either case.
+    """
     try:
-        sim_finish = sim.top.getPort("sim_finish")
-    except RuntimeError:
-        sim_finish = None
-    if sim_finish is not None:
-        sim_finish.set(1).write_back()
-        sim.cycle({})
-    sim.close()
+        # Drive sim_finish (if the design exposes it, see finn-rtllib/sim/hdl/sim_ctrl.v) so
+        # that simulation-only `final` blocks (e.g. FIFO gauge logs) are flushed before
+        # teardown
+        try:
+            sim_finish = sim.top.getPort("sim_finish")
+        except RuntimeError:
+            sim_finish = None
+        if sim_finish is not None:
+            sim_finish.set(1).write_back()
+            sim.cycle({})
+        # messages since the last run(), incl. final-block output
+        sim.drain_messages()
+    finally:
+        # Explicitly finalize the design (calls xsi_close -> flushes+closes the .wdb)
+        # instead of relying on GC, so that the waveform is not left unflushed on a
+        # timeout or error exit.
+        sim.close()
 
 
 def rtlsim_multi_io(

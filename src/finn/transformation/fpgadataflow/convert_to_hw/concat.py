@@ -102,8 +102,6 @@ class InferConcatLayer(Transformation):
                     inputDataTypes=[model.get_tensor_datatype(x).name for x in node.input],
                     numInputVectors=inp_vec,
                     inFIFODepths=[2] * len(node.input),
-                    cpp_interface="hls_vector",
-                    hls_style="freerunning",
                 )
                 graph.node.insert(node_ind, new_node)
                 # remove old node

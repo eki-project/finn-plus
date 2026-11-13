@@ -58,7 +58,7 @@ if TYPE_CHECKING:
 # output 0 is the output tensor, shape (.., o_size) = (..., MH)
 # the ... here can be any shape (representing groups of vectors)
 
-# finn-rtllib/mvu sources of the untiled (TH=1) MVU core
+# finn-rtllib/mvu sources of the MVU core
 _RTL_SOURCES = [
     "mvu_pkg.sv",
     "mvu_vvu_axi.sv",
@@ -67,28 +67,11 @@ _RTL_SOURCES = [
     "mvu_vvu_8sx9_dsp58.sv",
     "add_multi.sv",
 ]
-# finn-rtllib/mvu_tiled sources of the tiled (TH>1) MVU core, in the order they are
-# added to the Vivado IPI project
-_RTL_SOURCES_TILED_IPI = [
-    "../skid/skid.sv",
-    "../mvu/mvu_pkg.sv",
-    "../mvu/add_multi.sv",
-    "mvu_tiled_axi.sv",
-    "cu_mvau_tiled.sv",
-    "acc_stage.sv",
-    "input_gen.sv",
-    "weights_buff_tile.sv",
-]
-# the same tiled MVU sources, in the order they are compiled for rtlsim
+# additional sources of the tiled (TH>1) MVU, relative to finn-rtllib/mvu
 _RTL_SOURCES_TILED = [
-    "../skid/skid.sv",
-    "../mvu/mvu_pkg.sv",
-    "../mvu/add_multi.sv",
-    "acc_stage.sv",
-    "input_gen.sv",
+    "../input_gen/hdl/input_gen.sv",
     "weights_buff_tile.sv",
-    "cu_mvau_tiled.sv",
-    "mvu_tiled_axi.sv",
+    "../skid/skid.sv",
 ]
 
 
@@ -121,9 +104,8 @@ class MVAU_rtl(MVAU, RTLBackend):
         return cast("int", self.get_nodeattr("pumpedCompute"))
 
     def _rtllib_dir(self) -> Path:
-        """Return the finn-rtllib directory of the MVU core (mvu or mvu_tiled)."""
-        core = "mvu_tiled" if self.th > 1 else "mvu"
-        return Path(get_settings().finn_rtllib) / core
+        """Return the finn-rtllib directory of the MVU core."""
+        return Path(get_settings().finn_rtllib) / "mvu"
 
     def adapt_for_loop_body(self, input_types: "list[LoopBodyInputType]") -> None:  # noqa: ARG002
         """Adapt MVAU_rtl for loop body execution.
@@ -309,6 +291,28 @@ class MVAU_rtl(MVAU, RTLBackend):
         mult_dsp = p * np.ceil(q / 3) if dsp_block == "DSP58" else np.ceil(p / 4) * q
         return int(mult_dsp)
 
+    def get_exp_compute_cycles(self) -> int:
+        """Return the expected compute cycles per frame, including the tiled MVU drain stalls."""
+        exp_cycles = super().get_exp_compute_cycles()
+        th = self.th
+        if th > 1:
+            # The tiled MVU stalls after every NF*SF*TH beats to drain its compute
+            # pipeline (CORE_PIPELINE_DEPTH in mvu_vvu_axi.sv), i.e. once per group
+            # of TH input vectors. Uses the depth of the lane-sliced core, which is
+            # an upper bound for the shallower DSP58 INT8 core.
+            simd = self.simd
+            n_vecs = int(np.prod(self.num_input_vectors))
+            drain = 4 + (simd - 1).bit_length() + (simd == 1) + 1
+            exp_cycles += (n_vecs // th) * drain
+        return int(exp_cycles)
+
+    def _core_sources(self) -> list[str]:
+        """Return the MVU core sources, relative to the finn-rtllib mvu directory."""
+        sources = list(_RTL_SOURCES)
+        if self.th > 1:
+            sources += _RTL_SOURCES_TILED
+        return sources
+
     def instantiate_ip(self, cmd: list[str]) -> None:
         """Append Vivado IPI commands that add the RTL sources and instantiate the MVU core.
 
@@ -320,9 +324,8 @@ class MVAU_rtl(MVAU, RTLBackend):
         code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
         gen_top_module = cast("str", self.get_nodeattr("gen_top_module"))
         rtllib_dir = f"{self._rtllib_dir()}/"
-        core_sources = _RTL_SOURCES_TILED_IPI if self.th > 1 else _RTL_SOURCES
         sourcefiles = [str(Path(code_gen_dir) / f"{gen_top_module}_wrapper.v")] + [
-            rtllib_dir + f for f in core_sources
+            rtllib_dir + f for f in self._core_sources()
         ]
 
         for f in sourcefiles:
@@ -469,27 +472,6 @@ class MVAU_rtl(MVAU, RTLBackend):
     def _check_tiling_constraints(self) -> None:
         """Validate the tiled-MVU (TH>1) constraints, raise if they are violated."""
         theight = self.th
-        tile = self.pe * self.simd
-        if tile % theight != 0:
-            raise FINNUserError(
-                f"{self.onnx_node.name}: TH={theight} does not divide the tile "
-                f"PE*SIMD={tile}. The tiled MVU requires (PE*SIMD) % TH == 0."
-            )
-
-        # The tiled wrapper conservatively caps both activation and weight widths at 8 bits.
-        act_width = self.get_input_datatype(0).bitwidth()
-        if act_width > 8:
-            raise FINNUserError(
-                f"{self.onnx_node.name}: activation width of {act_width} bits exceeds the "
-                f"tiled MVU maximum of 8 bits."
-            )
-        weight_width = self.get_input_datatype(1).bitwidth()
-        if weight_width > 8:
-            raise FINNUserError(
-                f"{self.onnx_node.name}: weight width of {weight_width} bits exceeds the "
-                f"tiled MVU maximum of 8 bits."
-            )
-
         # The tile size must divide the number of input vectors evenly; otherwise the
         # final partial tile can cause output to be dropped and eventually stall.
         num_inp_vec = int(np.prod(self.num_input_vectors))
@@ -550,10 +532,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         Returns:
             Template file path and code generation dictionary.
         """
-        if self.th > 1:
-            template_path = str(self._rtllib_dir() / "mvu_tiled_axi_wrapper.v")
-        else:
-            template_path = str(self._rtllib_dir() / "mvu_vvu_axi_wrapper.v")
+        template_path = str(self._rtllib_dir() / "mvu_vvu_axi_wrapper.v")
 
         # check if settings are valid
         if self.pumped_compute and self.simd == 1:
@@ -578,11 +557,13 @@ class MVAU_rtl(MVAU, RTLBackend):
             "$PE$": [str(self.pe)],
             "$SIMD$": [str(self.simd)],
             "$TH$": [str(self.th)],
+            "$WSIMD$": [str(self.get_weight_stream_simd())],
             "$ACTIVATION_WIDTH$": [str(self.get_input_datatype(0).bitwidth())],
             "$WEIGHT_WIDTH$": [str(self.get_input_datatype(1).bitwidth())],
             "$ACCU_WIDTH$": [str(self.get_output_datatype().bitwidth())],
             "$SIGNED_ACTIVATIONS$": [signed_acts],
             "$SEGMENTLEN$": [str(self._resolve_segment_len(clk))],
+            "$N_DCPL_STAGES$": [str(2)],
         }
 
         return template_path, code_gen_dict
@@ -604,14 +585,15 @@ class MVAU_rtl(MVAU, RTLBackend):
             code_gen_dir = ""
             rtllib_dir = ""
 
-        core_sources = _RTL_SOURCES_TILED if self.th > 1 else _RTL_SOURCES
         gen_top_module = cast("str", self.get_nodeattr("gen_top_module"))
         return [f"{code_gen_dir}{gen_top_module}_wrapper.v"] + [
-            rtllib_dir + f for f in core_sources
+            rtllib_dir + f for f in self._core_sources()
         ]
 
     def get_verilog_paths(self) -> list[str]:
-        """Return the Verilog include paths, adding the mvu or mvu_tiled rtllib directory."""
+        """Return the Verilog include paths, adding the mvu and input_gen rtllib directories."""
         verilog_paths = super().get_verilog_paths()
-        verilog_paths.append(str(self._rtllib_dir()))
+        rtllib = Path(get_settings().finn_rtllib)
+        verilog_paths.append(str(rtllib / "mvu"))
+        verilog_paths.append(str(rtllib / "input_gen" / "hdl"))
         return verilog_paths

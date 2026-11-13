@@ -268,3 +268,33 @@ def warn_hls_rtl_dsp_conflict(
         with contextlib.suppress(OSError):
             log_file.write_text(warning_msg + "\n")
     return True
+
+
+def cleanup_characterization(model: ModelWrapper) -> None:
+    """Drop the token access vector attributes once FIFO sizing is done.
+
+    The token access vectors live in sidecar .npy.gz files whose paths are kept in
+    the ``io_chrc_*`` attributes (see ``fifo_sizing.tav.save_tav_npy``). The files
+    are only needed while FIFO sizing runs: unlink them (and a ``tav_*`` build dir
+    they leave empty) before dropping the attributes, otherwise they stay behind
+    in the build directory with nothing referencing them.
+
+    Args:
+        model: Model whose nodes may carry token access vectors.
+    """
+    for node in model.graph.node:
+        for attr_name in ("io_chrc_in", "io_chrc_out"):
+            attr = get_by_name(node.attribute, attr_name)
+            if attr is None:
+                continue
+            tav_file = Path(attr.s.decode("utf-8"))
+            if tav_file.name.endswith((".npy", ".npy.gz")) and tav_file.is_file():
+                tav_file.unlink()
+                # the tav_* build dir of a node without a code generation dir
+                tav_dir = tav_file.parent
+                if tav_dir.name.startswith("tav_") and not any(tav_dir.iterdir()):
+                    tav_dir.rmdir()
+            node.attribute.remove(attr)
+        attr = get_by_name(node.attribute, "io_chrc_period")
+        if attr is not None:
+            node.attribute.remove(attr)

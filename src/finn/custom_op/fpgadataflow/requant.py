@@ -132,6 +132,15 @@ class Requant(HWCustomOp):
             return 25, k
         return bw, min(aw, k)
 
+    def get_core_input_bitwidth(self) -> int:
+        """Input precision of the integer RTL core (``KC`` in requant_axi.sv).
+
+        The core computes on signed inputs, so unsigned inputs are zero-extended
+        by one bit.
+        """
+        idt = self.get_input_datatype(0)
+        return idt.bitwidth() + (0 if idt.signed() else 1)
+
     def decompose_params(self, model: ModelWrapper, version: int) -> dict[str, Any]:
         """Port of ``derive_PARAMS`` in finn-rtllib/requant/hdl/requant.sv.
 
@@ -159,9 +168,8 @@ class Requant(HWCustomOp):
         num_channels = self.num_channels
         cf = num_channels // pe
 
-        idt = self.get_input_datatype(0)
         odt = self.get_output_datatype()
-        k = idt.bitwidth()
+        k = self.get_core_input_bitwidth()
         n = odt.bitwidth()
 
         s_width, x_width = self._derive_mul_widths(version, k)

@@ -29,6 +29,7 @@
 """Container node grouping a partitioned FINN-ONNX dataflow sub-model."""
 
 import numpy as np
+import onnx
 from onnx import NodeProto
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.base import CustomOp
@@ -95,7 +96,11 @@ class StreamingDataflowPartition(CustomOp):
         # outputs may have been renamed in partition
         for i, node_oname in enumerate(node.output):
             model_oname = model.graph.output[i].name
-            context[node_oname] = ret[model_oname]
+            # make sure the right output datatype is propagated
+            dtype = model.graph.output[i].type.tensor_type.elem_type
+            context[node_oname] = ret[model_oname].astype(
+                onnx.helper.tensor_dtype_to_np_dtype(dtype)
+            )
         # prefix and insert exec context entries
         if return_full_exec_context:
             model_onames = {x.name for x in model.graph.output}

@@ -1,0 +1,14 @@
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Tree models of the FINN operators, registered by custom-op class name. The
+registry and ``get_tree_model`` are in ``base``."""
+
+# Importing the modules registers their models, as importing the op modules in
+# finn.custom_op.fpgadataflow registers the custom ops.
+# ruff: noqa: F401
+import finn.transformation.fpgadataflow.fifo_sizing.tree_models.mvau
+import finn.transformation.fpgadataflow.fifo_sizing.tree_models.shuffle
+import finn.transformation.fpgadataflow.fifo_sizing.tree_models.streaming
+import finn.transformation.fpgadataflow.fifo_sizing.tree_models.swg
+import finn.transformation.fpgadataflow.fifo_sizing.tree_models.upsample

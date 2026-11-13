@@ -25,6 +25,11 @@ def _rtlsrc_dir() -> Path:
     return Path(get_settings().finn_rtllib) / "where" / "hdl"
 
 
+def _input_gen_dir() -> Path:
+    """Return the directory of the shared finn-rtllib input_gen HDL sources."""
+    return Path(get_settings().finn_rtllib) / "input_gen" / "hdl"
+
+
 @register_custom_op
 class HWWhere_rtl(HWWhere, RTLBackend):
     """RTL implementation of the ONNX Where operator with multidirectional broadcasting."""
@@ -116,13 +121,15 @@ class HWWhere_rtl(HWWhere, RTLBackend):
         if abspath:
             code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen")) + "/"
             rtllib_dir = str(_rtlsrc_dir()) + "/"
+            input_gen_dir = str(_input_gen_dir()) + "/"
         else:
             code_gen_dir = ""
             rtllib_dir = ""
+            input_gen_dir = ""
 
         gen_top_module = cast("str", self.get_nodeattr("gen_top_module"))
         return [
-            rtllib_dir + "input_gen.sv",
+            input_gen_dir + "input_gen.sv",
             rtllib_dir + "where.sv",
             code_gen_dir + gen_top_module + "_core.sv",
             code_gen_dir + gen_top_module + ".v",

@@ -35,14 +35,14 @@ from qonnx.core.datatype import DataType
 from typing import cast
 
 from finn.custom_op.fpgadataflow.hls import register_custom_op
-from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.custom_op.fpgadataflow.hlsbackend_legacy import LegacyHLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
 from finn.util.exception import FINNInternalError
 
 
 @register_custom_op
-class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
+class StreamingFIFO_hls(StreamingFIFO, LegacyHLSBackend):
     """HLS-based FIFO implementation.
 
     Currently only used as a virtual FIFO for live FIFO-sizing.
@@ -59,7 +59,7 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
             "impl_style": ("s", False, "virtual", {"virtual"}),
         }
         my_attrs.update(StreamingFIFO.get_nodeattr_types(self))
-        my_attrs.update(HLSBackend.get_nodeattr_types(self))
+        my_attrs.update(LegacyHLSBackend.get_nodeattr_types(self))
         return my_attrs
 
     def global_includes(self) -> None:
