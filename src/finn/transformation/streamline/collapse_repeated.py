@@ -28,6 +28,8 @@
 
 # Helper for creating ONNX nodes
 """Module for collapsing repeated operations."""
+import numpy.typing as npt
+from collections.abc import Callable
 from onnx import helper as oh
 
 # QONNX arbitrary precision data types
@@ -44,6 +46,9 @@ from qonnx.transformation.infer_shapes import InferShapes
 
 # Gets items from protobuf by name
 from qonnx.util.basic import get_by_name
+from typing import Any, cast
+
+from finn.util.exception import FINNInternalError
 
 
 class CollapseRepeatedOp(Transformation):
@@ -51,19 +56,21 @@ class CollapseRepeatedOp(Transformation):
     a single operation. make_collapsed_param_fxn must take two tensors and
     return a tensor which gives the equivalent result using a single op."""
 
-    def __init__(self, op_name, make_collapsed_param_fxn):
+    def __init__(
+        self,
+        op_name: str,
+        make_collapsed_param_fxn: Callable[[npt.NDArray[Any], npt.NDArray[Any]], npt.NDArray[Any]],
+    ) -> None:
         """Initialize instance."""
         super().__init__()
         self.op_name = op_name
         self.make_collapsed_param_fxn = make_collapsed_param_fxn
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply transformation."""
         graph = model.graph
-        node_ind = 0
         graph_modified = False
-        for n in graph.node:
-            node_ind += 1
+        for node_ind, n in enumerate(graph.node, start=1):
             if (
                 n.op_type == self.op_name
                 and not model.is_fork_node(n)
@@ -79,14 +86,12 @@ class CollapseRepeatedOp(Transformation):
                     op1_param_name = consumer.input[1]
                     op0_param = model.get_initializer(op0_param_name)
                     op1_param = model.get_initializer(op1_param_name)
-                    assert (
-                        op0_param is not None
-                    ), """Initializer for parameters for
-                    op0 is not set."""
-                    assert (
-                        op1_param is not None
-                    ), """Initializer for parameters for
-                    op1 is not set."""
+                    if op0_param is None:
+                        raise FINNInternalError("Initializer for parameters for op0 is not set.")
+                    if op1_param is None:
+                        raise FINNInternalError("Initializer for parameters for op1 is not set.")
+                    op0_param = cast("npt.NDArray[Any]", op0_param)
+                    op1_param = cast("npt.NDArray[Any]", op1_param)
                     start_name = n.input[0]
                     end_name = consumer.output[0]
                     # compute the new parameter
@@ -113,7 +118,7 @@ class CollapseRepeatedOp(Transformation):
 class CollapseRepeatedAdd(CollapseRepeatedOp):
     """Collapse repeated adder node into a single operation."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize instance."""
         super().__init__("Add", lambda x, y: y + x)
 
@@ -121,7 +126,7 @@ class CollapseRepeatedAdd(CollapseRepeatedOp):
 class CollapseRepeatedMul(CollapseRepeatedOp):
     """Collapse repeated multiplier node into a single operation."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize instance."""
         super().__init__("Mul", lambda x, y: y * x)
 
@@ -132,7 +137,7 @@ class CollapseRepeatedTranspose(Transformation):
     # Applies the transform to a whole model graph
     """Transformation for collapsing repeated Transpose operations."""
 
-    def apply(self, model: ModelWrapper):  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # Get the model graph out of the model wrapper object
         """Apply transformation."""
         graph = model.graph
@@ -173,11 +178,11 @@ class CollapseRepeatedTranspose(Transformation):
                 perm2 = perm2.ints if perm2 is not None else None
 
                 # Get the shape of the input tensor
-                shape = model.get_tensor_shape(
-                    # fmt: off
-                    node.input[0], fix_missing_init_shape=True
-                    # fmt: on
-                )
+                shape = model.get_tensor_shape(node.input[0], fix_missing_init_shape=True)
+                # Nothing to collapse if the input shape is unknown
+                if shape is None:
+                    # Softly skip this node
+                    continue
                 # List of dimension indices in order
                 dims = range(len(shape))
 
@@ -214,7 +219,7 @@ class CollapseRepeatedTranspose(Transformation):
                 # with a clean index
                 break
         # Need to redo the shape inference after potentially removing nodes
-        model = model.transform(InferShapes())  # noqa: Shadows model
+        model = model.transform(InferShapes())
         # Return the transformed model and indicate whether the graph actually
         # has been transformed
         return model, graph_modified

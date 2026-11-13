@@ -1,11 +1,17 @@
 """Utility functions for benchmarking and report processing."""
+
 import json
-import os
 import shutil
 import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Any
+
+from finn.util.exception import FINNInternalError
 
 
-def _find_rows_and_headers(table):
+def _find_rows_and_headers(
+    table: ET.Element,
+) -> tuple[list[ET.Element], list[ET.Element]]:
     """Find table rows and headers in XML table structure.
 
     Searches through table rows to find the first row that contains
@@ -27,7 +33,7 @@ def _find_rows_and_headers(table):
     return (rows, headers)
 
 
-def summarize_table(table):
+def summarize_table(table: ET.Element) -> dict[str, Any]:
     """Summarize table data into a structured dictionary format.
 
     Parses XML table structure to extract headers and row data,
@@ -40,50 +46,42 @@ def summarize_table(table):
     Returns:
         dict: Summary containing headers and processed row data
     """
-    table_summary = {}
+    table_summary: dict[str, Any] = {}
     table_summary["headers"] = []
     rows, headers = _find_rows_and_headers(table)
 
     if len(headers) > 0:
-        string = "Header: "
         for header in headers:
             table_summary["headers"].append(header.attrib["contents"])
-            string = string + header.attrib["contents"] + " "
-        # print(string.rstrip())
 
     for row in rows:
         cells = row.findall("tablecell")
         if len(cells) > 0:
             cell_name = cells[0].attrib["contents"]
-            string = cell_name
             table_summary[cell_name] = []
             for cell in cells[1:]:
                 table_summary[cell_name].append(cell.attrib["contents"])
-                string = string + cell.attrib["contents"] + " "
-            # print(string.rstrip())
 
     return table_summary
 
 
-def summarize_section(section):
+def summarize_section(section: ET.Element) -> dict[str, Any]:
     """Summarize report section."""
-    section_summary = {}
+    section_summary: dict[str, Any] = {}
     section_summary["tables"] = []
     section_summary["subsections"] = {}
 
-    # print("Section:", section.attrib["title"])
     tables = section.findall("table")
     sub_sections = section.findall("section")
     for table in tables:
         section_summary["tables"].append(summarize_table(table))
-    # print("")
     for sub_section in sub_sections:
         section_summary["subsections"][sub_section.attrib["title"]] = summarize_section(sub_section)
 
     return section_summary
 
 
-def power_xml_to_dict(xml_path):
+def power_xml_to_dict(xml_path: str | Path) -> dict[str, Any]:
     """Convert power XML to dictionary."""
     tree = ET.parse(xml_path)
     root = tree.getroot()
@@ -96,51 +94,49 @@ def power_xml_to_dict(xml_path):
     return result
 
 
-def delete_dir_contents(dir):
+def delete_dir_contents(dir_path: str | Path) -> None:
     """Delete directory contents."""
-    for filename in os.listdir(dir):
-        file_path = os.path.join(dir, filename)
+    dir_path = Path(dir_path)
+    for entry in dir_path.iterdir():
         try:
-            if os.path.isfile(file_path) or os.path.islink(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)
-        except Exception as e:
-            print("Failed to delete %s. Reason: %s" % (file_path, e))
+            if entry.is_file() or entry.is_symlink():
+                entry.unlink()
+            elif entry.is_dir():
+                shutil.rmtree(entry)
+        except Exception as e:  # noqa: PERF203
+            print(f"Failed to delete {entry}. Reason: {e}")
 
 
-def merge_dicts(a: dict, b: dict):
+def merge_dicts(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     """Merge multiple dictionaries."""
     for key in b:
         if key in a:
             if isinstance(a[key], dict) and isinstance(b[key], dict):
                 merge_dicts(a[key], b[key])
             elif a[key] != b[key]:
-                raise Exception("ERROR: Dict merge conflict")
+                raise FINNInternalError("ERROR: Dict merge conflict")
         else:
             a[key] = b[key]
     return a
 
 
-def merge_logs(log_a, log_b, log_out):
+def merge_logs(log_a: str | Path, log_b: str | Path, log_out: str | Path) -> None:
     """Merge log files."""
     # merges json log (list of nested dicts) b into a, not vice versa (TODO)
 
-    with open(log_a) as f:
+    with Path(log_a).open() as f:
         a = json.load(f)
-    with open(log_b) as f:
+    with Path(log_b).open() as f:
         b = json.load(f)
 
     for idx, run_a in enumerate(a):
         for run_b in b:
             if run_a["run_id"] == run_b["run_id"]:
-                # a[idx] |= run_b # requires Python >= 3.9
-                # a[idx] = {**run_a, **run_b}
                 a[idx] = merge_dicts(run_a, run_b)
                 break
 
     # also sort by run id
     out = sorted(a, key=lambda x: x["run_id"])
 
-    with open(log_out, "w") as f:
+    with Path(log_out).open("w") as f:
         json.dump(out, f, indent=2)

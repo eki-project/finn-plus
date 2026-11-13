@@ -26,24 +26,33 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for duplicatestreams."""
-import numpy as np
-from qonnx.core.datatype import DataType
+"""Stream-duplication hardware custom operator."""
 
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+import numpy as np
+from onnx import NodeProto
+from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from typing import TYPE_CHECKING, cast
+
+from finn.custom_op.fpgadataflow import register_custom_op
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.logging import log
 
+if TYPE_CHECKING:
+    from onnx import GraphProto
 
+
+@register_custom_op
 class DuplicateStreams(HWCustomOp):
     """Abstraction layer for HW implementation of DuplicateStreams."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             "NumChannels": ("i", True, 0),
             "PE": ("i", True, 0),
             # how many duplicated output streams to create
@@ -59,111 +68,129 @@ class DuplicateStreams(HWCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_num_output_streams(self):
-        """Return num output streams."""
-        return self.get_nodeattr("NumOutputStreams")
+    @property
+    def num_channels(self) -> int:
+        """Get the number of channels."""
+        return cast("int", self.get_nodeattr("NumChannels"))
 
-    def get_normal_input_shape(self, ind=0):
+    @property
+    def pe(self) -> int:
+        """Get the PE parallelism."""
+        return cast("int", self.get_nodeattr("PE"))
+
+    @property
+    def num_output_streams(self) -> int:
+        """Get the number of duplicated output streams to create."""
+        return cast("int", self.get_nodeattr("NumOutputStreams"))
+
+    @property
+    def num_input_vectors(self) -> list[int]:
+        """Get the number of input vectors along the non-channel axes."""
+        return list(cast("list[int]", self.get_nodeattr("numInputVectors")))
+
+    def get_num_output_streams(self) -> int:
+        """Return num output streams."""
+        return self.num_output_streams
+
+    def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal input shape."""
-        ch = self.get_nodeattr("NumChannels")
-        vecs = list(self.get_nodeattr("numInputVectors"))
-        ishape = tuple(vecs + [ch])
-        return ishape
+        return (*self.num_input_vectors, self.num_channels)
 
     def check_folding(self) -> None:
         """Check the folding: PE must divide NumChannels."""
-        ch = self.get_nodeattr("NumChannels")
-        pe = self.get_nodeattr("PE")
-        if ch % pe != 0:
-            raise self._folding_error(f"PE must divide NumChannels (PE = {pe}, NumChannels = {ch})")
+        if self.num_channels % self.pe != 0:
+            raise self._folding_error(
+                f"PE must divide NumChannels (PE = {self.pe}, NumChannels = {self.num_channels})"
+            )
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
-        ch = self.get_nodeattr("NumChannels")
-        pe = self.get_nodeattr("PE")
-        vecs = list(self.get_nodeattr("numInputVectors"))
         self.check_folding()
-        folds = int(ch / pe)
-        folded_ishape = tuple(vecs + [folds, pe])
-        return folded_ishape
+        folds = self.num_channels // self.pe
+        return (*self.num_input_vectors, folds, self.pe)
 
-    def get_normal_output_shape(self, ind=0):
-        # since the output shape of both out streams are the same
-        # return independently from index
-        """Return normal output shape."""
+    def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
+        """Return normal output shape.
+
+        The output shape of every output stream is the same, so this is
+        returned independently of the index.
+        """
         return self.get_normal_input_shape()
 
-    def get_folded_output_shape(self, ind=0):
-        # since the output shape of both out streams are the same
-        # return independently from index
-        """Return folded output shape."""
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
+        """Return folded output shape.
+
+        The output shape of every output stream is the same, so this is
+        returned independently of the index.
+        """
         return self.get_folded_input_shape()
 
-    def make_shape_compatible_op(self, model):
+    def make_shape_compatible_op(self, model: ModelWrapper) -> NodeProto:
         """Create shape compatible op."""
         ret = super().make_shape_compatible_op(model)
         ret.output[:] = self.onnx_node.output
         return ret
 
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
         """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
-            warn_str = "inputDataType changing for %s: %s -> %s " % (
-                node.name,
-                str(self.get_input_datatype()),
-                str(idt),
+            log.warning(
+                f"inputDataType changing for {node.name}: "
+                f"{self.get_input_datatype()!s} -> {idt!s} "
             )
-            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
         odt = self.get_output_datatype()
         for my_out in self.onnx_node.output:
             model.set_tensor_datatype(my_out, odt)
 
-    def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
-        return DataType[self.get_nodeattr("inputDataType")]
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of input."""
+        return DataType[cast("str", self.get_nodeattr("inputDataType"))]
 
-    def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output."""
-        return DataType[self.get_nodeattr("inputDataType")]
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of output."""
+        return DataType[cast("str", self.get_nodeattr("inputDataType"))]
 
-    def get_instream_width(self, ind=0):
-        """Returns input stream width."""
-        ibits = self.get_input_datatype().bitwidth()
-        pe = self.get_nodeattr("PE")
-        in_width = pe * ibits
-        return in_width
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
+        """Return input stream width."""
+        return self.pe * self.get_input_datatype().bitwidth()
 
-    def get_outstream_width(self, ind=0):
-        """Returns output stream width."""
-        obits = self.get_output_datatype().bitwidth()
-        pe = self.get_nodeattr("PE")
-        out_width = pe * obits
-        return out_width
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
+        """Return output stream width."""
+        return self.pe * self.get_output_datatype().bitwidth()
 
-    def get_number_output_values(self):
-        """Return number output values."""
-        out_val = {}
-        for i in range(len(self.onnx_node.output)):
-            out_val["out%s" % i] = np.prod(self.get_folded_output_shape(i)[1:-1])
-        return out_val
+    def get_number_output_values(self) -> dict[str, int]:
+        """Return the number of words each output stream produces, one entry per stream.
 
-    def get_exp_cycles(self):
-        # Channels/PE * batch size * fmdim * fmdim
-        """Return exp cycles."""
-        return np.prod(self.get_folded_output_shape()[:-1])
+        Every output carries a copy of the whole input, so this counts all
+        ``numInputVectors`` dimensions, including a leading one that is not 1,
+        times the number of folds. It equals ``get_exp_cycles``.
+        """
+        return {
+            f"out{i}": int(np.prod(self.get_folded_output_shape(i)[:-1]))
+            for i in range(len(self.onnx_node.output))
+        }
 
-    def execute_node(self, context, graph):
-        # passing input to both outputs to make
-        # abstraction layer executable
-        """Execute node."""
+    def get_exp_cycles(self) -> int:
+        """Return exp cycles.
+
+        Channels/PE * batch size * fmdim * fmdim.
+        """
+        return int(np.prod(self.get_folded_output_shape()[:-1]))
+
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
+        """Execute node.
+
+        Passes the input to every output to make the abstraction layer executable.
+        """
         node = self.onnx_node
         inp = context[node.input[0]]
         exp_shape = self.get_normal_input_shape()
 
-        output = inp
-        output = np.asarray([output], dtype=np.float32).reshape(*exp_shape)
+        output = np.asarray([inp], dtype=np.float32).reshape(*exp_shape)
         for outp in node.output:
             context[outp] = output

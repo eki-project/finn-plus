@@ -13,12 +13,12 @@ because the CI job that fits the models runs outside of the FINN environment.
 import json
 import logging
 import numpy as np
-import os
 import pandas as pd
 import pickle
 import sklearn
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import (
@@ -38,7 +38,7 @@ from sklearn.neighbors import KNeighborsRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.tree import DecisionTreeRegressor
-from typing import Any, Optional
+from typing import Any, cast
 
 from finn.qor.database import POWER_TARGET_COL
 from finn.qor.features import SPECS, OperatorFeatureSpec
@@ -140,10 +140,10 @@ class QoREstimator:
         self,
         operator: str,
         target: str,
-        spec: Optional[OperatorFeatureSpec] = None,
-        pipeline: Optional[Pipeline] = None,
-        metadata: Optional[dict[str, Any]] = None,
-    ):
+        spec: OperatorFeatureSpec | None = None,
+        pipeline: Pipeline | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Create an estimator for operator/target, unfitted unless ``pipeline`` is given."""
         self.operator = operator
         self.target = target
@@ -197,7 +197,7 @@ class QoREstimator:
             raise ValueError(f"No samples with a value for target '{self.target}'")
         return valid
 
-    def fit(self, df: pd.DataFrame, regressor: Optional[BaseEstimator] = None) -> "QoREstimator":
+    def fit(self, df: pd.DataFrame, regressor: BaseEstimator | None = None) -> "QoREstimator":
         """Fit ``regressor`` (default: :class:`KNeighborsRegressor`) on all rows of ``df``
         that have a target value."""
         df = self.rows_with_target(df)
@@ -217,10 +217,12 @@ class QoREstimator:
         if len(features) != 1:
             raise ValueError("predict() expects exactly one sample")
         prediction = float(self.pipeline.predict(features[self.feature_cols])[0])
-        return int(round(prediction)) if self.is_integer_target else prediction
+        return round(prediction) if self.is_integer_target else prediction
 
     def _fit_metadata(self, df: pd.DataFrame) -> dict[str, Any]:
         """Describe the fitted pipeline and its training data for the JSON sidecar."""
+        if self.pipeline is None:
+            raise ValueError("Estimator is not fitted")
         regressor = self.pipeline.named_steps["regressor"]
         return {
             "operator": self.operator,
@@ -229,7 +231,7 @@ class QoREstimator:
             "categorical_cols": self.categorical_cols(df),
             "regressor": type(regressor).__name__,
             "regressor_params": _jsonable(regressor.get_params()),
-            "n_samples": int(len(df)),
+            "n_samples": len(df),
             "fitted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "sklearn_version": sklearn.__version__,
             "database_commits": sorted(df["commit"].dropna().unique().tolist())
@@ -244,11 +246,11 @@ class QoREstimator:
         """Store the fitted pipeline (pickle) and its metadata (JSON) in ``model_dir``."""
         if self.pipeline is None:
             raise ValueError("Estimator is not fitted")
-        os.makedirs(model_dir, exist_ok=True)
-        base = os.path.join(model_dir, model_basename(self.operator, self.target))
-        with open(base + ".pkl", "wb") as f:
+        Path(model_dir).mkdir(parents=True, exist_ok=True)
+        base = str(Path(model_dir) / model_basename(self.operator, self.target))
+        with Path(base + ".pkl").open("wb") as f:
             pickle.dump(self.pipeline, f)
-        with open(base + ".json", "w") as f:
+        with Path(base + ".json").open("w") as f:
             json.dump(self.metadata, f, indent=2)
         logger.info("Saved %s/%s model to %s.pkl", self.operator, self.target, base)
         return base + ".pkl", base + ".json"
@@ -256,10 +258,10 @@ class QoREstimator:
     @classmethod
     def load(cls, model_dir: str, operator: str, target: str) -> "QoREstimator":
         """Load a model stored by :meth:`save`."""
-        base = os.path.join(model_dir, model_basename(operator, target))
-        with open(base + ".json", "r") as f:
+        base = str(Path(model_dir) / model_basename(operator, target))
+        with Path(base + ".json").open() as f:
             metadata = json.load(f)
-        with open(base + ".pkl", "rb") as f:
+        with Path(base + ".pkl").open("rb") as f:
             pipeline = pickle.load(f)
         if metadata.get("sklearn_version") != sklearn.__version__:
             logger.warning(
@@ -273,17 +275,18 @@ class QoREstimator:
     @staticmethod
     def available_models(model_dir: str) -> list[tuple[str, str]]:
         """List ``(operator, target)`` pairs stored in ``model_dir`` (via their JSON sidecars)."""
-        if not os.path.isdir(model_dir):
+        model_path = Path(model_dir)
+        if not model_path.is_dir():
             return []
         found = []
-        for filename in sorted(os.listdir(model_dir)):
+        for filename in sorted(p.name for p in model_path.iterdir()):
             if not filename.endswith(".json"):
                 continue
-            with open(os.path.join(model_dir, filename), "r") as f:
+            with (model_path / filename).open() as f:
                 meta = json.load(f)
             if "operator" in meta and "target" in meta:
-                pkl = os.path.join(model_dir, model_basename(meta["operator"], meta["target"]))
-                if os.path.isfile(pkl + ".pkl"):
+                pkl = model_path / (model_basename(meta["operator"], meta["target"]) + ".pkl")
+                if pkl.is_file():
                     found.append((meta["operator"], meta["target"]))
         return found
 
@@ -334,11 +337,11 @@ def _sample_errors(y_true: np.ndarray, y_pred: np.ndarray) -> pd.DataFrame:
 def select_regressor(
     estimator: QoREstimator,
     df: pd.DataFrame,
-    scoring: Optional[str] = None,
+    scoring: str | None = None,
     cv: int = 5,
     n_repeats: int = 1,
     n_jobs: int = -1,
-    grid: Optional[list[tuple[type[BaseEstimator], dict[str, list[Any]]]]] = None,
+    grid: list[tuple[type[BaseEstimator], dict[str, list[Any]]]] | None = None,
 ) -> SelectionResult:
     """Grid-search all regressors in ``grid`` and pick the best one by cross-validated score.
 
@@ -352,8 +355,8 @@ def select_regressor(
     scoring = scoring or default_scoring(estimator.target)
     grid = grid if grid is not None else REGRESSOR_GRID
     df = estimator.rows_with_target(df)
-    X = df[estimator.feature_cols]
-    y = df[estimator.target].values
+    x = df[estimator.feature_cols]
+    y = cast("np.ndarray", df[estimator.target].values)
     cv_obj = RepeatedKFold(n_splits=cv, n_repeats=n_repeats, random_state=RANDOM_STATE)
     n_splits = cv_obj.get_n_splits()
     extra_scorers = {
@@ -365,13 +368,13 @@ def select_regressor(
     rows = []
     sample_errors: dict[str, pd.DataFrame] = {}
     fold_scores: dict[str, np.ndarray] = {}
-    best: Optional[tuple[float, str, Pipeline]] = None
+    best: tuple[float, str, Pipeline] | None = None
     for reg_cls, param_grid in grid:
         name = reg_cls.__name__
         try:
             pipeline = estimator.build_pipeline(reg_cls(), df)
             search = GridSearchCV(pipeline, param_grid, cv=cv_obj, scoring=scoring, n_jobs=n_jobs)
-            search.fit(X, y)
+            search.fit(x, y)
             res = search.cv_results_
             best_idx, worst_idx = search.best_index_, int(np.argmin(res["mean_test_score"]))
             best_folds = np.array([res[f"split{i}_test_score"][best_idx] for i in range(n_splits)])
@@ -380,8 +383,8 @@ def select_regressor(
             )
             model = search.best_estimator_
 
-            extra = cross_validate(model, X, y, cv=cv_obj, scoring=extra_scorers, n_jobs=n_jobs)
-            y_pred = cross_val_predict(model, X, y, cv=cv_obj, n_jobs=n_jobs)
+            extra = cross_validate(model, x, y, cv=cv_obj, scoring=extra_scorers, n_jobs=n_jobs)
+            y_pred = cast("np.ndarray", cross_val_predict(model, x, y, cv=cv_obj, n_jobs=n_jobs))
             sample_errors[name] = _sample_errors(y, y_pred)
             fold_scores[name] = best_folds
             rows.append(
@@ -412,7 +415,7 @@ def select_regressor(
             )
             if best is None or search.best_score_ > best[0]:
                 best = (search.best_score_, name, model)
-        except Exception as e:  # noqa: BLE001 - one failing regressor must not abort selection
+        except Exception as e:  # one failing regressor must not abort the selection
             logger.warning("%s failed: %s", name, e)
             rows.append({"regressor": name, "mean_score": np.nan})
 
@@ -422,7 +425,8 @@ def select_regressor(
     logger.info("Best regressor: %s (mean %s = %.4f)", best_name, scoring, best_score)
 
     estimator.pipeline = best_pipeline
-    estimator.metadata.update(estimator._fit_metadata(df))
+    # select_regressor is the module-level counterpart of QoREstimator.fit
+    estimator.metadata.update(estimator._fit_metadata(df))  # noqa: SLF001
     estimator.metadata.update({"cv_scoring": scoring, "cv_score": float(best_score)})
     return SelectionResult(
         best_name=best_name,
@@ -439,13 +443,13 @@ def learning_curve(
     estimator: QoREstimator,
     df: pd.DataFrame,
     fractions: list[float],
-    scoring: Optional[str] = None,
+    scoring: str | None = None,
     cv: int = 5,
     n_repeats: int = 1,
     n_jobs: int = -1,
     test_size: float = 0.2,
     evaluation: str = "holdout",
-    grid: Optional[list[tuple[type[BaseEstimator], dict[str, list[Any]]]]] = None,
+    grid: list[tuple[type[BaseEstimator], dict[str, list[Any]]]] | None = None,
 ) -> pd.DataFrame:
     """Evaluate regressor performance as a function of the amount of training data.
 
@@ -465,10 +469,13 @@ def learning_curve(
     df = estimator.rows_with_target(df)
 
     if evaluation == "holdout":
-        train_df, test_df = train_test_split(df, test_size=test_size, random_state=RANDOM_STATE)
+        train_df, test_df = cast(
+            "list[pd.DataFrame]",
+            train_test_split(df, test_size=test_size, random_state=RANDOM_STATE),
+        )
     else:
         train_df, test_df = df, df
-    X_test, y_test = test_df[estimator.feature_cols], test_df[estimator.target].values
+    x_test, y_test = test_df[estimator.feature_cols], test_df[estimator.target].values
     cv_obj = RepeatedKFold(n_splits=cv, n_repeats=n_repeats, random_state=RANDOM_STATE)
 
     results: dict[float, dict[str, float]] = {}
@@ -479,7 +486,7 @@ def learning_curve(
             logger.info("Fraction %.2f: only %d samples, skipping", frac, n_train)
             continue
         subset = train_df.sample(n=n_train, random_state=RANDOM_STATE)
-        X_train, y_train = subset[estimator.feature_cols], subset[estimator.target].values
+        x_train, y_train = subset[estimator.feature_cols], subset[estimator.target].values
         for reg_cls, param_grid in grid:
             name = reg_cls.__name__
             try:
@@ -487,9 +494,9 @@ def learning_curve(
                 search = GridSearchCV(
                     pipeline, param_grid, cv=cv_obj, scoring=scoring, n_jobs=n_jobs
                 )
-                search.fit(X_train, y_train)
-                results[frac][name] = float(scorer(search.best_estimator_, X_test, y_test))
-            except Exception as e:  # noqa: BLE001
+                search.fit(x_train, y_train)
+                results[frac][name] = float(scorer(search.best_estimator_, x_test, y_test))
+            except Exception as e:  # one failing regressor must not abort the learning curve
                 logger.warning("%s failed at fraction %.2f: %s", name, frac, e)
                 results[frac][name] = np.nan
         logger.info("Fraction %.2f (%d samples): %s", frac, n_train, results[frac])

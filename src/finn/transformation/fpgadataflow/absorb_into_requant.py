@@ -3,8 +3,15 @@
 
 """Transformation absorbing elementwise scale and bias operations into Requant nodes."""
 import numpy as np
+from onnx import NodeProto
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation
+    from finn.custom_op.fpgadataflow.requant import Requant
 
 
 class AbsorbElementwiseOpsIntoRequant(Transformation):
@@ -28,7 +35,7 @@ class AbsorbElementwiseOpsIntoRequant(Transformation):
     parameters are folded into the Requant's scale/bias initializers.
     """
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Fold preceding constant ElementwiseMul/Add nodes into each Requant's scale and bias."""
         graph = model.graph
         graph_modified = False
@@ -37,7 +44,7 @@ class AbsorbElementwiseOpsIntoRequant(Transformation):
             if node.op_type != "Requant":
                 continue
 
-            node_inst = getCustomOp(node)
+            node_inst = cast("Requant", getCustomOp(node))
 
             # Get current scale and bias
             current_scale = node_inst.get_scale(model)
@@ -56,10 +63,11 @@ class AbsorbElementwiseOpsIntoRequant(Transformation):
 
             # Pattern: ElementwiseMul -> Requant
             if predecessor.op_type == "ElementwiseMul":
-                mul_inst = getCustomOp(predecessor)
-                mul_const, mul_input = self._get_const_and_input(model, predecessor, mul_inst)
-                if mul_const is None:
+                mul_inst = cast("ElementwiseBinaryOperation", getCustomOp(predecessor))
+                mul_operands = self._get_const_and_input(model, predecessor, mul_inst)
+                if mul_operands is None:
                     continue
+                mul_const, mul_input = mul_operands
 
                 absorbed_scale = mul_const.flatten()
                 new_input = mul_input
@@ -68,10 +76,11 @@ class AbsorbElementwiseOpsIntoRequant(Transformation):
             # Pattern: ElementwiseAdd -> Requant
             # Also check for: ElementwiseMul -> ElementwiseAdd -> Requant
             elif predecessor.op_type == "ElementwiseAdd":
-                add_inst = getCustomOp(predecessor)
-                add_const, add_input = self._get_const_and_input(model, predecessor, add_inst)
-                if add_const is None:
+                add_inst = cast("ElementwiseBinaryOperation", getCustomOp(predecessor))
+                add_operands = self._get_const_and_input(model, predecessor, add_inst)
+                if add_operands is None:
                     continue
+                add_const, add_input = add_operands
 
                 absorbed_bias = add_const.flatten()
                 new_input = add_input
@@ -80,9 +89,10 @@ class AbsorbElementwiseOpsIntoRequant(Transformation):
                 # Check for ElementwiseMul -> ElementwiseAdd -> Requant
                 add_pred = model.find_producer(new_input)
                 if add_pred is not None and add_pred.op_type == "ElementwiseMul":
-                    mul_inst = getCustomOp(add_pred)
-                    mul_const, mul_input = self._get_const_and_input(model, add_pred, mul_inst)
-                    if mul_const is not None:
+                    mul_inst = cast("ElementwiseBinaryOperation", getCustomOp(add_pred))
+                    mul_operands = self._get_const_and_input(model, add_pred, mul_inst)
+                    if mul_operands is not None:
+                        mul_const, mul_input = mul_operands
                         # Check that ElementwiseMul has only one consumer
                         mul_consumers = model.find_consumers(add_pred.output[0])
                         if len(mul_consumers) == 1:
@@ -142,23 +152,28 @@ class AbsorbElementwiseOpsIntoRequant(Transformation):
 
         return (model, graph_modified)
 
-    def _get_const_and_input(self, model, node, node_inst):
+    def _get_const_and_input(
+        self, model: ModelWrapper, node: NodeProto, node_inst: "ElementwiseBinaryOperation"
+    ) -> tuple[np.ndarray, str] | None:
         """Get constant operand and streaming input from ElementwiseBinary node.
 
         Returns:
-            Tuple of (const_value, input_name) or (None, None) if no const operand.
+            Tuple of (const_value, input_name) or None if there is no const operand (or the
+            const operand has no initializer).
         """
         lhs_style = node_inst.get_nodeattr("lhs_style")
         rhs_style = node_inst.get_nodeattr("rhs_style")
 
         if lhs_style == "const" and rhs_style == "input":
-            const_value = model.get_initializer(node.input[0])
+            const_value = cast("np.ndarray | None", model.get_initializer(node.input[0]))
             input_name = node.input[1]
         elif rhs_style == "const" and lhs_style == "input":
-            const_value = model.get_initializer(node.input[1])
+            const_value = cast("np.ndarray | None", model.get_initializer(node.input[1]))
             input_name = node.input[0]
         else:
             # Both are streaming or both are const - not supported
-            return None, None
+            return None
 
+        if const_value is None:
+            return None
         return const_value, input_name

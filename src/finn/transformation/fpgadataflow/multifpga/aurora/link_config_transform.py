@@ -114,7 +114,7 @@ class AddAuroraToLinkConfig(Transformation):
             for index, aurora_data in enumerate(metadata[device]):
                 if aurora_data is None:
                     raise FINNInternalError(
-                        f"Aurora metadata for device " f"{device} is completely missing."
+                        f"Aurora metadata for device {device} is completely missing."
                     )
                 if aurora_data.aurora_xo is None:
                     raise FINNInternalError(

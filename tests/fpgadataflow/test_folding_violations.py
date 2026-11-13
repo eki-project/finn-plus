@@ -133,7 +133,7 @@ def make_fmpadding(**attrs: int) -> ModelWrapper:
     return make_single_node_model("FMPadding_rtl", node_attrs, [1, 4, 4, 8], [[1, 6, 6, 8]])
 
 
-def make_fmpadding_pixel(**attrs: int) -> ModelWrapper:
+def make_input_dilation(**attrs: int) -> ModelWrapper:
     """Pixel padding with 8 channels."""
     node_attrs = {
         "ImgDim": [4, 4],
@@ -143,7 +143,7 @@ def make_fmpadding_pixel(**attrs: int) -> ModelWrapper:
         "SIMD": 4,
     }
     node_attrs.update(attrs)
-    return make_single_node_model("FMPadding_Pixel_hls", node_attrs, [1, 4, 4, 8], [[1, 7, 7, 8]])
+    return make_single_node_model("InputDilation_hls", node_attrs, [1, 4, 4, 8], [[1, 7, 7, 8]])
 
 
 def make_pool(**attrs: int) -> ModelWrapper:
@@ -190,10 +190,10 @@ def make_labelselect(**attrs: int) -> ModelWrapper:
 
 # (model builder, attributes of an illegal folding, expected part of the message)
 ILLEGAL_FOLDINGS = [
-    pytest.param(make_mvau, {"PE": 3}, "MH (8) must be divisable by PE", id="mvau-pe"),
-    pytest.param(make_mvau, {"SIMD": 5}, "MW (12) must be divisable by SIMD", id="mvau-simd"),
+    pytest.param(make_mvau, {"PE": 3}, "MH (8) must be divisible by PE", id="mvau-pe"),
+    pytest.param(make_mvau, {"SIMD": 5}, "MW (12) must be divisible by SIMD", id="mvau-simd"),
     pytest.param(
-        make_mvau, {"variant": "rtl", "PE": 3}, "MH (8) must be divisable by PE", id="mvau_rtl-pe"
+        make_mvau, {"variant": "rtl", "PE": 3}, "MH (8) must be divisible by PE", id="mvau_rtl-pe"
     ),
     pytest.param(
         make_vvau, {"PE": 3}, "Requirement Channels divisable by PE is violated.", id="vvau-pe"
@@ -225,7 +225,7 @@ ILLEGAL_FOLDINGS = [
     ),
     pytest.param(make_fmpadding, {"SIMD": 3}, "SIMD must divide input channels", id="fmpadding"),
     pytest.param(
-        make_fmpadding_pixel, {"SIMD": 3}, "SIMD must divide input channels", id="fmpadding_pixel"
+        make_input_dilation, {"SIMD": 3}, "SIMD must divide input channels", id="input_dilation"
     ),
     pytest.param(make_pool, {"PE": 3}, "PE must divide input channels", id="pool"),
     pytest.param(make_globalaccpool, {"PE": 3}, "PE must divide NumChannels", id="globalaccpool"),
@@ -251,7 +251,7 @@ LEGAL_FOLDINGS = [
     ),
     pytest.param(make_swg, {"k": 1, "SIMD": 4, "parallel_window": 1}, id="swg-parallel-window-1x1"),
     pytest.param(make_fmpadding, {}, id="fmpadding"),
-    pytest.param(make_fmpadding_pixel, {}, id="fmpadding_pixel"),
+    pytest.param(make_input_dilation, {}, id="input_dilation"),
     pytest.param(make_pool, {}, id="pool"),
     pytest.param(make_globalaccpool, {}, id="globalaccpool"),
     pytest.param(make_duplicatestreams, {}, id="duplicatestreams"),
@@ -303,10 +303,10 @@ def test_check_folding_legal(make_model: Callable, attrs: dict) -> None:
         pytest.param(make_fmpadding, {"SIMD": 3}, "get_folded_input_shape", id="fmpadding-ishape"),
         pytest.param(make_fmpadding, {"SIMD": 3}, "get_folded_output_shape", id="fmpadding-oshape"),
         pytest.param(
-            make_fmpadding_pixel, {"SIMD": 3}, "get_folded_input_shape", id="pixel-ishape"
+            make_input_dilation, {"SIMD": 3}, "get_folded_input_shape", id="dilation-ishape"
         ),
         pytest.param(
-            make_fmpadding_pixel, {"SIMD": 3}, "get_folded_output_shape", id="pixel-oshape"
+            make_input_dilation, {"SIMD": 3}, "get_folded_output_shape", id="dilation-oshape"
         ),
         pytest.param(make_pool, {"PE": 3}, "get_folded_input_shape", id="pool-ishape"),
         pytest.param(make_pool, {"PE": 3}, "get_folded_output_shape", id="pool-oshape"),
@@ -397,8 +397,8 @@ def test_folding_violations_reports_all_nodes() -> None:
     )
     violations = ModelWrapper(qonnx_make_model(graph)).analysis(folding_violations)
     assert list(violations) == ["b", "c"]
-    assert "MH (8) must be divisable by PE (currently 3)" in violations["b"]
-    assert "MW (12) must be divisable by SIMD (currently 5)" in violations["c"]
+    assert "MH (8) must be divisible by PE (3)" in violations["b"]
+    assert "MW (12) must be divisible by SIMD (5)" in violations["c"]
 
 
 @pytest.mark.fpgadataflow
@@ -452,7 +452,7 @@ def test_step_apply_folding_config_rejects_illegal_config(build_dir: Path) -> No
     assert excinfo.value.op_type == "MVAU_hls"
     assert list(excinfo.value.violations) == ["MVAU_hls_0"]
     assert excinfo.value.violations["MVAU_hls_0"] in str(excinfo.value)
-    assert "MVAU_hls_0: MH (8) must be divisable by PE (currently 3)" in str(excinfo.value)
+    assert "MVAU_hls_0: MH (8) must be divisible by PE (3)" in str(excinfo.value)
 
 
 @pytest.mark.fpgadataflow

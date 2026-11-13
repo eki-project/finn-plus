@@ -75,10 +75,13 @@ def common_divisors(numbers: list[int]) -> np.ndarray:
 
 # Find the op-type names for all HLS specializations of elementwise binary
 # operations
+# Note: filter on __module__ so module-level type aliases (which pass
+# inspect.isclass as types.GenericAlias) and imported classes are skipped
 ELEMENTWISE_BINARY_OPS = [
     op_type
     for op_type, cls in inspect.getmembers(elementwise_binary_hls, inspect.isclass)
-    if issubclass(cls, elementwise_binary_hls.ElementwiseBinaryOperation_hls)
+    if getattr(cls, "__module__", None) == elementwise_binary_hls.__name__
+    and issubclass(cls, elementwise_binary_hls.ElementwiseBinaryOperation_hls)
 ]
 
 
@@ -198,7 +201,6 @@ class SetFolding(Transformation):
             "PWPolyF_rtl",
             "Thresholding_hls",
             "Thresholding_rtl",
-            "ReplicateStream_hls",
             *ELEMENTWISE_BINARY_OPS,
             "Squeeze_hls",
             "Unsqueeze_hls",
@@ -210,7 +212,7 @@ class SetFolding(Transformation):
         # setting parallel_window=1 mode after maxing out SIMD
         simd_ops = [
             "FMPadding_rtl",
-            "FMPadding_Pixel_hls",
+            "InputDilation_hls",
             "ConvolutionInputGenerator_rtl",
             # Streaming Split and Concat are SIMD operations
             "StreamingSplit_hls",
@@ -324,7 +326,7 @@ class SetFolding(Transformation):
                 max_pe = cast("int", node_inst.get_nodeattr("Channels"))
                 self.optimize_attribute_val(node_inst, max_pe, "PE")
                 # increase SIMD for VVAU once PE is exhausted
-                pe = node_inst.get_nodeattr("PE")
+                pe = cast("int", node_inst.get_nodeattr("PE"))
                 cyc = node_inst.get_exp_cycles()
                 if (
                     op_type in ["VVAU_hls", "VVAU_rtl"]
@@ -343,7 +345,7 @@ class SetFolding(Transformation):
                         op_type=op_type,
                     )
                 if swu_node.op_type.startswith("ConvolutionInputGenerator"):
-                    swu_node_inst = getCustomOp(swu_node)
+                    swu_node_inst = cast("HWCustomOp", getCustomOp(swu_node))
                     swu_node_inst.set_nodeattr("SIMD", pe)
                     # The depthwise SWU replays its buffered window once per channel
                     # fold, so it can be slower than the VVAU/Pool it feeds (e.g. a
