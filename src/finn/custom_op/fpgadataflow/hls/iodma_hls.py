@@ -38,14 +38,16 @@ from pathlib import Path
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import TYPE_CHECKING, Any, cast
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
-    from onnx import NodeProto
+    from onnx import GraphProto, NodeProto
     from qonnx.core.modelwrapper import ModelWrapper
+
 
 # the IODMA inerfaces a memory-mapped AXI interface and an AXI stream
 # direction "in": pulls data from AXI-MM to AXI stream
@@ -101,6 +103,7 @@ if TYPE_CHECKING:
 RING_REGISTERS = ("addr_lo", "addr_hi", "frames", "prod", "cons")
 
 
+@register_custom_op
 class IODMA_hls(HLSBackend, HWCustomOp):
     """Class that corresponds to finn-hlslib DMA function(s)."""
 
@@ -108,9 +111,9 @@ class IODMA_hls(HLSBackend, HWCustomOp):
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self) -> dict[str, tuple]:
-        """Return nodeattr types."""
-        my_attrs = {
+    def get_nodeattr_types(self) -> NodeAttrTypes:
+        """Return the dictionary of node attributes for the IODMA operator."""
+        my_attrs: NodeAttrTypes = {
             "NumChannels": ("i", True, 0),
             # FINN input datatype
             "dataType": ("s", True, ""),
@@ -138,19 +141,59 @@ class IODMA_hls(HLSBackend, HWCustomOp):
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def _int(self, name: str) -> int:
-        """Return the integer node attribute name."""
-        return cast("int", self.get_nodeattr(name))
+    @property
+    def num_channels(self) -> int:
+        """Return the number of channels moved by the DMA."""
+        return cast("int", self.get_nodeattr("NumChannels"))
 
-    def _str(self, name: str) -> str:
-        """Return the string node attribute name."""
-        return cast("str", self.get_nodeattr(name))
+    @property
+    def stream_width(self) -> int:
+        """Return the AXI-Stream interface width in bits."""
+        return cast("int", self.get_nodeattr("streamWidth"))
+
+    @property
+    def intf_width(self) -> int:
+        """Return the AXI-MM interface width in bits."""
+        return cast("int", self.get_nodeattr("intfWidth"))
+
+    @property
+    def direction(self) -> str:
+        """Return the DMA direction ("in" or "out")."""
+        return cast("str", self.get_nodeattr("direction"))
+
+    @property
+    def burst_mode(self) -> str:
+        """Return the AXI-MM burst mode ("increment" or "wrap")."""
+        return cast("str", self.get_nodeattr("burstMode"))
+
+    @property
+    def intf_name(self) -> str:
+        """Return the configured AXI-MM interface name (empty for the default)."""
+        return cast("str", self.get_nodeattr("intfName"))
+
+    @property
+    def num_replicas(self) -> int:
+        """Return the numReplicas attribute (see _replicas for the checked value)."""
+        return cast("int", self.get_nodeattr("numReplicas"))
+
+    @property
+    def ctrl_mode(self) -> str:
+        """Return the control interface ("register" or "ring")."""
+        return cast("str", self.get_nodeattr("ctrlMode"))
+
+    @property
+    def ring_slots(self) -> int:
+        """Return the number of descriptor slots of a ring DMA."""
+        return cast("int", self.get_nodeattr("ringSlots"))
+
+    @property
+    def num_input_vectors(self) -> list[int]:
+        """Return the shape describing the number of input vectors per execution."""
+        return list(cast("list[int]", self.get_nodeattr("numInputVectors")))
 
     def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal input shape."""
-        vecs = cast("list[int]", self.get_nodeattr("numInputVectors"))
-        num_ch = self._int("NumChannels")
-        return (*vecs, num_ch)
+        return (*self.num_input_vectors, self.num_channels)
 
     def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal output shape."""
@@ -158,7 +201,7 @@ class IODMA_hls(HLSBackend, HWCustomOp):
 
     def _folded_stream_shape(self, shape: list[int], dtype_bits: int) -> tuple[int, ...]:
         """Fold the innermost dimension of shape into words of the stream width."""
-        stream_width = self._int("streamWidth")
+        stream_width = self.stream_width
         if stream_width % dtype_bits != 0:
             raise FINNInternalError(
                 f"{self.onnx_node.name}: stream width must be a multiple of the datatype bits"
@@ -170,16 +213,16 @@ class IODMA_hls(HLSBackend, HWCustomOp):
 
     def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
-        if self._str("direction") == "in":
-            raise ValueError("Folded input shape not defined for input IODMA")
+        if self.direction == "in":
+            raise FINNInternalError("Folded input shape not defined for input IODMA")
         return self._folded_stream_shape(
             list(self.get_normal_input_shape()), self.get_input_datatype().bitwidth()
         )
 
     def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded output shape."""
-        if self._str("direction") == "out":
-            raise ValueError("Folded output shape not defined for output IODMA")
+        if self.direction == "out":
+            raise FINNInternalError("Folded output shape not defined for output IODMA")
         return self._folded_stream_shape(
             list(self.get_normal_output_shape()), self.get_output_datatype().bitwidth()
         )
@@ -197,7 +240,7 @@ class IODMA_hls(HLSBackend, HWCustomOp):
 
     def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
         """Return FINN DataType of input."""
-        return DataType[self._str("dataType")]
+        return DataType[cast("str", self.get_nodeattr("dataType"))]
 
     def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
         """Return FINN DataType of output (the same as the input datatype)."""
@@ -205,19 +248,19 @@ class IODMA_hls(HLSBackend, HWCustomOp):
 
     def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return instream width."""
-        if self._str("direction") == "in":
-            return self._int("intfWidth")
-        return self._int("streamWidth")
+        if self.direction == "in":
+            return self.intf_width
+        return self.stream_width
 
     def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return outstream width."""
-        if self._str("direction") == "out":
-            return self._int("intfWidth")
-        return self._int("streamWidth")
+        if self.direction == "out":
+            return self.intf_width
+        return self.stream_width
 
     def get_number_output_values(self) -> int:
         """Return number output values."""
-        stream_width = self._int("streamWidth")
+        stream_width = self.stream_width
         nbits = self._frame_bits()
         if nbits % stream_width != 0:
             raise FINNInternalError(
@@ -231,12 +274,12 @@ class IODMA_hls(HLSBackend, HWCustomOp):
 
     def _replicas(self) -> int:
         """Return the number of replicated pipelines (increment-mode DMAs only)."""
-        replicas = self._int("numReplicas")
+        replicas = self.num_replicas
         if replicas < 1:
             raise FINNUserError(
                 f"{self.onnx_node.name}: numReplicas must be at least 1, got {replicas}"
             )
-        if self._str("burstMode") == "wrap" and (replicas != 1 or self._is_ring()):
+        if self.burst_mode == "wrap" and (replicas != 1 or self._is_ring()):
             raise FINNUserError(
                 f"{self.onnx_node.name}: weight-streaming (wrap) IODMAs support neither "
                 f"replication nor ring control"
@@ -245,18 +288,18 @@ class IODMA_hls(HLSBackend, HWCustomOp):
 
     def _is_ring(self) -> bool:
         """Whether this is a free-running ring DMA (C++ driver) rather than a register DMA."""
-        return self._str("ctrlMode") == "ring"
+        return self.ctrl_mode == "ring"
 
     def _stream_port(self, p: int) -> str:
         """Name of stream port p."""
-        return f"out{p}_V" if self._str("direction") == "in" else f"in{p}_V"
+        return f"out{p}_V" if self.direction == "in" else f"in{p}_V"
 
     def _mm_port(self) -> str:
         """Name of the memory-mapped port."""
-        intfname = self._str("intfName")
+        intfname = self.intf_name
         if intfname != "":
             return intfname
-        return "in0_V" if self._str("direction") == "in" else "out0_V"
+        return "in0_V" if self.direction == "in" else "out0_V"
 
     def global_includes(self) -> None:
         """Return global includes."""
@@ -273,7 +316,7 @@ class IODMA_hls(HLSBackend, HWCustomOp):
             raise FINNInternalError(
                 f"{self.onnx_node.name}: DMA transfer is not a multiple of 1 byte"
             )
-        intfw = self._int("intfWidth")
+        intfw = self.intf_width
         self.code_gen_dict["$DEFINES$"] = [
             f"#define NumBytes1 {total_bits // 8}\n#define DataWidth1 {intfw}\n"
         ]
@@ -312,13 +355,13 @@ class IODMA_hls(HLSBackend, HWCustomOp):
 
     def docompute(self) -> None:
         """Return docompute."""
-        if self._str("burstMode") == "wrap":
+        if self.burst_mode == "wrap":
             self._docompute_wrap()
             return
         n = self._replicas()
         ring = self._is_ring()
-        intfw = self._int("intfWidth")
-        strmw = self._int("streamWidth")
+        intfw = self.intf_width
+        strmw = self.stream_width
         frame_bits = self._frame_bits()
         if frame_bits % intfw != 0 or frame_bits % strmw != 0:
             raise FINNInternalError(
@@ -329,11 +372,11 @@ class IODMA_hls(HLSBackend, HWCustomOp):
         frames = "IODMA_TEST_FRAMES" if ring else "numReps"
         forever = "IODMA_FOREVER" if ring else "false"
         mm = self._mm_port()
-        slots = self._int("ringSlots")
+        slots = self.ring_slots
         ring_args = f"addr_lo, addr_hi, frames, prod, cons, {frame_words}, IODMA_TEST_DESC"
         decls: list[str] = []
         calls: list[str] = []
-        if self._str("direction") == "in":
+        if self.direction == "in":
             # memory -> [split over N ports] -> width conversion per port -> out<p>_V
             direct = n == 1 and intfw == strmw
             rd = self._stream_port(0) if direct else "mem2s"
@@ -388,8 +431,8 @@ class IODMA_hls(HLSBackend, HWCustomOp):
         """Weight-streaming DMA (finn-hlslib, register control, one pipeline)."""
         dwc_inst_template = "StreamingDataWidthConverter_Batch<%d, %d, %d>(%s, %s, numReps);"
         dma_inst = "Mem2Stream_Batch_external_wmem<DataWidth1, NumBytes1>(%s, %s, numReps);"
-        intfw = self._int("intfWidth")
-        strmw = self._int("streamWidth")
+        intfw = self.intf_width
+        strmw = self.stream_width
         total_bits = self._frame_bits()
         mm = self._mm_port()
         if strmw == intfw:
@@ -414,14 +457,14 @@ class IODMA_hls(HLSBackend, HWCustomOp):
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
         n = self._replicas()
-        mem_type = f"ap_uint<{self._int('intfWidth')}>"
-        stream_type = f"hls::stream<ap_uint<{self._int('streamWidth')}>>"
+        mem_type = f"ap_uint<{self.intf_width}>"
+        stream_type = f"hls::stream<ap_uint<{self.stream_width}>>"
         mm = self._mm_port()
         mem_arg = f"hls::burst_maxi<{mem_type}> {mm}" if self._is_ring() else f"{mem_type} *{mm}"
         streams = [f"{stream_type} &{self._stream_port(p)}" for p in range(n)]
-        args = [mem_arg, *streams] if self._str("direction") == "in" else [*streams, mem_arg]
+        args = [mem_arg, *streams] if self.direction == "in" else [*streams, mem_arg]
         if self._is_ring():
-            slots = self._int("ringSlots")
+            slots = self.ring_slots
             args += [
                 f"const unsigned addr_lo[{slots}]",
                 f"const unsigned addr_hi[{slots}]",
@@ -438,9 +481,7 @@ class IODMA_hls(HLSBackend, HWCustomOp):
     def pragmas(self) -> None:
         """Return pragmas."""
         mm = self._mm_port()
-        burst = (
-            "max_read_burst_length" if self._str("direction") == "in" else "max_write_burst_length"
-        )
+        burst = "max_read_burst_length" if self.direction == "in" else "max_write_burst_length"
         pragmas = []
         if self._is_ring():
             pragmas.append("#pragma HLS INTERFACE mode=ap_ctrl_none port=return")
@@ -464,24 +505,24 @@ class IODMA_hls(HLSBackend, HWCustomOp):
         pragmas.append("#pragma HLS DATAFLOW")
         self.code_gen_dict["$PRAGMAS$"] = pragmas
 
-    def execute_node(self, context: dict, graph: Any) -> None:
-        """Execute node."""
+    def execute_node(self, context: dict[str, np.ndarray], graph: GraphProto) -> None:
+        """Execute node (no-op for the IODMA)."""
 
     def get_verilog_top_module_intf_names(self) -> dict[str, Any]:
         """Return verilog top module intf names."""
         intf_names = super().get_verilog_top_module_intf_names()
-        width = self._int("streamWidth")
+        width = self.stream_width
         ports: list[tuple[str, int]] = [
             (self._stream_port(p), width) for p in range(self._replicas())
         ]
-        if self._str("direction") == "out":
+        if self.direction == "out":
             intf_names["s_axis"] = ports
             intf_names["m_axis"] = []
         else:
             intf_names["s_axis"] = []
             intf_names["m_axis"] = ports
         intf_names["axilite"] = ["s_axi_control"]
-        intf_names["aximm"] = [("m_axi_gmem", self._int("intfWidth"))]
+        intf_names["aximm"] = [("m_axi_gmem", self.intf_width)]
         return intf_names
 
     def get_ring_register_offsets(self) -> dict[str, int]:
@@ -492,7 +533,7 @@ class IODMA_hls(HLSBackend, HWCustomOp):
         if not self._is_ring():
             raise FINNInternalError(f"{self.onnx_node.name} is not a ring DMA")
         # the HLS project keeps the node name of code generation; BuildAllXOs renames nodes later
-        code_gen_dir = Path(self._str("code_gen_dir_ipgen"))
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
         name = self.onnx_node.name
         headers = list(code_gen_dir.glob("project_*/sol1/impl/misc/drivers/*/src/x*_hw.h"))
         if len(headers) != 1:

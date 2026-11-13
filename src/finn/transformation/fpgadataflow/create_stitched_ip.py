@@ -174,6 +174,31 @@ def kernel_xdc_package_tcl(block_name: str) -> list[str]:
     ]
 
 
+def ooc_clock_tcl(clk_ns: float, double_pumped: bool) -> list[str]:
+    """Clock constraints for the out-of-context place and route of a stitched IP.
+
+    A double-pumped IP also gets ``ap_clk2x`` at half the period. Vivado keeps periods in
+    picoseconds, so both periods are rounded to an even number of picoseconds first: a
+    period that halves to a fraction of a picosecond (2.857 ns -> 1.4285 ns) is rounded on
+    its own and the two clocks drift apart, which showed up as -0.45 ns between ap_clk and
+    ap_clk2x on paths that meet timing.
+
+    >>> ooc_clock_tcl(5.0, False)
+    ['create_clock -period 5.0 [get_ports ap_clk]']
+    >>> for line in ooc_clock_tcl(2.857, True):
+    ...     print(line)
+    create_clock -period 2.856 [get_ports ap_clk]
+    create_clock -period 1.428 [get_ports ap_clk2x]
+    """
+    if not double_pumped:
+        return [f"create_clock -period {clk_ns} [get_ports ap_clk]"]
+    half_ps = round(clk_ns * 500)
+    return [
+        f"create_clock -period {2 * half_ps / 1000} [get_ports ap_clk]",
+        f"create_clock -period {half_ps / 1000} [get_ports ap_clk2x]",
+    ]
+
+
 # The reset tree's hops carry no timing exception of their own: they are register to
 # register in the kernel clock and the period bounds them. When appending to a
 # `write_xdc -cell` file, start with `current_instance -quiet`: the file ends inside the
@@ -298,15 +323,15 @@ class CreateStitchedIP(Transformation):
         return repos
 
     def is_double_pumped(self, node: "NodeProto") -> bool:
-        """Check if node uses double-pumped compute or memory."""
-        if node.op_type.startswith("MVAU"):
-            inst = getCustomOp(node)
-            try:
-                pumped_compute = cast("int", inst.get_nodeattr("pumpedCompute"))
-            except AttributeError:
-                pumped_compute = 0
-            return bool(pumped_compute or cast("int", inst.get_nodeattr("pumpedMemory")))
-        return False
+        """Check if node has a 2x clock input (double-pumped compute or memory).
+
+        Asks the node's own interface list, so any node type that exposes ``clk2x`` counts
+        (today MVAU with ``pumpedCompute`` or ``pumpedMemory``).
+        """
+        inst = getCustomOp(node)
+        if not isinstance(inst, HWCustomOp):
+            return False
+        return bool(inst.get_verilog_top_module_intf_names().get("clk2x"))
 
     def connect_clk_rst(self, node: "NodeProto") -> None:
         """Connect clock and reset signals for a node."""
@@ -824,8 +849,10 @@ class CreateStitchedIP(Transformation):
         for graph_input in model.graph.input:
             inp_name = graph_input.name
             inp_cons = model.find_consumers(inp_name)
-            assert inp_cons != [], f"No consumer for input {inp_name}"
-            assert len(inp_cons) == 1, f"Multiple consumers for input {inp_name}"
+            if not (inp_cons != []):
+                raise FINNInternalError(f"No consumer for input {inp_name}")
+            if not (len(inp_cons) == 1):
+                raise FINNInternalError(f"Multiple consumers for input {inp_name}")
             node = inp_cons[0]
             node_inst = getCustomOp(node)
             for i in range(len(node.input)):
@@ -834,7 +861,8 @@ class CreateStitchedIP(Transformation):
         for output in model.graph.output:
             out_name = output.name
             node = model.find_producer(out_name)
-            assert node is not None, f"No producer for output {out_name}"
+            if not (node is not None):
+                raise FINNInternalError(f"No producer for output {out_name}")
             node_inst = getCustomOp(node)
             for i in range(len(node.output)):
                 if node.output[i] == out_name:
@@ -847,18 +875,17 @@ class CreateStitchedIP(Transformation):
                 node_inst = getCustomOp(node)
                 inst_name = node.name
                 s_axis_intf_names = node_inst.get_verilog_top_module_intf_names()["s_axis"]
-                for i, (intf_name, width) in enumerate(s_axis_intf_names):
+                for intf_name, width in s_axis_intf_names:
                     if intf_name == "s_axis_tap":
                         self.connect_cmds.append(
-                            "make_bd_intf_pins_external [get_bd_intf_pins %s/%s]"
-                            % (inst_name, intf_name)
+                            f"make_bd_intf_pins_external [get_bd_intf_pins {inst_name}/{intf_name}]"
                         )
                         self.has_s_axis = True
                         self.connect_cmds.append(
-                            "set_property name %s_id_%d [get_bd_intf_ports %s_0]"
-                            % (intf_name, stap_id, intf_name)
+                            f"set_property name {intf_name}_id_{stap_id} "
+                            f"[get_bd_intf_ports {intf_name}_0]"
                         )
-                        self.intf_names["s_axis"].append(("s_axis_tap_id_%d" % stap_id, width))
+                        self.intf_names["s_axis"].append((f"s_axis_tap_id_{stap_id}", width))
                         stap_id += 1
 
         if self.signature:
@@ -925,7 +952,8 @@ class CreateStitchedIP(Transformation):
 
         model.set_metadata_prop("wrapper_filename", wrapper_filename)
         num_workers = get_num_default_workers()
-        assert num_workers >= 0, "Number of workers must be nonnegative."
+        if not (num_workers >= 0):
+            raise FINNInternalError("Number of workers must be nonnegative.")
         if num_workers == 0:
             num_workers = mp.cpu_count()
         if self.synth_jobs is not None:
@@ -988,7 +1016,7 @@ class CreateStitchedIP(Transformation):
                 [
                     "",
                     "# --- Place and Route for OOC Metrics ---",
-                    f"create_clock -period {float(self.clk_ns)} [get_ports ap_clk]",
+                    *ooc_clock_tcl(float(self.clk_ns), bool(self.intf_names.get("clk2x"))),
                     "opt_design",
                     "place_design",
                     "route_design",

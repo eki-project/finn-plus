@@ -84,7 +84,8 @@ class InsertTLastMarker(Transformation):
             and _get_by_name(final_node.attribute, "direction").s.decode("UTF-8") == "out"
         ):
             custom_op = getHWCustomOp(final_node)
-            num_iters = int(custom_op.get_number_output_values())
+            # final_node feeds the single global output via its output[0]
+            num_iters = custom_op.get_number_output_values_for_stream(0)
             stream_width = int(custom_op.get_outstream_width())
             out_shape = model.get_tensor_shape(graph_out_name)
             out_dtype = model.get_tensor_datatype(graph_out_name)

@@ -79,8 +79,8 @@ module memstream #(
 		// Increment for wrapping DEPTH-1 back to zero
 		localparam int unsigned  WRAP_INC = 2**ADDR_WIDTH - DEPTH + 1;
 
-		// The read pointer addresses every block RAM of the memory; see the fan-out
-		// note in axi/hdl/axilite.sv for why synthesis replicates it.
+		// The read pointer addresses every block RAM of the memory: see Stage #1 for
+		// why it, and not Ptr1, carries the fan-out.
 		(* MAX_FANOUT = 32 *)  addr_t  Ptr = 0;
 		logic   Lst = DEPTH < 2;
 		always_ff @(posedge clk) begin
@@ -123,6 +123,7 @@ module memstream #(
 			assign	lst = Cnt[$left(Cnt)];
 		end
 
+		// see Stage #1 for the fan-out
 		(* MAX_FANOUT = 32 *)  addr_t  Ptr = 'x;
 		logic   Vld =  0;
 		assign	srdy = !Vld || (lst && got0);
@@ -152,6 +153,15 @@ module memstream #(
 	typedef logic [WIDTH-1:0]  data_t;
 
 	//- Stage #1: Command Arbitration
+	// With block RAM, synthesis absorbs Ptr1, Wr1 and Dat1 into the RAMs' input
+	// registers, so the fabric nets to the address pins of every RAM start at Ptr,
+	// through the Ptr1 input multiplexer. MAX_FANOUT therefore sits on Ptr: on Ptr1
+	// it keeps the registers out of the RAMs (+830 FF for a 64000 x 64 memory of
+	// 113 RAMB36, no gain in slack). On Ptr it splits each address bit from up to
+	// 91 loads into replicas of 32, and the path into the RAMs gains 0.19 ns on
+	// average (U55C, out of context, six placer directives) for 9 registers. The
+	// AXI-lite command registers behind config_* reach the RAMs the same way; they
+	// stay unreplicated: replicated, they cost up to 3,000 LUTs and gained nothing.
 	uwire  ogot = ovld && ordy;
 
 	logic  Wr1 = 0;
@@ -255,8 +265,10 @@ module memstream #(
 		data_t  OSrl[FULL_CREDIT-1];
 		// OPtr selects the SRL tap of every output data bit: 1,027 loads for a
 		// 1,024-bit weight stream, spread over the unit (route 6.6 ns across 155
-		// rows on mobilenetv1). Replicated per 64 loads so each copy
-		// serves one sixteenth of the output register.
+		// rows on mobilenetv1). Replicated per 64 loads so each copy serves one
+		// sixteenth of the output register: +0.5 ns on the OPtr paths of block RAM
+		// memories (U55C, out of context, six placer directives) for about three
+		// registers per 64 output bits.
 		(* MAX_FANOUT = 64 *)  logic [$clog2(FULL_CREDIT):0]  OPtr = -1;
 		always_ff @(posedge clk) begin
 			if(Rs3)  OSrl <= { Dat3, OSrl[0:FULL_CREDIT-3] };

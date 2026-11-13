@@ -15,6 +15,7 @@ import numpy as np
 import os
 import re
 import weakref
+from collections.abc import Mapping
 from finn_xsi.sim_engine import SimEngine
 from finn_xsi.srcutil import order_pkg_first
 from pathlib import Path
@@ -276,7 +277,7 @@ def close_rtlsim(sim: SimEngine) -> None:
 def rtlsim_multi_io(
     sim: SimEngine,
     io_dict: dict[str, dict[str, list[int]]],
-    num_out_values: int | np.integer | dict[str, int | np.integer],
+    num_out_values: int | np.integer | Mapping[str, int | np.integer],
     sname: str = "_V_V",
     liveness_threshold: int = 10000,
     liveness_estimate: int | float | None = None,

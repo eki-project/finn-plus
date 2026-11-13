@@ -1,19 +1,22 @@
 """Transformation to extract selectable weights from multi-DNN models."""
-from onnx import TensorProto, helper
+
+from onnx import GraphProto, NodeProto, TensorProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+
+from finn.util.exception import FINNUserError
 
 
 class ExtractSelectableWeights(Transformation):
     """Merge identical DNN bodies into a single NodeContainer with selectable weights."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: list[str]) -> None:
         """Initialize with a 'models' list of submodel names to merge."""
         super().__init__()
-        self.models = kwargs.get("models", None)  # First model is always the "master model"
+        self.models = kwargs.get("models")  # First model is always the "master model"
 
-    def apply(self, model: ModelWrapper) -> ModelWrapper:
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Extract selectable weights and restructure model into a NodeContainer."""
         if len(self.models) < 2:
             return model, False
@@ -32,7 +35,7 @@ class ExtractSelectableWeights(Transformation):
             for node_idx, fm_node in enumerate(fm.graph.node):
                 body_node = body.graph.node[node_idx]
                 if fm_node.op_type != body_node.op_type:
-                    raise Exception(
+                    raise FINNUserError(
                         f"The graphs differ in op_type for at least one node pair, "
                         f"cannot extract selectable weights: {fm_node.name} ({fm_node.op_type})"
                         f" vs {body_node.name} ({body_node.op_type})"
@@ -43,7 +46,7 @@ class ExtractSelectableWeights(Transformation):
                     fm_attr = fm_op.get_nodeattr(attr)
                     body_attr = body_op.get_nodeattr(attr)
                     if fm_attr != body_attr:
-                        raise Exception(
+                        raise FINNUserError(
                             f"The graphs differ in attribute {attr} for at least one node pair, "
                             f"cannot extract selectable weights: {fm_node.name} ({fm_attr})"
                             f" vs {body_node.name} ({body_attr})"
@@ -64,7 +67,9 @@ class ExtractSelectableWeights(Transformation):
                 num_bodies = len(dnn_node_bodies)
 
                 # Build a minimal single-node GraphProto for each body's node at this index
-                def _make_single_node_graph(node, parent_model: ModelWrapper):
+                def _make_single_node_graph(
+                    node: NodeProto, parent_model: ModelWrapper
+                ) -> GraphProto:
                     """Build a GraphProto containing only this node, with its initializers."""
                     parent_initializer_map = {
                         init.name: init for init in parent_model.graph.initializer

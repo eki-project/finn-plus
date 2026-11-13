@@ -43,6 +43,7 @@ from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
+from finn.transformation.fpgadataflow.pumped_kernel import is_pumped_kernel, package_pumped_kernel
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.qonnx.give_unique_node_names_recursive import GiveUniqueNodeNamesRecursive
 from finn.util.basic import launch_process_helper
@@ -59,17 +60,23 @@ class CreateVitisXO(Transformation):
     """Create a Vitis object file from a stitched FINN IP.
 
     Outcome if successful: sets the vitis_xo attribute in the ONNX
-    ModelProto's metadata_props field with the name of the object file as value.
-    The object file can be found under the ip subdirectory.
+    ModelProto's metadata_props field with the name of the object file as value,
+    and vitis_kernel_name with the kernel's name. The object file can be found
+    under the ip subdirectory.
+
+    A double-pumped stitched IP (one with an ``ap_clk2x`` input) is first wrapped into a
+    kernel clocked from the platform's second kernel clock (`package_pumped_kernel`); that
+    kernel is named ``<ip_name>_dp`` and needs ``fpga_part``.
     """
 
     # TODO: Make parallelizable. Currently not possible, since the models metadata props
     # are changed before returning it, making concurrent execution impossible.
 
-    def __init__(self, ip_name: str = "finn_design") -> None:
+    def __init__(self, ip_name: str = "finn_design", fpga_part: str | None = None) -> None:
         """Initialize CreateVitisXO transformation."""
         super().__init__()
         self.ip_name = ip_name
+        self.fpga_part = fpga_part
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply CreateVitisXO transformation to create Vitis object file."""
@@ -95,7 +102,8 @@ class CreateVitisXO(Transformation):
         # NOTE: this assumes the graph is Vitis-compatible: max one axi lite interface
         # developed from instructions in UG1393 (v2019.2) and package_xo documentation
         # package_xo is responsible for generating the kernel xml
-        assert len(interfaces["axilite"]) <= 1, "CreateVitisXO supports max 1 AXI lite interface"
+        if not (len(interfaces["axilite"]) <= 1):
+            raise FINNInternalError("CreateVitisXO supports max 1 AXI lite interface")
         if len(interfaces["axilite"]) > 1:
             raise FINNInternalError(
                 f"Error building xo: cannot create vitis-compatible "
@@ -147,14 +155,26 @@ class CreateVitisXO(Transformation):
             )
             arg_id += 1
 
+        # A pumped stitched IP becomes a kernel clocked from ap_clk_2 (see pumped_kernel)
+        kernel_name = self.ip_name
+        if is_pumped_kernel(interfaces):
+            if self.fpga_part is None:
+                raise FINNInternalError(
+                    f"CreateVitisXO needs the FPGA part to wrap the pumped {self.ip_name}"
+                )
+            stitched_ip_dir, kernel_name = package_pumped_kernel(
+                vivado_proj_dir, self.ip_name, interfaces, self.fpga_part
+            )
+
         # Save the xo location into the metadata prop, then run package_xo
         xo_path = vivado_proj_dir / (self.ip_name + ".xo")
         model.set_metadata_prop("vitis_xo", str(xo_path))
+        model.set_metadata_prop("vitis_kernel_name", kernel_name)
 
         # Generate the package_xo command in a tcl script
         package_xo_string = (
             f"package_xo -force -xo_path {xo_path} -kernel_name "
-            f"{self.ip_name} -ip_directory {stitched_ip_dir} "
+            f"{kernel_name} -ip_directory {stitched_ip_dir} "
             + ("-ctrl_protocol ap_ctrl_none " if ring_dma else "")
             + " ".join([f" -kernel_xml_args {arg}" for arg in args_string])
         )
@@ -242,7 +262,7 @@ class BuildAllXOs(Transformation):
                     stream_register_slices=self.stream_register_slices,
                     synth_options=self.synth_options,
                 ),
-                CreateVitisXO(sdp_node.name),
+                CreateVitisXO(sdp_node.name, self.fpga_part),
             ]
             submodel, submodel_path = get_submodel(sdp_node)
             for transform in submodel_transforms:

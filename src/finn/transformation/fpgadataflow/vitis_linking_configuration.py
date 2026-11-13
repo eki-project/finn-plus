@@ -17,6 +17,12 @@ from typing import TYPE_CHECKING, cast
 
 from finn.builder.build_dataflow_config import FpgaMemoryType, VitisOptStrategy
 from finn.templates import get_jinja_environment
+from finn.transformation.fpgadataflow.pumped_kernel import (
+    MAX_PUMPED_CLOCK_MHZ,
+    PUMPED_CLOCK_PIN,
+    is_pumped_kernel,
+    render_pumped_clock_group_tcl,
+)
 from finn.util.basic import get_metadata_prop_path, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError, FINNVitisLinkConfigError
 from finn.util.fpgadataflow import check_all_sdp_nodes, get_device_id, get_submodel, get_vitis_xo
@@ -37,6 +43,9 @@ SYSTEM_PORT_REGEX = re.compile(r"^(HOST(\[\d+(:\d+)?\])?|(DDR|HBM|PLRAM)(\[\d+(:
 #: one hierarchy (``-hier_fanout_limit``). Resets and other wide control nets then
 #: reach their loads from registers placed next to them.
 OPT_HIER_FANOUT_LIMIT: int = 512
+
+#: Longest ``<kernel>:<CU>`` name the xclbin's IP_LAYOUT section holds (``char[64]``).
+MAX_CU_NAME_LENGTH: int = 63
 
 #: Vivado implementation run directives per `VitisOptStrategy`, as ``[vivado]`` lines of
 #: the link config. DEFAULT, POWER, SIZE and BUILD_SPEED leave Vivado's defaults.
@@ -91,8 +100,11 @@ def kernel_synth_options(strategy: VitisOptStrategy) -> str:
 KERNEL_CLOCK_PIN: str = "aclk_kernel_00"
 
 
-def render_kernel_clock_tcl(f_mhz: int) -> str:
+def render_kernel_clock_tcl(f_mhz: int, clock_pin: str = KERNEL_CLOCK_PIN) -> str:
     """Tcl for the opt_design pre-hook: time the kernel clock at ``f_mhz`` in implementation.
+
+    ``clock_pin`` selects the platform clock, ``aclk_kernel_00`` (FINN's kernel clock) or
+    ``aclk_kernel_01`` (the clock of double-pumped kernels, see `pumped_kernel`).
 
     v++ turns ``--kernel_frequency`` into a generated clock on the kernel MMCM's
     output whose multiply/divide come from Vivado's clock-wizard solver
@@ -117,11 +129,11 @@ def render_kernel_clock_tcl(f_mhz: int) -> str:
             "}",
             "set finn_kclk_pin [get_pins -quiet -of_objects \\",
             "    [get_cells -quiet -hierarchical -filter {NAME =~ */ulp_ucs}] \\",
-            f"    -filter {{REF_PIN_NAME == {KERNEL_CLOCK_PIN}}}]",
+            f"    -filter {{REF_PIN_NAME == {clock_pin}}}]",
             "if {[llength $finn_kclk_pin] != 1} {",
             (
                 '    puts "CRITICAL WARNING: FINN kernel clock: expected one ulp_ucs/'
-                f'{KERNEL_CLOCK_PIN} pin, found [llength $finn_kclk_pin]; not changed"'
+                f'{clock_pin} pin, found [llength $finn_kclk_pin]; not changed"'
             ),
             "} else {",
             "    set finn_kclk [get_clocks -of_objects $finn_kclk_pin]",
@@ -229,6 +241,7 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
     xo: list[Path] = field(default_factory=list)
     slr: dict[str, str] = field(default_factory=dict)
     connects: list[tuple[str, str]] = field(default_factory=list)
+    pumped_cus: list[str] = field(default_factory=list)
     vivado_section: str = ""
     advanced_section: str = ""
     connectivity_section: str = ""
@@ -331,7 +344,16 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
         ['cu']
         >>> lc.nk
         [('Kernel', 'cu')]
+        >>> lc.add_cu("K" * 40, "c" * 23)  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        finn.util.exception.FINNVitisLinkConfigError: ...
         """
+        if len(f"{kernel_name}:{cu_name}") > MAX_CU_NAME_LENGTH:
+            raise FINNVitisLinkConfigError(
+                f"CU {cu_name} of kernel {kernel_name}: the xclbin stores it as "
+                f"'{kernel_name}:{cu_name}', which is longer than {MAX_CU_NAME_LENGTH} characters."
+            )
         if cu_name in self.cu:
             kern = next(kname for kname, cname in self.nk if cname == cu_name)
             raise FINNVitisLinkConfigError(
@@ -340,6 +362,20 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
             )
         self.cu.append(cu_name)
         self.nk.append((kernel_name, cu_name))
+
+    def kernel_frequency(self) -> str:
+        """Return the ``--kernel_frequency`` of the link: ``f``, or ``0:f|1:2f`` when pumped.
+
+        >>> lc = VitisLinkConfiguration(Path("conf.txt"), 300, "", "platform")
+        >>> lc.kernel_frequency()
+        '300'
+        >>> lc.pumped_cus.append("cu")
+        >>> lc.kernel_frequency()
+        '0:300|1:600'
+        """
+        if not self.pumped_cus:
+            return str(self.f_mhz)
+        return f"0:{self.f_mhz}|1:{2 * self.f_mhz}"
 
     def add_sc(self, cu_sender: str, cu_receiver: str) -> None:
         """Add a Streaming Connection between two CUs:
@@ -527,14 +563,13 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
 
         # Check kernel instantiations
         for kernel, cu in self.nk:
-            if kernel not in kerneldefs.keys():
-                if not silent_warnings:
-                    log.warning(
-                        f"Kernel {kernel} (CU: {cu}) has no matching definition in "
-                        f"the provided xo files. This may be caused by an error "
-                        f"when loading the kernel definitons, or because you forgot "
-                        f"to add the matching xo file to the configuration."
-                    )
+            if kernel not in kerneldefs and not silent_warnings:
+                log.warning(
+                    f"Kernel {kernel} (CU: {cu}) has no matching definition in "
+                    f"the provided xo files. This may be caused by an error "
+                    f"when loading the kernel definitons, or because you forgot "
+                    f"to add the matching xo file to the configuration."
+                )
 
         # Check connections
         for cu_sender, receivers in self.sc.items():
@@ -680,7 +715,7 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
             xos=xo_string,
             config=self.config_path.absolute(),
             optimization=self.optimization_level,
-            f_mhz=self.f_mhz,
+            kernel_frequency=shlex.quote(self.kernel_frequency()),
         )
         self.run_script_path.write_text(rendered)
 
@@ -740,9 +775,17 @@ class BuildBasicVitisLinkConfig(Transformation):
         placement, physical optimisation and routing all see the requested period
         and v++'s post-route frequency scaling starts from it. Applies to every
         Alveo build; at the platform's own input frequency it changes nothing.
+
+        With double-pumped kernels the script also times the second kernel clock at
+        exactly twice the frequency and gives every pumped kernel's two clock buffers a
+        common ``CLOCK_DELAY_GROUP`` (`render_pumped_clock_group_tcl`).
         """
+        parts = [render_kernel_clock_tcl(self.f_mhz)]
+        if config.pumped_cus:
+            parts.append(render_kernel_clock_tcl(2 * self.f_mhz, PUMPED_CLOCK_PIN))
+            parts.append(render_pumped_clock_group_tcl(config.pumped_cus))
         script = config.config_path.parent / "finn_kernel_clock.tcl"
-        script.write_text(render_kernel_clock_tcl(self.f_mhz) + "\n")
+        script.write_text("\n".join(parts) + "\n")
         config.add_vivado_line(f"prop=run.impl_1.STEPS.OPT_DESIGN.TCL.PRE={script}")
 
     def _configure_slr_resets(self, config: VitisLinkConfiguration) -> None:
@@ -827,7 +870,8 @@ class BuildBasicVitisLinkConfig(Transformation):
         # Create a config for every device
         for node in model.graph.node:
             device = get_device_id(node)
-            assert device is not None
+            if not (device is not None):
+                raise FINNInternalError("No device resolved for the linking configuration")
             if device not in configs:
                 configs[device] = VitisLinkConfiguration(
                     config_path=Path(make_build_dir(f"vitis_link_device_{device}_")) / "config.txt",
@@ -906,10 +950,20 @@ class BuildBasicVitisLinkConfig(Transformation):
                 names = (
                     [node.name] if replicas == 1 else [f"{node.name}_r{r}" for r in range(replicas)]
                 )
+                kernel_name = submodel.get_metadata_prop("vitis_kernel_name") or node.name
                 for cu in names:
-                    configs[current_device].add_cu(node.name, cu)
+                    configs[current_device].add_cu(kernel_name, cu)
                 cu_names[node.name] = names[0]
                 replica_cus[node.name] = names
+                ifnames = submodel.get_metadata_prop("vivado_stitch_ifnames")
+                if ifnames is not None and is_pumped_kernel(json.loads(ifnames)):
+                    if self.f_mhz > MAX_PUMPED_CLOCK_MHZ:
+                        raise FINNUserError(
+                            f"{node.name} is double-pumped: its second clock would run at "
+                            f"{2 * self.f_mhz} MHz, above the {2 * MAX_PUMPED_CLOCK_MHZ} MHz "
+                            f"v++ allows. Use a clock of at most {MAX_PUMPED_CLOCK_MHZ} MHz."
+                        )
+                    configs[current_device].pumped_cus.extend(names)
 
             # The drivers find the DMAs by these names (PYNQ: overlay attribute, C++: kernel name)
             getCustomOp(node).set_nodeattr("instance_name", cu_names[node.name])
