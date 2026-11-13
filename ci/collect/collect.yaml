@@ -49,7 +49,8 @@ Metrics:
 # Keys are the flattened metric paths as logged above. Metrics not listed here use
 # allowed_uncertainty from this section and are never required, i.e. they cannot fail the job.
 # Unlike the "Metrics" section, changes here take effect retroactively since the reference
-# values are re-evaluated on every run - except for metrics that did not exist yet back then.
+# values are re-evaluated on every run - except for metrics that did not exist yet back then:
+# a metric that the reference run lacks is not compared, even if it is required.
 Compare:
   compare_tag: ci_known_good
   allowed_uncertainty: 0.01

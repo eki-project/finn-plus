@@ -63,10 +63,15 @@ defaults:
   # Multi-thresholds implemented via RTL (applies to standalone thresholds)
   Thresholding_rtl:
     # Decides to use BRAM, URAM or LUTs for threshold memory, depending on the
-    # depth of the thresholds
-    # Note: This combination forces "distributed" LUT implementation
+    # depth of the thresholds. The depth is that of the memory of a single stage of
+    # the binary search of a single PE: (channels / PE) * 2^stage entries.
+    # Note: This combination puts stage memories of at least 8192 entries into BRAM
+    # and forces the "distributed" LUT implementation for all shallower ones. Only
+    # 8-bit quantizers of wide layers get that deep, most of all the output
+    # quantizer over the vocabulary of the language model, which takes about a
+    # quarter of the LUTs of the RFSoC2x2 when implemented in LUTs entirely.
     depth_trigger_uram: 2147483647  # "infinity"
-    depth_trigger_bram: 2147483647  # "infinity"
+    depth_trigger_bram: 8192
 #    # Note: This combination forces "block" RAM implementation
 #    depth_trigger_uram: 0
 #    depth_trigger_bram: 1

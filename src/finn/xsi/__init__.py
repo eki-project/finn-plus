@@ -36,7 +36,7 @@ import contextlib
 import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
 from finn.util.exception import FINNUserError

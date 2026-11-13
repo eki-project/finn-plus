@@ -85,33 +85,41 @@ class ArrayDataset(ValidationDataset):
     """Dataset held in memory as ``(num_samples, ...)`` input and ``(num_samples,)`` label arrays.
 
     ``transform`` is applied to every input batch before it is reshaped to the accelerator's
-    input shape. Only full batches are processed; a remainder that does not fill a batch is
-    skipped but still counts towards the total (matching the previous behavior of the
-    validators).
+    input shape. By default only full batches are processed; a remainder that does not fill a
+    batch is skipped but still counts towards the total (matching the previous behavior of the
+    validators). With ``drop_remainder=False`` the remainder is processed as a last, smaller
+    batch instead, for datasets whose size is not a multiple of the usual batch sizes.
     """
 
-    def __init__(self, inputs, labels, transform=None):
-        """Store the input and label arrays and the optional input transform."""
+    def __init__(self, inputs, labels, transform=None, drop_remainder=True):
+        """Store the input and label arrays, the optional input transform and the batch policy."""
         assert inputs.shape[0] == labels.shape[0], "Number of inputs and labels differ"
         self.inputs = inputs
         self.labels = np.asarray(labels).flatten()
         self.transform = transform
+        self.drop_remainder = drop_remainder
 
     def __len__(self):
         """Number of samples."""
         return self.inputs.shape[0]
 
     def iter_batches(self, cls_inst):
-        """Yield the samples in full batches of the driver's batch size, in index order."""
+        """Yield the samples in batches of the driver's batch size, in index order."""
         batch_size = cls_inst.batch_size
         n_batches = len(self) // batch_size
-        if n_batches * batch_size != len(self):
+        remainder = len(self) - n_batches * batch_size
+        if remainder and self.drop_remainder:
             print(
                 "WARNING: %d samples do not fill a batch of %d and are skipped (counted as wrong)"
-                % (len(self) - n_batches * batch_size, batch_size)
+                % (remainder, batch_size)
             )
         for i in range(n_batches):
             indices = np.arange(i * batch_size, (i + 1) * batch_size)
+            yield indices, self.load(cls_inst, indices), self.labels[indices]
+        if remainder and not self.drop_remainder:
+            # last, partial batch: shrink the driver batch size (restored by run_validation)
+            cls_inst.batch_size = remainder
+            indices = np.arange(n_batches * batch_size, len(self))
             yield indices, self.load(cls_inst, indices), self.labels[indices]
 
     def load(self, cls_inst, indices):

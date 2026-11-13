@@ -21,6 +21,7 @@ Options:
 """
 
 import argparse
+import importlib
 import os
 import re
 import shutil
@@ -29,6 +30,7 @@ import sys
 import sysconfig
 from pathlib import Path
 from typing import List, Tuple
+
 from finn.util.settings import get_settings
 
 
@@ -146,7 +148,8 @@ def build_xsi(force: bool = False, verbose: bool = True) -> bool:
                 # Try importing to see if it works
                 sys.path.insert(0, str(xsi_path))
                 try:
-                    import xsi
+                    # dynamic import: xsi.so is a compiled extension, not a static package
+                    importlib.import_module("xsi")
 
                     sys.path.pop(0)
                     if verbose:
@@ -236,8 +239,8 @@ def verify_installation() -> bool:
     sys.path.insert(0, str(xsi_path))
 
     try:
-        # Import the compiled C++ extension
-        import xsi
+        # Import the compiled C++ extension (dynamic: xsi.so is not a static package)
+        importlib.import_module("xsi")
 
         print("\n✓ xsi C++ extension module imports successfully")
 

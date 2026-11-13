@@ -37,6 +37,7 @@ from typing import Literal, cast
 
 from finn.transformation.fpgadataflow.externalize_params import ExternalizeParams
 from finn.util.basic import make_build_dir
+from finn.util.exception import FINNUserError
 
 
 class CreateDataflowPartition(Transformation):
@@ -100,9 +101,10 @@ class CreateDataflowPartition(Transformation):
             slr = inst.get_nodeattr("slr")
             for node in p_model.graph.node:
                 inst = getCustomOp(node)
-                assert slr == inst.get_nodeattr(
-                    "slr"
-                ), """all nodes with same partition_id must have the same slr id"""
+                if slr != inst.get_nodeattr("slr"):
+                    raise FINNUserError(
+                        "all nodes with same partition_id must have the same slr id"
+                    )
             # check that there is only one non-null mem_port per partition
             nmemports = 0
             mem_port = ""
@@ -112,7 +114,8 @@ class CreateDataflowPartition(Transformation):
                 if port is not None and port != "":
                     nmemports += 1
                     mem_port = port
-            assert nmemports <= 1, """Too many memory ports per partition"""
+            if nmemports > 1:
+                raise FINNUserError("Too many memory ports per partition")
             # done, change node type and add info in parent graph
             p_node.op_type = "StreamingDataflowPartition"
             p_node.domain = "finn.custom_op.fpgadataflow"
