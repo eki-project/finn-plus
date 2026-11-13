@@ -26,6 +26,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - `rtlsim_output_to_npy` and `unpack_innermost_dim_from_hex_string` take `packed_bits`/`target_bits` instead of `packedBits`/`targetBits`, and `finn.transformation.streamline.streamline_plus` no longer re-exports the transformations of the other streamlining modules; scripts that pass these arguments by keyword or import transformations from `streamline_plus` have to be adapted (eki-project#300)
 
 ### Fixed
+- The HLS attention operator (`ScaledDotProductAttention_hls`) deadlocked in hardware and in RTL simulation when it processed more than four keys in parallel (`KVLen / SeqFold > 4`), e.g. in the RadioML transformer: HLS silently implemented the softmax as a stalling instead of a flushable pipeline, which blocks on its own internal buffer. attention-hlslib is pinned to a version with the fix (eki-project#281)
 - Alveo links with Vivado 2023.1, 2023.2 and 2024.2 placed and routed the kernel clock at 100 MHz whatever `synth_clk_period_ns` asked for (the clock-wizard solver v++ uses finds no solution there); the link now re-creates the kernel clock at the requested frequency before `opt_design`
 - The XDC of the Vitis kernels was silently dropped at link time (`Designutils 20-1275`); it is now written relative to the kernel's block design and scoped to it
 - Kernels pinned to an SLR took the kernel reset of SLR0 across the SLR boundary; each now takes the reset of its own SLR, and `opt_design` replicates wide control nets per hierarchy
