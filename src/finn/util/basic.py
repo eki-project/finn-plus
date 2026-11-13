@@ -58,7 +58,7 @@ from qonnx.util.basic import gen_finn_dt_tensor
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from finn.util.data_packing import finnpy_to_packed_bytearray
-from finn.util.exception import FINNInternalError, FINNUserError
+from finn.util.exception import FINNConfigurationError, FINNInternalError, FINNUserError
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
@@ -262,7 +262,9 @@ def get_vivado_root() -> str:
     try:
         return os.environ["XILINX_VIVADO"]
     except KeyError:
-        raise FINNUserError("Environment variable XILINX_VIVADO must be set correctly.") from None
+        raise FINNConfigurationError(
+            "Environment variable XILINX_VIVADO must be set correctly."
+        ) from None
 
 
 def get_vivado_version() -> tuple[int, int] | None:

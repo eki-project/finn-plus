@@ -44,7 +44,7 @@ from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Any, cast
 
 from finn.util.basic import get_watchdog_timeout_cycles
-from finn.util.exception import FINNInternalError
+from finn.util.exception import FINNFoldingError, FINNInternalError
 
 if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
@@ -325,6 +325,27 @@ class HWCustomOp(CustomOp):
         """Can be implemented to verify that all attributes the node needs
         are there and that particular attributes are set correctly. Can also
         check if the number of inputs is equal to the expected number."""
+
+    def check_folding(self) -> None:
+        """Check that the folding (parallelization) attributes of this node are legal, i.e.
+        that the node can be implemented with them. Can be implemented by nodes whose folding
+        is constrained, e.g. because a folding factor has to divide the number of channels.
+
+        The check only reads the node attributes: it neither needs the model nor generates
+        any files, so it can be called at any time, e.g. right after a folding configuration
+        was applied (see the ``folding_violations`` analysis pass).
+
+        Raises:
+            FINNFoldingError: If a folding attribute is set to an illegal value.
+        """
+
+    def _folding_error(self, message: str) -> FINNFoldingError:
+        """Return a FINNFoldingError for this node with the node name prepended to message."""
+        return FINNFoldingError(
+            f"{self.onnx_node.name}: {message}",
+            node_name=self.onnx_node.name,
+            op_type=self.onnx_node.op_type,
+        )
 
     def generate_params(
         self, model: "ModelWrapper", path: str | Path, fpgapart: str | None = None

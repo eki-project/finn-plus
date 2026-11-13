@@ -74,6 +74,63 @@ class FINNConfigurationError(FINNUserError):
         super().__init__(*args)
 
 
+class FINNNodeError(FINNUserError):
+    """User-facing error that can be attributed to a single node of the model graph.
+
+    The message is available as ``msg`` (and via ``str()``), the name and the op type of the
+    node as ``node_name`` and ``op_type``. Both are ``None`` if the error could not be
+    attributed to a single node.
+    """
+
+    def __init__(self, msg: str, node_name: str | None = None, op_type: str | None = None) -> None:
+        """Create a new FINNNodeError."""
+        super().__init__(msg)
+        self.msg = msg
+        self.node_name = node_name
+        self.op_type = op_type
+
+
+class FINNUnsupportedOpError(FINNNodeError):
+    """Error emitted if a node has no hardware mapping or no hardware implementation.
+
+    ``unmapped_nodes`` is filled by the dataflow partitioning step with one entry per node
+    that is not mapped to a hardware layer, in the format of the ``unmapped_layer_report``
+    analysis (keys ``name``, ``op_type``, ``domain`` and ``position``). It is empty otherwise.
+    """
+
+    def __init__(
+        self,
+        msg: str,
+        node_name: str | None = None,
+        op_type: str | None = None,
+        unmapped_nodes: list[dict[str, str]] | None = None,
+    ) -> None:
+        """Create a new FINNUnsupportedOpError."""
+        super().__init__(msg, node_name, op_type)
+        self.unmapped_nodes = [] if unmapped_nodes is None else list(unmapped_nodes)
+
+
+class FINNFoldingError(FINNNodeError):
+    """Error emitted if a folding (parallelization) configuration is illegal or cannot be
+    achieved.
+
+    ``violations`` is filled by ``step_apply_folding_config``, which checks the whole model:
+    it maps the name of every node with an illegal folding to its message, and ``node_name``
+    and ``op_type`` describe the first of them. It is empty otherwise.
+    """
+
+    def __init__(
+        self,
+        msg: str,
+        node_name: str | None = None,
+        op_type: str | None = None,
+        violations: dict[str, str] | None = None,
+    ) -> None:
+        """Create a new FINNFoldingError."""
+        super().__init__(msg, node_name, op_type)
+        self.violations = {} if violations is None else dict(violations)
+
+
 class FINNDataflowError(FINNInternalError):
     """(Internal) Errors regarding the dataflow, dataflow config, step resolution, etc."""
 

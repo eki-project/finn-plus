@@ -379,18 +379,19 @@ class MVAU(MemStreamOp):
         model.set_tensor_datatype(node.output[0], self.get_output_datatype())
 
     def _require_mh_pe(self) -> None:
-        """Raise if MH is not divisible by PE."""
+        """Raise a FINNFoldingError unless PE divides MH."""
         if self.mh % self.pe != 0:
-            raise FINNUserError(
-                f"{self.onnx_node.name}: MH ({self.mh}) must be divisible by PE ({self.pe})"
-            )
+            raise self._folding_error(f"MH ({self.mh}) must be divisible by PE ({self.pe})")
 
     def _require_mw_simd(self) -> None:
-        """Raise if MW is not divisible by SIMD."""
+        """Raise a FINNFoldingError unless SIMD divides MW."""
         if self.mw % self.simd != 0:
-            raise FINNUserError(
-                f"{self.onnx_node.name}: MW ({self.mw}) must be divisible by SIMD ({self.simd})"
-            )
+            raise self._folding_error(f"MW ({self.mw}) must be divisible by SIMD ({self.simd})")
+
+    def check_folding(self) -> None:
+        """Check the folding: PE must divide MH and SIMD must divide MW."""
+        self._require_mh_pe()
+        self._require_mw_simd()
 
     def get_input_datatype(self, ind: int = 0) -> BaseDataType:
         """Return FINN DataType of input ``ind`` (0: activations, 1: weights)."""

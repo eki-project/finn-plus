@@ -47,7 +47,7 @@ from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInp
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
-from finn.util.exception import FINNInternalError, FINNUserError
+from finn.util.exception import FINNInternalError, FINNUnsupportedOpError, FINNUserError
 from finn.util.settings import get_settings
 
 if TYPE_CHECKING:
@@ -788,8 +788,27 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
 
         return template_path, code_gen_dict
 
+    def check_folding(self) -> None:
+        """Check the folding: SIMD must divide IFMChannels, and equal it if the full window
+        is output in parallel (parallel_window) unless the kernel is depthwise or 1x1.
+
+        The constraints depend on the implementation style, so this runs the checks of
+        select_impl_style().
+
+        Raises:
+            FINNFoldingError: If SIMD is illegal for the selected implementation style.
+            FINNUnsupportedOpError: If the kernel or stride exceeds the feature map dimension,
+                which no folding can implement.
+        """
+        self.select_impl_style()
+
     def select_impl_style(self) -> Literal["parallel", "default"]:
-        """Select implementation style based on folding configuration."""
+        """Select implementation style based on folding configuration.
+
+        Raises:
+            FINNFoldingError: If SIMD is illegal for the selected implementation style.
+            FINNUnsupportedOpError: If the kernel or stride exceeds the feature map dimension.
+        """
         simd = self.simd
         m_par = self.m_par
         depthwise = self.depthwise
@@ -808,11 +827,19 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             and stride_h <= ifm_dim_h
             and stride_w <= ifm_dim_w
         ):
-            raise FINNUserError(
-                f"{self.onnx_node.name}: illegal conv configuration, "
-                "kernel or stride > FM dimension"
+            raise FINNUnsupportedOpError(
+                f"{self.onnx_node.name}: "
+                "Illegal conv configuration: kernel or stride > FM dimension "
+                f"(kernel incl. dilation = {[kernel_height, kernel_width]}, "
+                f"stride = {[stride_h, stride_w]}, FM dimension = {[ifm_dim_h, ifm_dim_w]})",
+                node_name=self.onnx_node.name,
+                op_type=self.onnx_node.op_type,
             )
 
+        simd_must_divide = (
+            "Constraint violated: SIMD must divide IFMChannels "
+            f"(SIMD = {simd}, IFMChannels = {ifm_ch})"
+        )
         # init folding config
         if self.parallel_window:
             # mmv_in = M * 1
@@ -821,9 +848,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             # mmv_in = 1
             mmv_out = 1
             if ifm_ch % simd != 0:
-                raise FINNUserError(
-                    f"{self.onnx_node.name}: SIMD ({simd}) must divide IFMChannels ({ifm_ch})"
-                )
+                raise self._folding_error(simd_must_divide)
 
         # choose implementation style
         if mmv_out > 1 or (k_h == 1 and k_w == 1):
@@ -832,13 +857,11 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
                 # allow SIMD < IFM_CH in depthwise mode (VVAU supports the resulting data layout)
                 # also allowed for 1x1 kernel since depthwise and non-depthwise are equivalent
                 if ifm_ch % simd != 0:
-                    raise FINNUserError(
-                        f"{self.onnx_node.name}: SIMD ({simd}) must divide "
-                        f"IFMChannels ({ifm_ch})"
-                    )
+                    raise self._folding_error(simd_must_divide)
             elif ifm_ch != simd:
-                raise FINNUserError(
-                    f"{self.onnx_node.name}: SIMD ({simd}) must be equal to IFMChannels ({ifm_ch})"
+                raise self._folding_error(
+                    "Constraint violated: SIMD must be equal to IFMChannels "
+                    f"(SIMD = {simd}, IFMChannels = {ifm_ch}, parallel_window = 1)"
                 )
         else:
             impl_style = "default"
