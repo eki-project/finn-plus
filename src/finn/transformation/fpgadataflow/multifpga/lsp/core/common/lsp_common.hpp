@@ -65,6 +65,60 @@ namespace lsp {
             return sum;
         }
 
+        /** Return the largest of the given values (0 for an empty pack). */
+        template<uint64_t... Values>
+        constexpr uint64_t maxOf() {
+            // Leading 0 keeps the array non-empty for an empty pack
+            const uint64_t values[] = {0, Values...};
+            uint64_t result = 0;
+            for (uint64_t v : values) result = v > result ? v : result;
+            return result;
+        }
+
+        /** Return whether no value occurs twice among the given values. */
+        template<uint64_t... Values>
+        constexpr bool allDistinct() {
+            // Leading 0 keeps the array non-empty for an empty pack, skipped by starting at 1
+            const uint64_t values[] = {0, Values...};
+            for (size_t i = 1; i < sizeof...(Values) + 1; ++i) {
+                for (size_t j = i + 1; j < sizeof...(Values) + 1; ++j) {
+                    if (values[i] == values[j]) return false;
+                }
+            }
+            return true;
+        }
+
+        /** Reverse the byte order of `value`. Converts a multi-byte field between wire order (most
+        * significant byte first, so in the lowest bits of an AXI Stream beat) and its numeric value,
+        * in both directions. Pure wiring in hardware. */
+        template<int W>
+        ap_uint<W> swapBytes(const ap_uint<W>& value) {
+            static_assert(W % 8 == 0, "Only whole bytes can be swapped");
+            ap_uint<W> result;
+            for (int i = 0; i < W / 8; ++i) {
+                #pragma HLS unroll
+                result.range(8 * i + 7, 8 * i) = value.range(W - 8 * i - 1, W - 8 * i - 8);
+            }
+            return result;
+        }
+
+        /** `swapBytes` of a slice such as `value.range(95, 48)`. A slice's width is only known at
+        * runtime, so the field width W must be given explicitly: `swapBytes<48>(beat.range(95, 48))`.
+        * Checks in csim that the slice is W bits wide. */
+        template<int W, int PW, bool S>
+        ap_uint<W> swapBytes(const ap_range_ref<PW, S>& value) {
+#ifndef __SYNTHESIS__
+            assert(value.length() == W && "Slice width does not match the field width W");
+#endif
+            return swapBytes<W>(ap_uint<W>(value));
+        }
+
+        /** Return bits upper..lower of `value` byte swapped, as a W-bit field. W must be given
+        * explicitly: `swapBytes<48>(beat, 95, 48)`. */
+        template<int W, int VW>
+        ap_uint<W> swapBytes(const ap_uint<VW>& value, int upper, int lower) {
+            return swapBytes<W>(value.range(upper, lower));
+        }
 
         /** Base case of `packFrom`: nothing left to pack. */
         template<int BW, int Offset>
@@ -179,6 +233,11 @@ namespace lsp {
             ap_uint<8> _reserved;
 
             static constexpr int WIDTH = 64;
+            static constexpr int VERSION_WIDTH = decltype(version)::width;
+            static constexpr int FRAME_WIDTH = decltype(frameType)::width;
+            static constexpr int FLAGS_WIDTH = decltype(flags)::width;
+            static constexpr int FSN_WIDTH = decltype(frameSequenceNumber)::width;
+            static constexpr int PAYLOAD_WIDTH = decltype(payloadChunks)::width;
 
             ap_uint<WIDTH> pack() const {
                 ap_uint<WIDTH> header = 0;
@@ -582,13 +641,13 @@ namespace lsp {
                 return lsp_stream_ring_buffer_update_result::OUTDATED_SEGMENT;
             }
 
-            /** Try to write into the user stream. The write is blocking: we can only continue if
-            there is data, and if it is in order. */
+            /** Try to write one word into the user stream. The write is non-blocking, so that a full user
+            stream never stalls the free-running kernel: if the stream is full, the word stays in the
+            buffer and is written in a later call. */
             template<int D>
             void tryReadIntoStream(hls::stream<ap_uint<StreamWidth>, D>& stream) {
-                // Only read if the read pointer looks at valid data
-                if (bufferSize > 0) {
-                    stream.write(buffer[readPointer]);
+                // Only read if the read pointer looks at valid data, and only advance if the write succeeded
+                if (bufferSize > 0 && stream.write_nb(buffer[readPointer])) {
                     // Increment and wrap, avoid modulo
                     if (++readPointer == Depth) {
                         readPointer = 0;
