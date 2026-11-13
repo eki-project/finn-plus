@@ -49,13 +49,20 @@ class GenerateInstrumentationIP(Transformation):
         avg_n: int = 64,
         # "ip" for Vivado (Zynq) or "xo" for Vitis (Alveo/Versal)
         output_format: str = "ip",
+        steady_state: bool = False,
     ) -> None:
-        """Initialize instrumentation IP generation with FPGA part and clock settings."""
+        """Initialize instrumentation IP generation with FPGA part and clock settings.
+
+        ``steady_state`` adds the steady-state registers (window min/max, idle cycles, oldest
+        pending age) used by the live FIFO sizing driver; without it the generated wrapper is
+        the plain one with the unchanged register map.
+        """
         super().__init__()
         self.fpga_part = fpga_part
         self.clk_period_ns = clk_period_ns
         self.avg_n = avg_n
         self.output_format = output_format
+        self.steady_state = steady_state
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Generate instrumentation IP core."""
@@ -98,6 +105,7 @@ class GenerateInstrumentationIP(Transformation):
         ).read_text()
         instrwrp_cpp = instrwrp_cpp.replace("@PENDING@", str(pending))
         instrwrp_cpp = instrwrp_cpp.replace("@AVG_N@", str(self.avg_n))
+        instrwrp_cpp = instrwrp_cpp.replace("@STEADY_STATE@", "1" if self.steady_state else "0")
         instrwrp_cpp = instrwrp_cpp.replace("@ILEN@", str(ilen))
         instrwrp_cpp = instrwrp_cpp.replace("@OLEN@", str(olen))
         instrwrp_cpp = instrwrp_cpp.replace("@TI@", str(ti))

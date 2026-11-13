@@ -542,6 +542,8 @@ class ExperimentComparator:
         "store_results_in_dvc_experiment",
         "store_results_in_dvc_data",
         "validation_dataset",
+        # selects the experiments measured on the board, not what is built
+        "experiments_config",
     }
 
     # Additional params ignored when matching a live FIFO-sizing run (or its follow-up) against
@@ -1203,7 +1205,7 @@ if __name__ == "__main__":
 
         # Prepare benchmarking config for follow-up runs after live FIFO-sizing
         if run_kind == "live_fifo":
-            # Choose the search order with the lowest fifo_size_total_kB
+            # Choose the search strategy with the lowest fifo_size_total_kB
             lfs_base_dir = (
                 Path("measurement_artifacts")
                 / "runs_output"
@@ -1212,12 +1214,12 @@ if __name__ == "__main__":
                 / "experiment_fifosizing"
                 / "exp_itr_1"
             )
-            best_search_order = None
+            best_search_strategy = None
             best_fifo_size = float("inf")
             if lfs_base_dir.is_dir():
-                for search_order in [p.name for p in lfs_base_dir.iterdir()]:
+                for search_strategy in [p.name for p in lfs_base_dir.iterdir()]:
                     sizing_report_path = (
-                        lfs_base_dir / search_order / "both" / "fifo_sizing_report.json"
+                        lfs_base_dir / search_strategy / "both" / "fifo_sizing_report.json"
                     )
                     if sizing_report_path.is_file():
                         with sizing_report_path.open() as f:
@@ -1225,24 +1227,24 @@ if __name__ == "__main__":
                         fifo_size = sizing_report.get("fifo_size_total_kB", float("inf"))
                         if fifo_size < best_fifo_size:
                             best_fifo_size = fifo_size
-                            best_search_order = search_order
+                            best_search_strategy = search_strategy
 
-            if best_search_order is None:
+            if best_search_strategy is None:
                 print(
-                    "ERROR: No valid search order with fifo_sizing_report.json found in "
+                    "ERROR: No valid search strategy with fifo_sizing_report.json found in "
                     f"{lfs_base_dir}."
                 )
             else:
                 print(
-                    f"Selecting search order '{best_search_order}' with "
+                    f"Selecting search strategy '{best_search_strategy}' with "
                     f"fifo_size_total_kB={best_fifo_size:.2f}"
                 )
                 # str: the paths go into the JSON follow-up config
                 folding_config_path = str(
-                    lfs_base_dir / best_search_order / "both" / "folding_config.json"
+                    lfs_base_dir / best_search_strategy / "both" / "folding_config.json"
                 )
                 fifo_config_path = str(
-                    lfs_base_dir / best_search_order / "both" / "fifo_config.json"
+                    lfs_base_dir / best_search_strategy / "both" / "fifo_config.json"
                 )
                 # No check that the two files exist: a follow-up build that fails on a
                 # missing config is preferred over a follow-up run that is silently dropped
@@ -1262,6 +1264,10 @@ if __name__ == "__main__":
                 configuration["target_fps"] = ["None"]
                 configuration["folding_config_file"] = [folding_config_path]
                 configuration["fifo_config_file"] = [fifo_config_path]
+                # The follow-up build has real FIFOs and a normal driver: it must not inherit
+                # the live FIFO sizing experiment config of the measured run (the default
+                # experiment config applies to a build without auto FIFO sizing).
+                configuration.pop("experiments_config", None)
 
                 follow_up_bench_cfg.append(configuration)
 
