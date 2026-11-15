@@ -1,0 +1,6 @@
+outs:
+- md5: 98e3d76353cf192adc24363e4814cab3.dir
+  size: 705220
+  nfiles: 11
+  hash: md5
+  path: reports
