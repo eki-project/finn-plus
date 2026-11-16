@@ -233,29 +233,33 @@ class TestQuantizers:
         assert isinstance(to_module(gap).reduce[0], build.TruncAvgPool)
         flat = G.make_genotype(G.sequential(G.conv(8, 3), G.quant_act(2)), head_kind="flatten")
         assert isinstance(to_module(flat).reduce, nn.Flatten)
-        # A join puts its operands on the join quantizer's grid: the sum of two operands needs
-        # one more bit, a concat keeps the width.
+        # The merged tensor of a join is on the join grid, but FINN cannot infer the datatype
+        # of a truncating pooling through an Add, so the format is not tracked further.
         after_add = G.make_genotype(
             G.sequential(G.quant_act(2), G.branching(G.identity(), G.identity(), join_bits=3)),
             head_kind="gap",
         )
-        net = to_module(after_add)
-        assert isinstance(net.reduce[0], build.TruncAvgPool)
-        fmt = net.reduce[0].fmt
-        assert (fmt.bits, fmt.signed, fmt.source) == (4, True, net.body[1].join_quant)
-        after_cat = G.make_genotype(
-            G.sequential(
-                G.quant_act(2), G.branching(G.identity(), G.identity(), agg="concat", join_bits=3)
-            ),
-            head_kind="gap",
-        )
-        fmt = to_module(after_cat).reduce[0].fmt
-        assert (fmt.bits, fmt.signed) == (3, True)
-        bipolar_join = G.make_genotype(
-            G.sequential(G.quant_act(2), G.branching(G.identity(), G.identity(), join_bits=1)),
-            head_kind="gap",
-        )
-        assert isinstance(to_module(bipolar_join).reduce[0], nn.AdaptiveAvgPool2d)
+        assert isinstance(to_module(after_add).reduce[0], nn.AdaptiveAvgPool2d)
+
+    def test_join_quantizer_sign_follows_the_operands(self) -> None:
+        """Non-negative operands (ReLUs, unsigned activations, through pooling) get an unsigned
+        join quantizer, anything else a signed one."""
+        body = G.sequential(G.conv(8, 3), G.batchnorm())
+
+        def join_of(*children: dict) -> build.Branching:
+            net = to_module(
+                G.make_genotype(G.sequential(body, G.branching(*children, join_bits=4)))
+            )
+            return net.body[1]
+
+        unsigned = join_of(G.relu_float(), G.sequential(G.quant_act(3), G.maxpool(1, 1)))
+        assert not unsigned.join_format.signed and not unsigned.join_quant.act_quant.is_signed
+        signed = join_of(G.relu_float(), G.identity())  # the batch-norm output can be negative
+        assert signed.join_format.signed and signed.join_quant.act_quant.is_signed
+        bipolar = join_of(G.relu_float(), G.quant_act(1))
+        assert bipolar.join_format.signed
+        nested = join_of(G.relu_float(), G.branching(G.relu_float(), G.quant_act(2), join_bits=3))
+        assert not nested.join_format.signed
 
     def test_join_operands_share_the_quantizer(self) -> None:
         genotype = G.make_genotype(
@@ -274,7 +278,7 @@ class TestQuantizers:
             operands = [join.join_quant(branch(h)) for branch in join.branches]
             expected = operands[0] + operands[1]
             assert torch.equal(net.body(net.input_quant(x)), expected)
-        scale = join.out_format.scale()
+        scale = join.join_format.scale()
         assert torch.allclose(expected / scale, (expected / scale).round(), atol=1e-4)
 
 

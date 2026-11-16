@@ -28,7 +28,7 @@ from brevitas.core.scaling import ScalingImplType
 from brevitas.core.zero_point import ZeroZeroPoint
 from brevitas.inject import ExtendedInjector
 from brevitas.nn import QuantConv2d, QuantIdentity, QuantLinear, QuantReLU, TruncAvgPool2d
-from brevitas.quant import Int8WeightPerTensorFloat
+from brevitas.quant import Int8WeightPerTensorFloat, Uint8ActPerTensorFloat
 from brevitas.quant.solver import ActQuantSolver, WeightQuantSolver
 from brevitas.quant_tensor import IntQuantTensor
 from dataclasses import dataclass
@@ -139,16 +139,32 @@ def quant_activation(bits: int) -> tuple[nn.Module, IntFormat | None]:
     return activation, IntFormat(bits, False, activation)
 
 
-def join_quantizer(bits: int) -> tuple[nn.Module, IntFormat | None]:
+def join_quantizer(bits: int, nonneg: bool = False) -> tuple[nn.Module, IntFormat | None]:
     """Return the quantizer a branching node applies to each of its operands.
 
-    Brevitas' default signed activation quantizer (statistics-initialized, learned scale), or
+    Brevitas' default activation quantizer (statistics-initialized, learned scale): unsigned
+    when every operand is known to be non-negative (which also keeps a ``Quant`` behind a
+    ``Relu`` exportable: the QONNX frontend rejects a signed one there), signed otherwise;
     the bipolar sign for 1 bit.
     """
     if bits == 1:
         return _bipolar(), None
-    quantizer = QuantIdentity(bit_width=bits)
-    return quantizer, IntFormat(bits, True, quantizer)
+    if nonneg:
+        quantizer = QuantIdentity(act_quant=Uint8ActPerTensorFloat, bit_width=bits)
+    else:
+        quantizer = QuantIdentity(bit_width=bits)
+    return quantizer, IntFormat(bits, not nonneg, quantizer)
+
+
+def _terminal_nonneg(kind: str, bits: int | None, incoming: bool) -> bool:
+    """Return whether the output of a terminal is known to be non-negative."""
+    if kind in ("quant_act",):
+        return bits is not None and bits > 1  # unsigned ReLU; 1 bit is bipolar
+    if kind == "relu_float":
+        return True
+    if kind in ("identity", "maxpool", "avgpool", "flatten"):
+        return incoming
+    return False
 
 
 class TruncAvgPool(nn.Module):
@@ -252,22 +268,23 @@ def _terminal(
 
 
 class Branching(nn.Module):
-    """Feed the input to all branches, re-quantize their outputs to one grid, merge them."""
+    """Feed the input to all branches, re-quantize their outputs to one grid, merge them.
 
-    def __init__(self, branches: list[nn.Module], agg: str, join_bits: int) -> None:
-        """Store the branches, the aggregation (``"add"`` or ``"concat"``) and the join grid."""
+    The merged tensor is on the join grid, but its format is not tracked further: FINN's
+    datatype inference for a truncating pooling cannot look through an ``Add`` or ``Concat``.
+    """
+
+    def __init__(
+        self, branches: list[nn.Module], agg: str, join_bits: int, nonneg: bool = False
+    ) -> None:
+        """Store the branches, the aggregation (``"add"`` or ``"concat"``) and the join grid.
+
+        ``nonneg``: every operand is known to be non-negative (unsigned join quantizer).
+        """
         super().__init__()
         self.branches = nn.ModuleList(branches)
         self.agg = agg
-        self.join_quant, fmt = join_quantizer(join_bits)
-        if fmt is None:
-            self.out_format: IntFormat | None = None
-        elif agg == "concat":
-            self.out_format = fmt
-        else:
-            # A sum of n values of the same grid stays on that grid and needs log2(n) more bits.
-            extra = ceil(log2(len(branches)))
-            self.out_format = IntFormat(fmt.bits + extra, True, fmt.source, fmt.factor)
+        self.join_quant, self.join_format = join_quantizer(join_bits, nonneg)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Run all branches on ``x`` and aggregate along the channel/feature dimension."""
@@ -278,23 +295,26 @@ class Branching(nn.Module):
 
 
 def _module(
-    node: Node, shape: Shape, fmt: IntFormat | None
-) -> tuple[nn.Module, Shape, IntFormat | None]:
-    """Build the module of a body node; return it with its output shape and format."""
+    node: Node, shape: Shape, fmt: IntFormat | None, nonneg: bool
+) -> tuple[nn.Module, Shape, IntFormat | None, bool]:
+    """Build the module of a body node; return it with its output shape, integer format and
+    whether its output is known to be non-negative."""
     kind = node["kind"]
     if kind == "sequential":
         layers = []
         for child in node["children"]:
-            layer, shape, fmt = _module(child, shape, fmt)
+            layer, shape, fmt, nonneg = _module(child, shape, fmt, nonneg)
             layers.append(layer)
-        return nn.Sequential(*layers), shape, fmt
+        return nn.Sequential(*layers), shape, fmt, nonneg
     if kind == "branching":
-        built = [_module(child, shape, fmt) for child in node["children"]]
-        out_shape = aggregate(node["agg"], [branch_out for _, branch_out, _ in built])
-        module = Branching([m for m, _, _ in built], node["agg"], node["join_bits"])
-        return module, out_shape, module.out_format
+        built = [_module(child, shape, fmt, nonneg) for child in node["children"]]
+        out_shape = aggregate(node["agg"], [branch_out for _, branch_out, _, _ in built])
+        all_nonneg = all(branch_nonneg for _, _, _, branch_nonneg in built)
+        module = Branching([m for m, _, _, _ in built], node["agg"], node["join_bits"], all_nonneg)
+        return module, out_shape, None, all_nonneg
     module, out_fmt = _terminal(node, shape, fmt)
-    return module, apply_terminal(node, shape)[0], out_fmt
+    out_nonneg = _terminal_nonneg(kind, node.get("bits"), nonneg)
+    return module, apply_terminal(node, shape)[0], out_fmt, out_nonneg
 
 
 class GenotypeNet(nn.Module):
@@ -306,7 +326,7 @@ class GenotypeNet(nn.Module):
         info = infer_shapes(genotype)
         head = genotype["head"]
         self.input_quant, fmt = input_quantizer(genotype["input_bits"])
-        self.body, body_out, fmt = _module(genotype["body"], info.input_shape, fmt)
+        self.body, body_out, fmt, _ = _module(genotype["body"], info.input_shape, fmt, False)
         if not is_image(body_out) or head["kind"] == "flatten" or body_out[1:] == (1, 1):
             # Vectors need no reduction, and pooling a 1x1 map is the same as flattening it.
             self.reduce: nn.Module = nn.Flatten(1)

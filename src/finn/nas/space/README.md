@@ -136,9 +136,11 @@ is quantized like a hand-written Brevitas model; one bit is bipolar as in BNN-PY
   `no_grad` (the evaluator runs it before export; one real batch is already within a few
   percent of the converged statistics).
 - Joins: the operands of an add or concat have different learned scales, which FINN cannot
-  reconcile in hardware. A `branching` node therefore owns one signed quantizer of
-  `join_bits` (a gene of the node) that it applies to every operand before the merge, so all
-  operands share one scale; this is the pattern Brevitas' `QuantEltwiseAdd` traces to (the
+  reconcile in hardware. A `branching` node therefore owns one quantizer of `join_bits` (a
+  gene of the node) that it applies to every operand before the merge, so all operands share
+  one scale (unsigned when every operand is known to be non-negative, i.e. comes from a ReLU
+  or an unsigned activation through pooling/identity, which the QONNX frontend requires for
+  a `Quant` behind a `Relu`; signed otherwise); this is the pattern Brevitas' `QuantEltwiseAdd` traces to (the
   builder does not use that layer: `QuantCat`, its concat counterpart, is broken in Brevitas
   0.13, and one implementation covers both aggregations). Re-quantizing is lossless only when
   the join grid is at least one bit wider than the widest operand; whether a narrower join is
@@ -150,8 +152,9 @@ is quantized like a hand-written Brevitas model; one bit is bipolar as in BNN-PY
   values. Without it the verdict at a join would flip with the weights.
 - Average pooling: hardware cannot divide by the window size, so FINN maps only Brevitas'
   truncating `TruncAvgPool2d` (sum, drop low-order bits). The builder tracks statically which
-  tensors are on an integer grid (output of the input quantizer, a multi-bit activation or a
-  join, through identity, max pooling and truncating average pooling) and builds `avgpool`
+  tensors are on an integer grid (output of the input quantizer or a multi-bit activation,
+  through identity, max pooling and truncating average pooling; not through a join, whose
+  output FINN's datatype inference for the pooling cannot see through) and builds `avgpool`
   terminals and the `gap` head as `TruncAvgPool` for those (`IntFormat` names the quantizer
   that owns the grid's scale, so no `QuantTensor` objects flow through the network).
   Elsewhere they are plain `nn.AvgPool2d` / `nn.AdaptiveAvgPool2d`, which FINN rejects.
