@@ -4,17 +4,9 @@ git_deps:
         commit: "a74d7e0d71e3ee5f3270c45c75d724449453d9b0"
         pip_install: False
         install_editable: False
-    # finn-hlslib as of before Xilinx/finn#1728 (tensor interface). The attention-hlslib and the
-    # FINN+-only HLS operators built on LegacyHLSBackend still include the headers it removed
-    # (bnn-library.h, flatten.hpp, interpret.hpp, streamtools.h).
-    finn-hlslib-legacy:
-        url: "https://github.com/Xilinx/finn-hlslib.git"
-        commit: "8d979e2bdced486dd25d26607d1ff5ae327ed6a8"
-        pip_install: False
-        install_editable: False
     attention-hlslib:
         url: "https://github.com/iksnagreb/attention-hlslib.git"
-        commit: "afc9720f10e551e1f734e137b21bb6d0a8342177"
+        commit: "9889f3d4fcd10f7f1ed9a6097e8eaf0d727352c6"
         pip_install: False
         install_editable: False
     AuroraFlow:

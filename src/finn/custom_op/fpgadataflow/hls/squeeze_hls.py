@@ -8,13 +8,14 @@ import numpy as np
 from onnx import GraphProto
 
 from finn.custom_op.fpgadataflow.hls import register_custom_op
-from finn.custom_op.fpgadataflow.hlsbackend_legacy import LegacyHLSBackend
+from finn.custom_op.fpgadataflow.hlsbackend import BlockingHLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.squeeze import Squeeze
+from finn.util.data_packing import hls_datatype_str
 
 
 @register_custom_op
-class Squeeze_hls(Squeeze, LegacyHLSBackend):
+class Squeeze_hls(Squeeze, BlockingHLSBackend):
     """HLS backend implementation of the Squeeze operator.
 
     Removes single-dimension entries from the shape of a tensor using HLS synthesis.
@@ -24,7 +25,7 @@ class Squeeze_hls(Squeeze, LegacyHLSBackend):
         """Return the dictionary of node attributes for the HLS Squeeze operator."""
         attrs: NodeAttrTypes = {}
         attrs.update(Squeeze.get_nodeattr_types(self))
-        attrs.update(LegacyHLSBackend.get_nodeattr_types(self))
+        attrs.update(BlockingHLSBackend.get_nodeattr_types(self))
         return attrs
 
     def global_includes(self) -> None:
@@ -38,8 +39,8 @@ class Squeeze_hls(Squeeze, LegacyHLSBackend):
         self.code_gen_dict["$DEFINES$"] = []
 
     def execute_node(self, context: dict[str, np.ndarray], graph: GraphProto) -> None:
-        """Execute node via the generic LegacyHLSBackend implementation (cppsim/rtlsim)."""
-        LegacyHLSBackend.execute_node(self, context, graph)
+        """Execute node via the generic BlockingHLSBackend implementation (cppsim/rtlsim)."""
+        BlockingHLSBackend.execute_node(self, context, graph)
 
     def docompute(self) -> None:
         """Generate the C++ code for the computation part of the operator."""
@@ -58,10 +59,12 @@ class Squeeze_hls(Squeeze, LegacyHLSBackend):
 
     def blackboxfunction(self) -> None:
         """Generate the C++ function signature for IP block generation."""
+        # Input and output carry the same PE elements per token
+        in_type = hls_datatype_str(self.get_input_datatype())
+        out_type = hls_datatype_str(self.get_output_datatype())
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            # Note: assumes stream type aliases to be set in defines
             f"void {self.onnx_node.name} (",
-            f"  hls::stream<ap_uint<{self.get_instream_width()}>> &in0_V,",
-            f"  hls::stream<ap_uint<{self.get_outstream_width()}>> &out0_V",
+            f"  hls::stream<tensor<{in_type},{self.get_folded_input_shape()[-1]}>> &in0_V,",
+            f"  hls::stream<tensor<{out_type},{self.get_folded_output_shape()[-1]}>> &out0_V",
             ")",
         ]

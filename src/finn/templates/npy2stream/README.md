@@ -5,8 +5,6 @@ This directory contains C++ utilities for reading and writing NumPy files in HLS
 ## Files
 
 - `npy2tensorstream.hpp` - Convert NumPy arrays to/from `tensor<>` streams
-- `npy2apintstream.hpp` - Convert NumPy arrays to/from packed `ap_int` streams (only for the
-  operators on `LegacyHLSBackend`, needs the legacy finn-hlslib)
 - `cnpy.h`, `cnpy.cpp` - NumPy file I/O library (MIT License)
 
 ## cnpy Library

@@ -18,7 +18,8 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - (Xilinx) `verify_batch_size`: the `stitched_ip_rtlsim` verification step runs all verification frames through the design in one simulation, so consecutive frames overlap; a single-frame input/output pair is repeated to this many frames (Xilinx#1719)
 
 ### Changed
-- (Xilinx) HLS operators exchange data with the simulation through a tensor interface and need finn-hlslib `6ca75af`; the attention operators, `Squeeze`/`Unsqueeze` and `StreamingFIFO_hls` keep the previous interface (`LegacyHLSBackend`) and a second finn-hlslib checkout (`finn-hlslib-legacy`). Run `finn deps update` after pulling (Xilinx#1728)
+- (Xilinx) HLS operators use the tensor stream interface of finn-hlslib `a74d7e0` (`hls::stream<tensor<T, N>>` instead of packed `ap_uint` streams). The FINN+-only HLS operators (attention, head split/merge, `Squeeze`/`Unsqueeze`, `StreamingFIFO_hls`) are ported to it, the attention operator together with attention-hlslib (iksnagreb/attention-hlslib#3). Run `finn deps update` after pulling (Xilinx#1728)
+- `ScaledDotProductAttention_hls` raises an error for a thresholds activation whose bias and output type the finn-hlslib `ThresholdsActivation` cannot represent (negative bias with an output type wider than the threshold count needs) instead of computing wrong values
 - (Xilinx) One `Pool` operator covers max/average/sum pooling including its window generation; models containing the previous `Pool` nodes fed by a `ConvolutionInputGenerator` have to be regenerated (Xilinx#1756)
 - (Xilinx) The `binaryXnorMode` attribute of `MVAU`/`VVAU` is removed, bipolar weights and inputs are specified as such (Xilinx#1728)
 - (Xilinx) The tiled RTL MVAU lives in `finn-rtllib/mvu` and no longer requires `TH` to divide `PE*SIMD` (Xilinx#1728, Xilinx#1712)

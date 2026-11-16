@@ -58,8 +58,8 @@ class HLSBackend(HWCustomOp, ABC):
 
     All streams are ``hls::stream<tensor<T, N>>`` (finn-hlslib ``tensor.hpp``) and every
     operator is free-running, i.e. cppsim drives its top function in a loop until the
-    output stays empty (see ``timeout_*``). Operators that have not been moved to this
-    interface yet derive from ``LegacyHLSBackend`` (``hlsbackend_legacy.py``) instead."""
+    output stays empty (see ``timeout_*``). Operators whose top function processes a whole
+    frame per call derive from ``BlockingHLSBackend`` instead."""
 
     def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return dictionary of node attribute types and properties."""
@@ -560,7 +560,7 @@ compilation transformations?
             npy_type = "half" if elem_hls_type == "half" else "float"
             npy_out = f"{code_gen_dir}/output_{o}.npy"
             oshape = self.get_folded_output_shape(o)
-            oshape_cpp_str = str(oshape).replace("(", "{").replace(")", "}")
+            oshape_cpp_str = "{" + ", ".join(str(d) for d in oshape) + "}"
 
             self.code_gen_dict["$DATAOUTSTREAM$"].append(
                 f'tensorstream2npy<{npy_type}>(strm{o}, {oshape_cpp_str}, "{npy_out}");'
@@ -612,3 +612,66 @@ compilation transformations?
     def timeout_read_stream(self) -> None:
         """Set reading output stream procedure for HLS functions defined for one clock cycle."""
         self.code_gen_dict["$TIMEOUT_READ_STREAM$"] = ["strm0 << out0_V.read();"]
+
+
+class BlockingHLSBackend(HLSBackend, ABC):
+    """HLSBackend for operators whose top function processes one whole frame per call.
+
+    The top function of such an operator loops over the frame with blocking stream reads
+    (the attention operators with the attention-hlslib, Squeeze, Unsqueeze) instead of
+    advancing by at most one token per call. cppsim therefore calls it once, with all
+    inputs already in their streams, and reads the outputs straight from the output
+    streams. The streams are tensor streams as for every other HLS operator.
+    """
+
+    def cppsim_template(self) -> str:
+        """Return the cppsim template that calls the top function once."""
+        return load_codegen_template("execute_single_node.cpp")
+
+    def strm_decl(self) -> None:
+        """Generate commands for stream declaration in C++.
+        Might need to be overwritten depending on CustomOp."""
+        node = self.onnx_node
+        self.code_gen_dict["$STREAMDECLARATIONS$"] = []
+        for i, _inp in enumerate(node.input):
+            if self.get_instream_width(i):
+                elem_hls_type = hls_datatype_str(self.get_input_datatype(i))
+                n_elems = self.get_folded_input_shape(i)[-1]
+                self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                    f'hls::stream<tensor<{elem_hls_type},{n_elems}>> in{i}_V ("in{i}_V");'
+                )
+        for o, _outp in enumerate(node.output):
+            if self.get_outstream_width(o):
+                elem_hls_type = hls_datatype_str(self.get_output_datatype(o))
+                n_elems = self.get_folded_output_shape(o)[-1]
+                self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                    f'hls::stream<tensor<{elem_hls_type},{n_elems}>> out{o}_V ("out{o}_V");'
+                )
+
+    def dataoutstrm(self) -> None:
+        """Generate commands for reading out data from C++ and converting to npy format.
+        Might need to be overwritten depending on CustomOp."""
+        code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
+        self.code_gen_dict["$DATAOUTSTREAM$"] = []
+        for o, _outp in enumerate(self.onnx_node.output):
+            elem_hls_type = hls_datatype_str(self.get_output_datatype(o))
+            npy_type = "half" if elem_hls_type == "half" else "float"
+            npy_out = f"{code_gen_dir}/output_{o}.npy"
+            oshape = self.get_folded_output_shape(o)
+            oshape_cpp_str = "{" + ", ".join(str(d) for d in oshape) + "}"
+            self.code_gen_dict["$DATAOUTSTREAM$"].append(
+                f'tensorstream2npy<{npy_type}>(out{o}_V, {oshape_cpp_str}, "{npy_out}");'
+            )
+
+    def pragmas(self) -> None:
+        """Generate pragma commands in C++.
+        Might need to be overwritten depending on CustomOp."""
+        # no DATAFLOW pragma here: the top function is a loop over the frame, not a region
+        # of free-running processes
+        self.code_gen_dict["$PRAGMAS$"] = [
+            "#pragma HLS INTERFACE axis port=in0_V",
+            "#pragma HLS INTERFACE axis port=out0_V",
+            "#pragma HLS INTERFACE ap_ctrl_none port=return",
+            "#pragma HLS aggregate variable=in0_V compact=bit",
+            "#pragma HLS aggregate variable=out0_V compact=bit",
+        ]

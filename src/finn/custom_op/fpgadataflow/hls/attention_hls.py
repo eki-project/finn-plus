@@ -27,7 +27,7 @@ from finn.custom_op.fpgadataflow.attention import ScaledDotProductAttention
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 
 # Base class for specializing HW operators as implemented via HLS
-from finn.custom_op.fpgadataflow.hlsbackend_legacy import LegacyHLSBackend
+from finn.custom_op.fpgadataflow.hlsbackend import BlockingHLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 
 # Convert and pack (numpy) data for C++ code generation
@@ -44,7 +44,7 @@ RAM_STYLES = {
 
 
 @register_custom_op
-class ScaledDotProductAttention_hls(ScaledDotProductAttention, LegacyHLSBackend):
+class ScaledDotProductAttention_hls(ScaledDotProductAttention, BlockingHLSBackend):
     """HLS Backend specialization of the Scaled Dot-product Attention Operator."""
 
     def _dtype(self, attr: str) -> BaseDataType:
@@ -55,11 +55,45 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, LegacyHLSBackend)
         """Return node attributes matching the HLS operator."""
         # Start from parent operator class attributes
         attrs = ScaledDotProductAttention.get_nodeattr_types(self)
-        # Add the LegacyHLSBackend default attributes on top
-        attrs.update(LegacyHLSBackend.get_nodeattr_types(self))
+        # Add the BlockingHLSBackend default attributes on top
+        attrs.update(BlockingHLSBackend.get_nodeattr_types(self))
         # Add/Specialize implementation specific attributes here...
         # Return the updated attributes dictionary
         return attrs
+
+    def _check_thresholds_activation(
+        self, name: str, num: int, bias: int, out_dtype: BaseDataType
+    ) -> None:
+        """Reject a thresholds activation the finn-hlslib cannot compute.
+
+        The finn-hlslib ThresholdsActivation counts the crossed thresholds, starting
+        from the bias, in an unsigned integer just wide enough for the number of
+        thresholds and casts the result to the output type. This is only the
+        intended bias plus count if that range of values survives the cast.
+        """
+        # ceil(log2(num + 1)) bits, as derived by the finn-hlslib
+        count_bits = int(num).bit_length()
+        out_bits = out_dtype.bitwidth()
+
+        def hls_result(value: int) -> int:
+            """Emulate the cast of the wrapped counter value to the output type."""
+            wrapped = value % 2**count_bits
+            if out_bits > count_bits:
+                # Zero extension of the unsigned counter
+                return wrapped
+            wrapped %= 2**out_bits
+            if out_dtype.signed() and wrapped >= 2 ** (out_bits - 1):
+                return wrapped - 2**out_bits
+            return wrapped
+
+        # The range of results is contiguous, checking both ends covers all
+        if hls_result(bias) != bias or hls_result(bias + num) != bias + num:
+            raise FINNUserError(
+                f"{self.onnx_node.name}: {name} with {num} thresholds, bias {bias} and "
+                f"output type {out_dtype.name} cannot be implemented by the finn-hlslib "
+                f"ThresholdsActivation, which counts in {count_bits} bits. Use an output "
+                f"type of {count_bits} bits or a non-negative bias."
+            )
 
     def get_ap_int_max_w(self) -> int:
         """Return the maximum width of any ap_int used in this operator.
@@ -219,6 +253,10 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, LegacyHLSBackend)
             thresholds_qk_matmul, num = prepare_thresholds(
                 thresholds, kvlen, seqfold, thresholds_dtype
             )
+            # Make sure the finn-hlslib activation yields bias plus count
+            self._check_thresholds_activation(
+                "ActQKMatMul", num, bias, self._dtype("OutQKMatMul")
+            )
             # Get the HLS datatype string corresponding to the thresholds
             # datatype for C++ code generation
             dtype_str = thresholds_dtype.get_hls_datatype_str()
@@ -263,6 +301,10 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, LegacyHLSBackend)
             thresholds_a_softmax, num = prepare_thresholds(
                 thresholds, kvlen, seqfold, thresholds_dtype
             )
+            # Make sure the finn-hlslib activation yields bias plus count
+            self._check_thresholds_activation(
+                "ActASoftmax", num, bias, self._dtype("AType")
+            )
             # Get the HLS datatype string corresponding to the thresholds
             # datatype for C++ code generation
             dtype_str = thresholds_dtype.get_hls_datatype_str()
@@ -306,6 +348,10 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, LegacyHLSBackend)
             # along the value embedding dimension
             thresholds_av_matmul, num = prepare_thresholds(
                 thresholds, vdim, embfold, thresholds_dtype
+            )
+            # Make sure the finn-hlslib activation yields bias plus count
+            self._check_thresholds_activation(
+                "ActAVMatMul", num, bias, self._dtype("OutAVMatMul")
             )
             # Get the HLS datatype string corresponding to the thresholds
             # datatype for C++ code generation
@@ -431,8 +477,8 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, LegacyHLSBackend)
         # operations
         mac_resource = cast("str", self.get_nodeattr("mac_resource"))
 
-        # Mapping of memory resource attributes to the corresponding C++ tag
-        # types
+        # Mapping of memory resource attributes to the corresponding C++
+        # enumerators of the attention-hlslib Resource enum
         mem_resources = {
             "auto": "Resource::AUTO",
             "block": "Resource::BRAM",
@@ -478,9 +524,10 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, LegacyHLSBackend)
                 "OutAVMatMul",
                 "AccASoftmax"
             ),
-            # Type alias definitions for the resource type selection tags
+            # Type alias for the compute resource selection tag and constant for
+            # the memory resource selection
             f"using MacResource = {compute_resources[mac_resource]};",
-            f"using MemResource = {mem_resources[ram_style]};",
+            f"constexpr Resource MemResource = {mem_resources[ram_style]};",
             # Include the activation function type definitions and parameters
             #   Note: The typedefs in this header require the typedefs above,
             #   thus adding this to the global includes is not possible.
@@ -696,6 +743,11 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, LegacyHLSBackend)
             "#pragma HLS INTERFACE axis port=in2_V",
             # Connect the output stream with an axi stream interface
             "#pragma HLS INTERFACE axis port=out0_V",
+            # Pack the tensor tokens of all streams without padding
+            "#pragma HLS aggregate variable=in0_V compact=bit",
+            "#pragma HLS aggregate variable=in1_V compact=bit",
+            "#pragma HLS aggregate variable=in2_V compact=bit",
+            "#pragma HLS aggregate variable=out0_V compact=bit",
         ]
         # No block-level I/O protocol for the function return value
         self.code_gen_dict["$PRAGMAS$"].append(
