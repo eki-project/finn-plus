@@ -35,8 +35,18 @@ def _config(tmp_path: Path, **kwargs: Any) -> OracleConfig:
 
 
 def _evaluate(tmp_path: Path, model: str, config: dict[str, Any], model_kwargs: dict[str, Any]):
+    """Build, calibrate (Brevitas' statistics-initialized scales need forward passes in train
+    mode, otherwise every activation exports the same degenerate scale) and evaluate."""
+    from finn.nas.calibrate import calibrate, synthetic_inputs
+
     torch.manual_seed(0)
     module = getattr(bm, model)(**model_kwargs)
+    if model_kwargs.get("trained_bn", True):
+        # (the untrained-BatchNorm case must keep its identity statistics)
+        try:
+            calibrate(module, synthetic_inputs(tuple(module.input_shape[1:]), 16), 3, 8)
+        except RuntimeError:
+            pass  # a network that cannot run is reported by the oracle's export stage
     return FinnOracle(_config(tmp_path, **config)).evaluate(module, module.input_shape)
 
 

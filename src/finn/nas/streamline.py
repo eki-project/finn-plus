@@ -10,6 +10,7 @@ selected with ``OracleConfig.streamline = "plus"`` (the default).
 
 from __future__ import annotations
 
+import hashlib
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.bipolar_to_xnor import ConvertBipolarMatMulToXnorPopcount
 from qonnx.transformation.composed import ComposedTransformation
@@ -43,9 +44,18 @@ class StreamlineBudgetExceededError(RuntimeError):
     """``StreamlinePlus`` cycles between graphs or exceeded its modification budget."""
 
 
-def _graph_state(model: ModelWrapper) -> int:
-    """Return a hash of the graph structure (op types and tensor wiring)."""
-    return hash(tuple((n.op_type, tuple(n.input), tuple(n.output)) for n in model.graph.node))
+def _graph_state(model: ModelWrapper) -> str:
+    """Return a digest of the graph: op types, tensor wiring, attributes and constants.
+
+    The constants matter: a transformation may legitimately report a modification that only
+    changes initializer values (threshold rounding), which is not a revisited state.
+    """
+    digest = hashlib.sha1()  # noqa: S324 - not used for security
+    for node in model.graph.node:
+        digest.update(node.SerializeToString())
+    for init in model.graph.initializer:
+        digest.update(init.SerializeToString())
+    return digest.hexdigest()
 
 
 class _Counted(Transformation):

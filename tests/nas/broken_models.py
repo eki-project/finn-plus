@@ -277,10 +277,10 @@ class WideCNN(CNNBase):
 class ResidualCNN(nn.Module):
     """Residual add of a skip branch and a conv branch, each behind its own 4-bit quantizer.
 
-    FINN's default streamlining does not move scale factors across forks and joins. A
-    residual is therefore only accepted if both quantizers have scale 1, so that the
-    branches are plain integers: ``max_val=15`` with a constant scale gives 15 / (2^4 - 1).
-    ``max_val=None`` uses Brevitas' default learned scale.
+    FINN cannot reconcile different scale factors at a join: a residual is only accepted if
+    both branches are on the same integer grid, e.g. both quantizers with scale 1
+    (``max_val=15`` with a constant scale gives 15 / (2^4 - 1)). ``max_val=None`` uses
+    Brevitas' default learned scale, which differs per branch once calibrated.
     """
 
     input_shape = CNN_SHAPE
