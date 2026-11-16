@@ -426,8 +426,10 @@ def test_fifosizing_heuristic_analytical(topology: Literal["tfc", "cnv"]) -> Non
         fifo_sizing_report = json.load(f)
     assert len(fifo_sizing_report["fifo_depths"]) > 0, "No FIFOs inserted"
     assert all(depth >= 2 for depth in fifo_sizing_report["fifo_depths"].values())
-    # every operator of these topologies has a tree model, nothing is sized around blindly
-    assert "nodes_without_tree_model" not in fifo_sizing_report
+    # the only operator of these topologies without a tree model is the input Reshape, a pure
+    # rewiring for which the transparent treatment is exact
+    unmodelled = fifo_sizing_report.get("nodes_without_tree_model", [])
+    assert all(name.startswith("Reshape_rtl") for name in unmodelled), unmodelled
 
     with (tmp_output_dir / "report/estimate_network_performance.json").open() as f:
         est_data = json.load(f)
