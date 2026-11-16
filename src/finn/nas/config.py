@@ -72,6 +72,10 @@ class OracleConfig:
     boundary_unmapped_is_failure: bool = True
     #: FLOAT32 datatypes on an interior HW node count as infeasible.
     float_interior_is_failure: bool = True
+    #: Streamlining of the frontend: ``"plus"`` runs FINN+'s exhaustive ``StreamlinePlus`` in
+    #: place of the builder's default streamlining (it also moves scales past forks and joins
+    #: and makes concat joins mappable); ``"default"`` is the builder's ``step_streamline``.
+    streamline: Literal["default", "plus"] = "plus"
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a JSON-serializable dictionary."""
@@ -98,6 +102,7 @@ class OracleConfig:
             "synth_clk_period_ns": self.synth_clk_period_ns,
             "folding": asdict(self.folding),
             "strict_codegen": self.strict_codegen,
+            "streamline": self.streamline,
             "mvau_wwidth_max": self.mvau_wwidth_max,
             "folding_two_pass_relaxation": self.folding_two_pass_relaxation,
             "minimize_bit_width": self.minimize_bit_width,

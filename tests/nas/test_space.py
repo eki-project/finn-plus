@@ -29,7 +29,7 @@ N_SAMPLES = 200
 
 #: A fixed genotype and its sha256, computed independently of the package.
 GOLDEN = {
-    "version": 1,
+    "version": 2,
     "input_shape": [3, 8, 8],
     "num_classes": 4,
     "input_bits": 8,
@@ -50,7 +50,7 @@ GOLDEN = {
     },
     "head": {"kind": "gap", "weight_bits": 4},
 }
-GOLDEN_HASH = "395d2de8232cc39e1dae7d1e7b5f8935b666f435ecb2f857b4318606f9bcddfb"
+GOLDEN_HASH = "e2e67e526614d4376265a91d06bb4c44eb67d1773d062cd005760a34553863b4"
 
 #: Run in a fresh interpreter. The parent packages are stubbed so that only the space package
 #: itself is executed: ``finn.nas`` imports the oracle, which legitimately needs torch.
@@ -216,7 +216,7 @@ class TestShapes:
             (image({**G.conv(8, 3), "padding": "full"}), "padding must be one of"),
             (image(G.quant_act(0)), "bits must be >= 1"),
             (image(G.conv(8, 3), head_kind="topk"), "head must be"),
-            ({**image(G.identity()), "version": 2}, "unsupported genotype version"),
+            ({**image(G.identity()), "version": 3}, "unsupported genotype version"),
             ({**image(G.identity()), "shapes": []}, "genotype must have keys"),
             ({**image(G.identity()), "input_shape": [3, 8]}, "input_shape must be"),
             ({**image(G.identity()), "body": {"kind": "sequential", "children": []}}, "at least"),
@@ -257,7 +257,7 @@ class TestShapes:
         # Header, input quantizer, one line per node, head.
         assert len(lines) == info.num_nodes + 3
         assert genotype_hash(genotype)[:12] in lines[0] and str(info.params) in lines[0]
-        assert "  branching add => 16x32x32" in lines
+        assert "  branching add j5 => 16x32x32" in lines
         assert "        conv k3 s1 same c16 w4 -> 16x32x32" in lines
         assert lines[-1] == "head flatten linear f10 w4 -> 10"
         assert "depthwise" in describe(seed_genotypes()["depthwise_separable"])
@@ -419,9 +419,9 @@ def _differing_genes(a: dict, b: dict) -> int:
     count = int(a["input_bits"] != b["input_bits"])
     count += sum(a["head"][key] != b["head"][key] for key in ("kind", "weight_bits"))
     for (_, node_a), (_, node_b) in zip(iter_nodes(a["body"]), iter_nodes(b["body"]), strict=True):
-        if "children" in node_a:
+        if node_a["kind"] == "sequential":
             continue
-        keys = (set(node_a) | set(node_b)) - {"out_channels"}
+        keys = (set(node_a) | set(node_b)) - {"out_channels", "children"}
         differing = sum(node_a.get(key) != node_b.get(key) for key in keys)
         if not differing:
             differing = node_a.get("out_channels") != node_b.get("out_channels")

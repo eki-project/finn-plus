@@ -96,6 +96,10 @@ class SpaceConfig:
     weight_bits: list[int] = field(default_factory=lambda: [1, 2, 3, 4, 8])
     #: Activation bit widths (1 = bipolar sign, otherwise unsigned quantized ReLU).
     act_bits: list[int] = field(default_factory=lambda: [1, 2, 3, 4, 8])
+    #: Bit widths of the signed quantizer a branching node applies to each operand before the
+    #: merge. Re-quantizing is lossless only if the grid is at least one bit wider than the
+    #: widest operand, but that is for the search to find out.
+    join_bits: list[int] = field(default_factory=lambda: [2, 3, 4, 5, 8])
     maxpool_kernels: list[int] = field(default_factory=lambda: [2, 3])
     maxpool_strides: list[int] = field(default_factory=lambda: [1, 2])
     avgpool_kernels: list[int] = field(default_factory=lambda: [2, 3])
@@ -132,10 +136,11 @@ class SpaceConfig:
             raise ValueError(f"Unknown head kinds {unknown}; known: {list(HEAD_KINDS)}.")
 
     def choices(self, kind: str) -> dict[str, list[Any]]:
-        """Return the choice list of every hyperparameter of terminal ``kind``.
+        """Return the choice list of every hyperparameter of node ``kind``.
 
         This is the single place that ties genotype fields to config fields; sampling,
-        hyperparameter mutation and the membership check all go through it.
+        hyperparameter mutation and the membership check all go through it. Besides the
+        terminals, ``branching`` has a hyperparameter (``join_bits``).
         """
         if kind == "conv":
             prob = self.conv_depthwise_prob
@@ -156,6 +161,8 @@ class SpaceConfig:
             return {"kernel": self.maxpool_kernels, "stride": self.maxpool_strides}
         if kind == "avgpool":
             return {"kernel": self.avgpool_kernels}
+        if kind == "branching":
+            return {"join_bits": self.join_bits}
         return {}
 
     def wrapper_choices(self) -> dict[str, list[Any]]:

@@ -15,8 +15,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-#: Version of the genotype format, stored in every genotype.
-VERSION = 1
+#: Version of the genotype format, stored in every genotype. 2: branching nodes carry
+#: ``join_bits``, the bit width of the quantizer applied to every operand before merging.
+VERSION = 2
 
 Genotype = dict[str, Any]
 Node = dict[str, Any]
@@ -35,9 +36,13 @@ def sequential(*children: Node) -> Node:
     return {"kind": "sequential", "children": list(children)}
 
 
-def branching(*children: Node, agg: str = "add") -> Node:
-    """Return a node that feeds its input to all ``children`` and merges them with ``agg``."""
-    return {"kind": "branching", "agg": agg, "children": list(children)}
+def branching(*children: Node, agg: str = "add", join_bits: int = 4) -> Node:
+    """Return a node that feeds its input to all ``children`` and merges them with ``agg``.
+
+    ``join_bits`` is the bit width of the signed quantizer that puts every operand on one
+    common grid before the merge (1 = bipolar sign).
+    """
+    return {"kind": "branching", "agg": agg, "join_bits": join_bits, "children": list(children)}
 
 
 def conv(

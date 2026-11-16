@@ -13,15 +13,7 @@ from math import prod
 from typing import TYPE_CHECKING, Any
 
 from finn.nas.space.config import AGGREGATIONS, HEAD_KINDS
-from finn.nas.space.genotype import (
-    VERSION,
-    Genotype,
-    InvalidGenotypeError,
-    Node,
-    Path,
-    get_node,
-    is_inner,
-)
+from finn.nas.space.genotype import VERSION, Genotype, InvalidGenotypeError, Node, Path, get_node
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -270,7 +262,7 @@ def _walk(node: Any, shape: Shape, path: Path, nodes: dict[Path, NodeInfo]) -> N
             info = _walk(child, out, (*path, index), nodes)
             out, params, size = info.out_shape, params + info.params, size + info.size
     elif kind == "branching":
-        children = _children(node, {"children": list, "agg": str}, 2, path)
+        children = _children(node, {"children": list, "agg": str, "join_bits": int}, 2, path)
         infos = [_walk(child, shape, (*path, index), nodes) for index, child in enumerate(children)]
         with _located(path):
             out = aggregate(node["agg"], [info.out_shape for info in infos])
@@ -330,9 +322,12 @@ def _check_membership(genotype: Genotype, info: GenotypeInfo, config: SpaceConfi
             raise InvalidGenotypeError(f"{name}={wrapper[name]!r} is not in the space {allowed}")
     for path in info.nodes:
         node = get_node(genotype, path)
-        if is_inner(node):
+        if node["kind"] == "sequential":
             continue
-        if config.terminal_weights.get(node["kind"], 0) <= 0:
+        if node["kind"] == "branching":
+            if config.agg_weights.get(node["agg"], 0) <= 0:
+                raise InvalidGenotypeError(f"node {list(path)}: {node['agg']} is not in the space")
+        elif config.terminal_weights.get(node["kind"], 0) <= 0:
             raise InvalidGenotypeError(f"node {list(path)}: {node['kind']} is not in the space")
         for name, allowed in config.choices(node["kind"]).items():
             if name in node and node[name] not in allowed:

@@ -1,10 +1,21 @@
 """Genotype -> Brevitas network. The only module of this package that imports torch.
 
-Quantizers follow the BNN-PYNQ reference models (``brevitas_examples.bnn_pynq``:
-``CommonWeightQuant`` / ``CommonActQuant``), which FINN is known to export and streamline:
-constant scales, bipolar (binary) quantization at 1 bit, narrow-range integers otherwise.
-Constant scales also mean that the exported graph structure, and with it FINN's verdict,
-depends only on the genotype and not on what training does to learned scale factors.
+Multi-bit weights and activations use Brevitas' default quantizers (per-tensor floating-point
+scales from weight statistics resp. from runtime activation statistics that training learns),
+so a candidate is quantized the way a hand-written Brevitas model is. One bit stays bipolar with
+a constant scale, as in the BNN-PYNQ reference models, and the input quantizer is a fixed-point
+format of the normalized input.
+
+Two consequences of learned scales are handled here:
+
+- The activation scales only exist after forward passes in train mode (Brevitas collects
+  statistics then); see :func:`finn.nas.calibrate.calibrate`, which the evaluator runs before
+  export. Without it every activation exports the degenerate initial scale ``1 / int_max``.
+- The operands of a join (add, concat) have different scales, which FINN cannot reconcile in
+  hardware. Every :class:`Branching` node therefore owns one quantizer (``join_bits`` of the
+  genotype) that re-quantizes all its operands to a common grid before merging them, the
+  pattern Brevitas' ``QuantEltwiseAdd`` traces to. That keeps FINN's verdict independent of
+  the weights: all operands of a join share one scale initializer in the exported graph.
 """
 
 from __future__ import annotations
@@ -17,6 +28,7 @@ from brevitas.core.scaling import ScalingImplType
 from brevitas.core.zero_point import ZeroZeroPoint
 from brevitas.inject import ExtendedInjector
 from brevitas.nn import QuantConv2d, QuantIdentity, QuantLinear, QuantReLU, TruncAvgPool2d
+from brevitas.quant import Int8WeightPerTensorFloat
 from brevitas.quant.solver import ActQuantSolver, WeightQuantSolver
 from brevitas.quant_tensor import IntQuantTensor
 from dataclasses import dataclass
@@ -39,7 +51,7 @@ if TYPE_CHECKING:
 
 
 class _ConstQuant(ExtendedInjector):
-    """Settings shared by all quantizers (same as BNN-PYNQ's ``CommonQuant``)."""
+    """Settings of the constant-scale quantizers (same as BNN-PYNQ's ``CommonQuant``)."""
 
     bit_width_impl_type = BitWidthImplType.CONST
     scaling_impl_type = ScalingImplType.CONST
@@ -51,36 +63,40 @@ class _ConstQuant(ExtendedInjector):
     signed = True
 
 
-class WeightQuant(_ConstQuant, WeightQuantSolver):
-    """Weight quantizer with constant scale: weights live in [-1, 1]."""
+class BinaryWeightQuant(_ConstQuant, WeightQuantSolver):
+    """Bipolar (+-1) weight quantizer with constant scale 1, for 1-bit weights."""
 
     scaling_const = 1.0
 
 
-class ActQuant(_ConstQuant, ActQuantSolver):
-    """Activation quantizer with constant range [-1, 1]."""
+class ConstActQuant(_ConstQuant, ActQuantSolver):
+    """Constant-range activation quantizer, for the bipolar sign and the input quantizer."""
 
     min_val = -1.0
     max_val = 1.0
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class IntFormat:
-    """Integer format of a tensor that comes straight out of a multi-bit quantizer.
+    """Integer format of a tensor that comes out of a multi-bit quantizer.
 
-    The builder tracks it through the operations that keep a tensor integer (identity, max
-    pooling, truncating average pooling) because an average pooling needs it, see
-    :class:`TruncAvgPool`. ``None`` stands for "not known to be integer".
+    The builder tracks it through the operations that keep a tensor on an integer grid
+    (identity, max pooling, truncating average pooling, the joins) because a truncating average
+    pooling needs it, see :class:`TruncAvgPool`. ``None`` stands for "not known to be integer".
+    The scale is read from the quantizer that produced the grid (``source``), because it is a
+    learned value that calibration and training change; ``factor`` accounts for the exact
+    rescaling of a truncating pooling.
     """
 
     bits: int
     signed: bool
-    scale: float
+    #: Brevitas activation layer whose ``act_quant`` proxy holds the scale of the grid.
+    source: nn.Module
+    factor: float = 1.0
 
-
-def _quant_type(bits: int) -> QuantType:
-    """Return binary (bipolar, values +-1) quantization for 1 bit and integer otherwise."""
-    return QuantType.BINARY if bits == 1 else QuantType.INT
+    def scale(self) -> torch.Tensor:
+        """Return the current scale of the grid as a tensor."""
+        return self.source.act_quant.scale() * self.factor
 
 
 def input_quantizer(bits: int) -> tuple[nn.Module, IntFormat | None]:
@@ -91,10 +107,10 @@ def input_quantizer(bits: int) -> tuple[nn.Module, IntFormat | None]:
     that range. One bit: the sign of the input.
     """
     if bits == 1:
-        return QuantIdentity(act_quant=ActQuant, bit_width=1, quant_type=QuantType.BINARY), None
+        return _bipolar(), None
     scale = 2.0 ** (1 - bits)
     quantizer = QuantIdentity(
-        act_quant=ActQuant,
+        act_quant=ConstActQuant,
         bit_width=bits,
         quant_type=QuantType.INT,
         min_val=-1.0,
@@ -102,31 +118,37 @@ def input_quantizer(bits: int) -> tuple[nn.Module, IntFormat | None]:
         narrow_range=False,
         restrict_scaling_type=RestrictValueType.POWER_OF_TWO,
     )
-    return quantizer, IntFormat(bits, True, scale)
+    return quantizer, IntFormat(bits, True, quantizer)
+
+
+def _bipolar() -> nn.Module:
+    """Return a bipolar sign quantizer (values +-1)."""
+    return QuantIdentity(act_quant=ConstActQuant, bit_width=1, quant_type=QuantType.BINARY)
 
 
 def quant_activation(bits: int) -> tuple[nn.Module, IntFormat | None]:
     """Return a quantized activation and the format of its output.
 
-    One bit is a bipolar sign activation. More bits are an unsigned quantized ReLU that
-    saturates at ``2**bits - 1``, which makes its constant scale exactly 1: the activations
-    are the integers ``0 .. 2**bits - 1`` (as the bipolar ones are +-1, and as BNN-PYNQ's
-    2-bit activations are -1, 0, 1). A preceding batch normalization adapts the range. FINN's
-    default streamlining cannot move a scale factor across a fork or a join, so with any
-    other range no multi-bit activation could feed a branching node.
+    One bit is a bipolar sign activation. More bits are Brevitas' default unsigned quantized
+    ReLU: a per-tensor scale initialized from the activation statistics of the first forward
+    passes in train mode (see :mod:`finn.nas.calibrate`) and learned afterwards.
     """
     if bits == 1:
-        return QuantIdentity(act_quant=ActQuant, bit_width=1, quant_type=QuantType.BINARY), None
-    activation = QuantReLU(
-        act_quant=ActQuant,
-        bit_width=bits,
-        quant_type=QuantType.INT,
-        signed=False,
-        narrow_range=False,
-        min_val=0.0,
-        max_val=float(2**bits - 1),
-    )
-    return activation, IntFormat(bits, False, 1.0)
+        return _bipolar(), None
+    activation = QuantReLU(bit_width=bits)
+    return activation, IntFormat(bits, False, activation)
+
+
+def join_quantizer(bits: int) -> tuple[nn.Module, IntFormat | None]:
+    """Return the quantizer a branching node applies to each of its operands.
+
+    Brevitas' default signed activation quantizer (statistics-initialized, learned scale), or
+    the bipolar sign for 1 bit.
+    """
+    if bits == 1:
+        return _bipolar(), None
+    quantizer = QuantIdentity(bit_width=bits)
+    return quantizer, IntFormat(bits, True, quantizer)
 
 
 class TruncAvgPool(nn.Module):
@@ -155,25 +177,36 @@ class TruncAvgPool(nn.Module):
     def out_format(self) -> IntFormat:
         """Format of the result: same bits, scale grown by 2**dropped_bits / window size.
 
-        Mirrors Brevitas: the window sum of unsigned ``bits``-bit values needs
+        Mirrors Brevitas: the window sum of ``bits``-bit values needs
         ``ceil(log2((2**bits - 1) * window))`` bits, of which the top ``bits`` are kept.
         """
         kernel = self.pool.kernel_size
         window = kernel * kernel if isinstance(kernel, int) else kernel[0] * kernel[1]
         dropped = ceil(log2((2**self.fmt.bits - 1) * window)) - self.fmt.bits
-        return IntFormat(self.fmt.bits, self.fmt.signed, self.fmt.scale * 2.0**dropped / window)
+        fmt = self.fmt
+        return IntFormat(fmt.bits, fmt.signed, fmt.source, fmt.factor * 2.0**dropped / window)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Pool ``x``, which must hold values of the format given at construction."""
         fmt = self.fmt
-        quant_x = IntQuantTensor(x, fmt.scale, 0.0, float(fmt.bits), fmt.signed, self.training)
+        quant_x = IntQuantTensor(x, fmt.scale(), 0.0, float(fmt.bits), fmt.signed, self.training)
         return self.pool(quant_x)
+
+
+def _weight_quant(bits: int) -> dict[str, object]:
+    """Return the weight quantizer keyword arguments for ``bits``-bit weights."""
+    if bits == 1:
+        return {
+            "weight_quant": BinaryWeightQuant,
+            "weight_bit_width": 1,
+            "weight_quant_type": QuantType.BINARY,
+        }
+    return {"weight_quant": Int8WeightPerTensorFloat, "weight_bit_width": bits}
 
 
 def _conv(node: Node, shape: Shape) -> nn.Module:
     """Build a quantized convolution; input channels follow from the current shape."""
     channels = shape[0]
-    bits = node["weight_bits"]
     return QuantConv2d(
         in_channels=channels,
         out_channels=channels if node["depthwise"] else node["out_channels"],
@@ -182,22 +215,13 @@ def _conv(node: Node, shape: Shape) -> nn.Module:
         padding=same_padding(node["kernel"]) if node["padding"] == "same" else 0,
         groups=channels if node["depthwise"] else 1,
         bias=False,
-        weight_quant=WeightQuant,
-        weight_bit_width=bits,
-        weight_quant_type=_quant_type(bits),
+        **_weight_quant(node["weight_bits"]),
     )
 
 
 def _linear(in_features: int, out_features: int, bits: int) -> nn.Module:
     """Build a quantized fully connected layer without bias."""
-    return QuantLinear(
-        in_features,
-        out_features,
-        bias=False,
-        weight_quant=WeightQuant,
-        weight_bit_width=bits,
-        weight_quant_type=_quant_type(bits),
-    )
+    return QuantLinear(in_features, out_features, bias=False, **_weight_quant(bits))
 
 
 def _terminal(
@@ -228,17 +252,26 @@ def _terminal(
 
 
 class Branching(nn.Module):
-    """Feed the input to all branches and merge their outputs."""
+    """Feed the input to all branches, re-quantize their outputs to one grid, merge them."""
 
-    def __init__(self, branches: list[nn.Module], agg: str) -> None:
-        """Store the branches and the aggregation (``"add"`` or ``"concat"``)."""
+    def __init__(self, branches: list[nn.Module], agg: str, join_bits: int) -> None:
+        """Store the branches, the aggregation (``"add"`` or ``"concat"``) and the join grid."""
         super().__init__()
         self.branches = nn.ModuleList(branches)
         self.agg = agg
+        self.join_quant, fmt = join_quantizer(join_bits)
+        if fmt is None:
+            self.out_format: IntFormat | None = None
+        elif agg == "concat":
+            self.out_format = fmt
+        else:
+            # A sum of n values of the same grid stays on that grid and needs log2(n) more bits.
+            extra = ceil(log2(len(branches)))
+            self.out_format = IntFormat(fmt.bits + extra, True, fmt.source, fmt.factor)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Run all branches on ``x`` and aggregate along the channel/feature dimension."""
-        outputs = [branch(x) for branch in self.branches]
+        outputs = [self.join_quant(branch(x)) for branch in self.branches]
         if self.agg == "concat":
             return torch.cat(outputs, dim=1)
         return reduce(torch.add, outputs)
@@ -258,8 +291,8 @@ def _module(
     if kind == "branching":
         built = [_module(child, shape, fmt) for child in node["children"]]
         out_shape = aggregate(node["agg"], [branch_out for _, branch_out, _ in built])
-        # An aggregation changes value range and layout, so the format is not tracked further.
-        return Branching([module for module, _, _ in built], node["agg"]), out_shape, None
+        module = Branching([m for m, _, _ in built], node["agg"], node["join_bits"])
+        return module, out_shape, module.out_format
     module, out_fmt = _terminal(node, shape, fmt)
     return module, apply_terminal(node, shape)[0], out_fmt
 
@@ -282,11 +315,6 @@ class GenotypeNet(nn.Module):
         else:
             self.reduce = nn.Sequential(TruncAvgPool(body_out[1:], fmt), nn.Flatten(1))
         self.classifier = _linear(info.head_features, genotype["num_classes"], head["weight_bits"])
-        # The weight quantizers have a constant scale of 1, so the default (fan-in scaled)
-        # initialization would round almost everything to zero at low bit widths.
-        for module in self.modules():
-            if isinstance(module, (QuantConv2d, QuantLinear)):
-                nn.init.uniform_(module.weight, -1.0, 1.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Map a ``(N, C, H, W)`` float batch to ``(N, num_classes)`` logits."""
@@ -294,5 +322,19 @@ class GenotypeNet(nn.Module):
 
 
 def to_module(genotype: Genotype) -> GenotypeNet:
-    """Build the Brevitas network described by ``genotype`` (randomly initialized)."""
+    """Build the Brevitas network described by ``genotype`` (randomly initialized).
+
+    The activation scales are not initialized yet: run :func:`finn.nas.calibrate.calibrate`
+    (or train) before exporting or evaluating the network.
+    """
     return GenotypeNet(genotype)
+
+
+def is_scale_parameter(name: str) -> bool:
+    """Return whether the parameter called ``name`` is a learned quantizer scale."""
+    return "scaling_impl" in name
+
+
+def weight_parameters(model: nn.Module) -> list[nn.Parameter]:
+    """Return the parameters of ``model`` that are not quantizer scales."""
+    return [p for name, p in model.named_parameters() if not is_scale_parameter(name)]

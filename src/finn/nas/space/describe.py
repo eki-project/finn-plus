@@ -15,7 +15,7 @@ def _label(node: Node) -> str:
     """Return the one-line label of a node: kind plus compact hyperparameters."""
     kind = node["kind"]
     if kind == "branching":
-        return f"branching {node['agg']}"
+        return f"branching {node['agg']} j{node['join_bits']}"
     if kind == "conv":
         channels = "depthwise" if node["depthwise"] else f"c{node['out_channels']}"
         return (

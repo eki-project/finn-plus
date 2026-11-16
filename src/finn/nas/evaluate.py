@@ -1,9 +1,10 @@
 """Evaluate genotypes of the search space with the oracle (and proxies) in worker processes.
 
 One evaluation builds the Brevitas module, gives its batch norms trained-looking parameters,
-exports it, runs the oracle pipeline in the worker itself and optionally scores the network
-with the zero-cost proxies. Workers are spawned once and reused, which amortizes the several
-seconds it takes to import the compiler.
+calibrates the activation quantizer scales with a few forward passes (see
+:mod:`finn.nas.calibrate`), exports it, runs the oracle pipeline in the worker itself and
+optionally scores the network with the zero-cost proxies. Workers are spawned once and reused,
+which amortizes the several seconds it takes to import the compiler.
 """
 
 from __future__ import annotations
@@ -86,6 +87,10 @@ class EvaluatorConfig:
     proxy_measures: list[str] | None = None
     compute_proxies: bool = True
     randomize_batchnorm: bool = True
+    #: Forward passes in train mode that initialize the activation scales before export
+    #: (0 disables calibration: every activation then exports the degenerate initial scale).
+    calibration_steps: int = 20
+    calibration_batch_size: int = 128
     #: Hard limit per candidate, enforced inside the worker.
     timeout_s: float = 300.0
 
@@ -96,6 +101,8 @@ class EvaluatorConfig:
             "proxy_measures": self.proxy_measures,
             "compute_proxies": self.compute_proxies,
             "randomize_batchnorm": self.randomize_batchnorm,
+            "calibration_steps": self.calibration_steps,
+            "calibration_batch_size": self.calibration_batch_size,
             "timeout_s": self.timeout_s,
         }
 
@@ -122,8 +129,14 @@ def evaluate_genotype(
     work_dir: Path,
     seed: int = 0,
     proxy_batch: tuple[torch.Tensor, torch.Tensor] | None = None,
+    calibration_inputs: torch.Tensor | None = None,
 ) -> CandidateEvaluation:
-    """Evaluate one genotype in the current process (what a worker runs per task)."""
+    """Evaluate one genotype in the current process (what a worker runs per task).
+
+    ``calibration_inputs`` are normalized network inputs for the calibration passes; without
+    them (and without a proxy batch to fall back on) uniform random inputs are used.
+    """
+    from finn.nas.calibrate import calibrate, synthetic_inputs
     from finn.nas.export import export_candidate
     from finn.nas.hashing import hash_candidate
     from finn.nas.pipeline import run_pipeline
@@ -151,6 +164,14 @@ def evaluate_genotype(
         model = to_module(genotype)
         if config.randomize_batchnorm:
             randomize_batchnorm(model, seed)
+        inputs = calibration_inputs
+        if inputs is None and proxy_batch is not None:
+            inputs = proxy_batch[0]
+        if inputs is None:
+            inputs = synthetic_inputs(
+                tuple(genotype["input_shape"]), config.calibration_batch_size, seed
+            )
+        calibrate(model, inputs, config.calibration_steps, config.calibration_batch_size)
         input_shape = (1, *genotype["input_shape"])
         try:
             onnx_path = export_candidate(model, input_shape, cand_dir / "model.onnx")
@@ -197,11 +218,16 @@ def evaluate_genotype(
 _WORKER_STATE: dict[str, Any] = {}
 
 
-def _worker_init(build_dir: str, proxy_batch: tuple[torch.Tensor, torch.Tensor] | None) -> None:
-    """Prepare a worker process: own FINN build directory, proxy batch kept in memory."""
+def _worker_init(
+    build_dir: str,
+    proxy_batch: tuple[torch.Tensor, torch.Tensor] | None,
+    calibration_inputs: torch.Tensor | None,
+) -> None:
+    """Prepare a worker process: own FINN build directory, data batches kept in memory."""
     os.environ["FINN_BUILD_DIR"] = build_dir
     torch.set_num_threads(1)
     _WORKER_STATE["proxy_batch"] = proxy_batch
+    _WORKER_STATE["calibration_inputs"] = calibration_inputs
 
 
 def _worker_task(
@@ -210,7 +236,12 @@ def _worker_task(
     """Task function run in a worker; returns a JSON-serializable evaluation."""
     config = EvaluatorConfig.from_dict(config_dict)
     evaluation = evaluate_genotype(
-        genotype, config, Path(work_dir), seed, _WORKER_STATE.get("proxy_batch")
+        genotype,
+        config,
+        Path(work_dir),
+        seed,
+        _WORKER_STATE.get("proxy_batch"),
+        _WORKER_STATE.get("calibration_inputs"),
     )
     return evaluation.to_dict()
 
@@ -229,8 +260,13 @@ class GenotypeEvaluator:
         n_workers: int = 1,
         proxy_batch: tuple[torch.Tensor, torch.Tensor] | None = None,
         max_tasks_per_worker: int = 50,
+        calibration_inputs: torch.Tensor | None = None,
     ) -> None:
-        """Create the evaluator; the pool starts on first use."""
+        """Create the evaluator; the pool starts on first use.
+
+        ``calibration_inputs`` default to the inputs of ``proxy_batch``; without either, the
+        candidates are calibrated on uniform random inputs.
+        """
         self.config = config
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(parents=True, exist_ok=True)
@@ -238,6 +274,9 @@ class GenotypeEvaluator:
         self.proxy_batch = None
         if proxy_batch is not None:
             self.proxy_batch = (proxy_batch[0].detach().cpu(), proxy_batch[1].detach().cpu())
+        self.calibration_inputs = None
+        if calibration_inputs is not None:
+            self.calibration_inputs = calibration_inputs.detach().cpu()
         self.max_tasks_per_worker = max_tasks_per_worker
         self._pool: ProcessPoolExecutor | None = None
 
@@ -248,7 +287,11 @@ class GenotypeEvaluator:
                 max_workers=self.n_workers,
                 mp_context=get_context("spawn"),
                 initializer=_worker_init,
-                initargs=(str(self.work_dir / "finn_tmp"), self.proxy_batch),
+                initargs=(
+                    str(self.work_dir / "finn_tmp"),
+                    self.proxy_batch,
+                    self.calibration_inputs,
+                ),
                 max_tasks_per_child=self.max_tasks_per_worker,
             )
         return self
@@ -272,7 +315,9 @@ class GenotypeEvaluator:
             seeds = list(range(len(genotypes)))
         if self._pool is None:
             return [
-                evaluate_genotype(g, self.config, self.work_dir, s, self.proxy_batch)
+                evaluate_genotype(
+                    g, self.config, self.work_dir, s, self.proxy_batch, self.calibration_inputs
+                )
                 for g, s in zip(genotypes, seeds, strict=True)
             ]
         config_dict = self.config.to_dict()

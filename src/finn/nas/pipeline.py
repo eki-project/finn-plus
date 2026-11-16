@@ -55,6 +55,25 @@ FRONTEND_STEPS = list(
     ]
 )
 
+#: Build step run in place of ``step_streamline`` when ``OracleConfig.streamline == "plus"``.
+STREAMLINE_PLUS_STEP = "finn.nas.streamline.step_streamline_plus"
+
+
+def frontend_steps(oc: OracleConfig) -> list[tuple[str, str]]:
+    """Return ``(stage name, build step)`` pairs of the pre-folding flow for ``oc``.
+
+    The stage name is what results and the failure classifier see; the plus streamlining
+    keeps the name ``step_streamline`` because it plays the same role.
+    """
+    return [
+        (
+            name,
+            STREAMLINE_PLUS_STEP if name == "step_streamline" and oc.streamline == "plus" else name,
+        )
+        for name in FRONTEND_STEPS
+    ]
+
+
 #: Node attributes captured as the "folding" of a candidate (mirrors the build steps).
 FOLDING_ATTRS = [
     "PE",
@@ -94,8 +113,13 @@ def make_build_config(oc: OracleConfig, cand_dir: Path) -> DataflowBuildConfig:
         minimize_bit_width=oc.minimize_bit_width,
         standalone_thresholds=oc.standalone_thresholds,
         max_multithreshold_bit_width=oc.max_multithreshold_bit_width,
-        steps=list(FRONTEND_STEPS),
+        steps=[step for _, step in frontend_steps(oc)],
     )
+    if "steps" in oc.dataflow_cfg_overrides:
+        raise FINNUserError(
+            "The oracle runs its own step list; set OracleConfig.streamline instead of "
+            "overriding 'steps'."
+        )
     for key, value in oc.dataflow_cfg_overrides.items():
         if not hasattr(cfg, key):
             raise FINNUserError(f"Unknown DataflowBuildConfig attribute {key!r} in overrides.")
@@ -323,8 +347,9 @@ def _run_stages(
         return ("config", exc, None, None, None, None, None)
 
     model = ModelWrapper(str(onnx_path))
-    steps = resolve_build_steps(cfg, list_as_input=list(FRONTEND_STEPS))
-    for name, step in zip(FRONTEND_STEPS, steps, strict=True):
+    stages = frontend_steps(oc)
+    steps = resolve_build_steps(cfg, list_as_input=[step for _, step in stages])
+    for (name, _), step in zip(stages, steps, strict=True):
         notify(name)
         t0 = time.perf_counter()
         mark = logs.mark()

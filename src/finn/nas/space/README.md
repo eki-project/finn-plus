@@ -89,8 +89,8 @@ Plain JSON data; no derived information (shapes, input channels, parameter count
   (task, budgets, every value in its choice list). Shapes are `(C, H, W)` in image mode and
   `(F,)` in vector mode.
 - `count_params(g)` counts conv/linear weights (no biases), the scale and shift of batch
-  normalization and the head's weights; quantizers have constant scales and contribute
-  nothing. It equals `sum(p.numel() for p in to_module(g).parameters())`.
+  normalization and the head's weights, not the learned quantizer scales (one scalar each).
+  It equals `sum(p.numel() for p in build.weight_parameters(to_module(g)))`.
 - `describe(g)` renders one indented line per node with its output shape, for logs.
 - Head kind after a body that ends in vector mode is a neutral gene (two genotypes that only
   differ in it build the same network but have different hashes).
@@ -119,42 +119,58 @@ never modified.
 ## Module construction (`build.py`)
 
 `to_module(g)` returns a `GenotypeNet` mapping an `(N, C, H, W)` float batch to
-`(N, num_classes)` logits. Quantizers follow the BNN-PYNQ reference models (`CommonWeightQuant`
-/ `CommonActQuant`), which FINN is known to export and streamline:
+`(N, num_classes)` logits. Multi-bit layers use Brevitas' default quantizers, so a candidate
+is quantized like a hand-written Brevitas model; one bit is bipolar as in BNN-PYNQ:
 
-- Weights: constant scale 1 (weights in [-1, 1]), narrow-range integers, binary (bipolar) at
-  1 bit. Weights are initialized uniformly in [-1, 1] as BNN-PYNQ does, because the default
-  fan-in scaled initialization would round to zero at low bit widths.
+- Weights: `Int8WeightPerTensorFloat` at the genotype's bit width (narrow-range integers, a
+  per-tensor scale from the weight statistics, recomputed in every forward pass); binary
+  (bipolar, constant scale 1) at 1 bit. PyTorch's default initialization.
 - Input quantizer: signed fixed point in [-1, 1) with scale `2**-(bits-1)` (Q1.7 for 8 bits);
   inputs are expected normalized to that range. 1 bit: sign.
-- Activations: 1 bit is a bipolar sign; otherwise an unsigned quantized ReLU saturating at
-  `2**bits - 1`, i.e. **the activations are the integers 0 .. 2**bits-1 and the scale is
-  exactly 1**. This generalizes BNN-PYNQ's 2-bit activations (-1, 0, 1). It matters for
-  branching: FINN's default streamlining cannot move a scale factor across a fork or a join,
-  so with any other range no multi-bit activation could feed a residual block. A preceding
-  batch normalization adapts the range during training.
-- Constant scales also mean that the exported graph structure, and thus FINN's verdict,
-  depends only on the genotype and not on learned scale factors (a search would otherwise be
-  told "feasible" at initialization and "infeasible" after training).
+- Activations: 1 bit is a bipolar sign; otherwise Brevitas' default unsigned quantized ReLU
+  (`Uint8ActPerTensorFloat` at the genotype's bit width): a per-tensor scale that is
+  initialized from the activation statistics of the first forward passes in train mode and
+  learned afterwards. **A freshly built network has no activation scales yet**: every
+  activation exports the degenerate initial scale `1 / int_max` until the network has run in
+  train mode. `finn.nas.calibrate.calibrate` does that with a few forward passes under
+  `no_grad` (the evaluator runs it before export; one real batch is already within a few
+  percent of the converged statistics).
+- Joins: the operands of an add or concat have different learned scales, which FINN cannot
+  reconcile in hardware. A `branching` node therefore owns one signed quantizer of
+  `join_bits` (a gene of the node) that it applies to every operand before the merge, so all
+  operands share one scale; this is the pattern Brevitas' `QuantEltwiseAdd` traces to (the
+  builder does not use that layer: `QuantCat`, its concat counterpart, is broken in Brevitas
+  0.13, and one implementation covers both aggregations). Re-quantizing is lossless only when
+  the join grid is at least one bit wider than the widest operand; whether a narrower join is
+  worth its cost is for the search to find out. In hardware a join costs one per-tensor
+  thresholding layer per operand.
+- With the shared join quantizer the exported graph structure, and thus FINN's verdict and
+  its LUT estimate, does not depend on the weights or on the learned scale values (verified
+  across weight seeds and before/after training); the structural hash ignores the scale
+  values. Without it the verdict at a join would flip with the weights.
 - Average pooling: hardware cannot divide by the window size, so FINN maps only Brevitas'
   truncating `TruncAvgPool2d` (sum, drop low-order bits). The builder tracks statically which
-  tensors are known to be integer (output of the input quantizer or a multi-bit activation,
-  through identity, max pooling and truncating average pooling) and builds `avgpool`
-  terminals and the `gap` head as `TruncAvgPool` for those (`IntFormat` attaches the format
-  locally, so no `QuantTensor` objects flow through the network). Elsewhere they are plain
-  `nn.AvgPool2d` / `nn.AdaptiveAvgPool2d`, which FINN rejects. Pooling a 1x1 map is built as
-  a flatten.
-- `branching` is an `nn.Module` summing or concatenating its branches; `sequential` is
-  `nn.Sequential`; the module tree mirrors the genotype tree (useful for hooks).
+  tensors are on an integer grid (output of the input quantizer, a multi-bit activation or a
+  join, through identity, max pooling and truncating average pooling) and builds `avgpool`
+  terminals and the `gap` head as `TruncAvgPool` for those (`IntFormat` names the quantizer
+  that owns the grid's scale, so no `QuantTensor` objects flow through the network).
+  Elsewhere they are plain `nn.AvgPool2d` / `nn.AdaptiveAvgPool2d`, which FINN rejects.
+  Pooling a 1x1 map is built as a flatten.
+- `branching` is an `nn.Module` quantizing and then summing or concatenating its branches;
+  `sequential` is `nn.Sequential`; the module tree mirrors the genotype tree (useful for
+  hooks).
+- `count_params(g)` does not count the learned quantizer scales (one scalar per multi-bit
+  activation and join); `build.weight_parameters(net)` returns the parameters it does count.
 
 ## Seeds (`seeds.py`)
 
-Hand-written genotypes inside the default space, all four FINN-compatible with the oracle:
-`cnv_like` (scaled-down BNN-PYNQ CNV, w2a2), `mlp_like` (flatten + three FC blocks, w2a2),
-`residual` (stem, identity skip + two conv blocks, add, max pool, flatten head, w4a4) and
-`depthwise_separable` (stem, two strided depthwise + pointwise blocks, gap head, w4a4).
-`tests/nas/test_space_oracle.py` documents genotype-level neighbours that FINN rejects
-(a skip forking the input quantizer's output; global average pooling of a float tensor).
+Hand-written genotypes inside the default space, all four FINN-compatible with the oracle
+(with its default `StreamlinePlus` streamlining): `cnv_like` (scaled-down BNN-PYNQ CNV,
+w2a2), `mlp_like` (flatten + three FC blocks, w2a2), `residual` (stem, identity skip + two
+conv blocks, 5-bit join, add, max pool, flatten head, w4a4) and `depthwise_separable` (stem,
+two strided depthwise + pointwise blocks, gap head, w4a4). `tests/nas/test_space_oracle.py`
+also checks a concat join and a skip from the input quantizer, and documents a neighbour
+that FINN rejects (global average pooling of a float tensor).
 
 ## Defaults and budgets
 

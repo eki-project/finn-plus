@@ -5,7 +5,7 @@ Grammar (weights and choice lists come from :class:`SpaceConfig`)::
     body     -> sequential
     module   -> sequential | branching | terminal
     sequential -> module module [module [module]]
-    branching  -> (module, module [, module]; add | concat)
+    branching  -> (module, module [, module]; add | concat; join_bits)
     terminal -> conv | linear | quant_act | relu_float | batchnorm | maxpool | avgpool
               | flatten | identity
 
@@ -224,7 +224,12 @@ class Sampler:
             branches.append(branch)
             size, params = size + branch.size, params + branch.params
         out_shape = aggregate(agg, [b.out_shape for b in branches])
-        node = {"kind": "branching", "agg": agg, "children": [b.node for b in branches]}
+        node = {
+            "kind": "branching",
+            "agg": agg,
+            "join_bits": rng.choice(self.config.join_bits),
+            "children": [b.node for b in branches],
+        }
         return Sampled(node, out_shape, size, params)
 
     def _terminal(

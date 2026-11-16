@@ -102,7 +102,19 @@ False only when host-side pre/post-processing is intended.
 Feasibility is weakly weight-dependent: a freshly initialized BatchNorm is a uniform scale
 that streamlining moves like a scalar, so `conv -> BN -> conv` passes with untrained
 statistics and fails with per-channel ones. Candidates should be evaluated with BatchNorm
-statistics that look trained (see `randomize_batchnorm` in `tests/nas/broken_models.py`).
+statistics that look trained (see `randomize_batchnorm` in `finn.nas.evaluate`). Likewise,
+Brevitas' statistics-initialized activation quantizers export a degenerate scale until the
+network has run in train mode: `finn.nas.calibrate.calibrate` runs a few forward passes
+without gradients, which `finn.nas.evaluate` does before every export.
+
+### Streamlining
+
+`OracleConfig.streamline` selects the streamlining of the frontend. The default `"plus"`
+runs FINN+'s exhaustive `StreamlinePlus` (`finn.nas.streamline.step_streamline_plus`, the
+builder's `step_streamline` with `StreamlinePlus` in place of `Streamline`), which also moves
+scale factors past forks and joins and makes concat joins mappable; `"default"` is the
+builder's own step. The stage is reported as `step_streamline` either way. Networks with
+learned per-tensor scales at a fork or join are only mappable with `"plus"`.
 
 ### Strict code generation
 

@@ -1335,6 +1335,14 @@ def oracle_options(f: Callable) -> Callable[..., Any]:
             show_default=True,
             help="Keep the per-model working directory (intermediate models).",
         ),
+        click.option(
+            "--streamline",
+            type=click.Choice(["plus", "default"]),
+            default="plus",
+            show_default=True,
+            help="Streamlining of the frontend: FINN+'s exhaustive StreamlinePlus or the "
+            "builder's default step_streamline.",
+        ),
     ]
     for decorator in reversed(decorators):
         f = decorator(f)
@@ -1352,6 +1360,7 @@ def make_oracle_config(
     timeout: float | None,
     cache_path: Path | None,
     keep_artifacts: str,
+    streamline: str,
     work_dir: Path,
 ) -> Any:
     """Build an ``OracleConfig`` from the ``oracle_options`` values (late import of finn.nas)."""
@@ -1379,6 +1388,7 @@ def make_oracle_config(
         timeout_s=timeout if timeout is not None else 0.0,
         work_dir=str(work_dir),
         keep_artifacts=keep_artifacts,  # type: ignore[arg-type]
+        streamline=streamline,  # type: ignore[arg-type]
         cache_path=str(cache_path.expanduser().absolute()) if cache_path is not None else None,
     )
 
@@ -1424,6 +1434,7 @@ def nas_eval(
     timeout: float | None,
     cache_path: Path | None,
     keep_artifacts: str,
+    streamline: str,
     model: Path,
 ) -> None:
     """Evaluate a model with the NAS oracle."""
@@ -1446,6 +1457,7 @@ def nas_eval(
         timeout,
         cache_path,
         keep_artifacts,
+        streamline,
         Path(),  # replaced below once the settings are known
     )
     settings = FINNSettings.init(
@@ -1512,6 +1524,14 @@ def nas_eval(
     show_default=True,
     help="Time limit per candidate inside a worker, in seconds.",
 )
+@click.option(
+    "--calibration-steps",
+    type=int,
+    default=20,
+    show_default=True,
+    help="Forward passes that initialize the activation quantizer scales before export "
+    "(on the proxy minibatch, or random inputs without --data-root); 0 disables calibration.",
+)
 @click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
 def nas_sample(
     finn_deps: Path | None,
@@ -1530,6 +1550,7 @@ def nas_sample(
     timeout: float | None,
     cache_path: Path | None,
     keep_artifacts: str,
+    streamline: str,
     count: int,
     seed: int,
     space_config: Path | None,
@@ -1538,6 +1559,7 @@ def nas_sample(
     data_root: Path | None,
     proxy_batch: int,
     eval_timeout: float,
+    calibration_steps: int,
     output_dir: Path,
 ) -> None:
     """Random-sampling experiment over the NAS search space."""
@@ -1562,6 +1584,7 @@ def nas_sample(
         timeout,
         cache_path,
         keep_artifacts,
+        streamline,
         output_dir / "work",
     )
     settings = FINNSettings.init(
@@ -1594,6 +1617,7 @@ def nas_sample(
         oracle=oracle,
         compute_proxies=proxies,
         timeout_s=eval_timeout,
+        calibration_steps=calibration_steps,
     )
     summary = run_sampling(
         space,
@@ -1694,6 +1718,14 @@ def nas_sample(
     show_default=True,
     help="Time limit per candidate inside a worker, in seconds.",
 )
+@click.option(
+    "--calibration-steps",
+    type=int,
+    default=20,
+    show_default=True,
+    help="Forward passes that initialize the activation quantizer scales before export "
+    "(on the proxy minibatch, or random inputs without --data-root); 0 disables calibration.",
+)
 @click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
 def nas_search(
     finn_deps: Path | None,
@@ -1712,6 +1744,7 @@ def nas_search(
     timeout: float | None,
     cache_path: Path | None,
     keep_artifacts: str,
+    streamline: str,
     budget: int,
     population: int,
     algorithm: str,
@@ -1728,6 +1761,7 @@ def nas_search(
     data_root: Path | None,
     proxy_batch: int,
     eval_timeout: float,
+    calibration_steps: int,
     output_dir: Path,
 ) -> None:
     """Multi-objective search experiment over the NAS search space."""
@@ -1755,6 +1789,7 @@ def nas_search(
         timeout,
         cache_path,
         keep_artifacts,
+        streamline,
         output_dir / "work",
     )
     settings = FINNSettings.init(
@@ -1803,6 +1838,7 @@ def nas_search(
         oracle=oracle,
         compute_proxies=proxies,
         timeout_s=eval_timeout,
+        calibration_steps=calibration_steps,
     )
     summary = run_search(
         space,

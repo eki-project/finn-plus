@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from finn.nas.data import augment, to_input
+from finn.nas.space.build import is_scale_parameter
 
 if TYPE_CHECKING:
     from finn.nas.data import ImageDataset
@@ -26,16 +27,17 @@ class TrainConfig:
     epochs: int = 10
     batch_size: int = 256
     #: Peak learning rate of the one-cycle schedule (linear warm-up, cosine decay to zero).
-    lr: float = 2e-2
+    lr: float = 2e-3
     warmup_fraction: float = 0.15
+    #: Applied to weights and batch-norm parameters, not to the learned quantizer scales.
     weight_decay: float = 1e-4
     label_smoothing: float = 0.0
     #: Scale the logits by a learned scalar before the loss, initialized so that the logits
-    #: of the first batch have unit standard deviation. The candidate networks have constant
-    #: quantizer scales and no output normalization, so their raw logits are arbitrarily
-    #: large and would saturate the softmax; the scalar is not part of the network and does
-    #: not change its predictions (argmax).
-    logit_scale: bool = True
+    #: of the first batch have unit standard deviation. Networks with constant quantizer
+    #: scales and no output normalization need it because their raw logits are arbitrarily
+    #: large and saturate the softmax; with learned scales (the current builder) it is not
+    #: needed. The scalar is not part of the network and does not change its predictions.
+    logit_scale: bool = False
     augment: bool = True
     seed: int = 0
     #: Stop early once this wall-clock budget is exceeded (checked after each epoch).
@@ -131,7 +133,11 @@ def train(
         model.to(device)
         torch.manual_seed(cfg.seed)
         generator = torch.Generator(device=dataset.train_x.device).manual_seed(cfg.seed)
-        param_groups: list[dict[str, Any]] = [{"params": list(model.parameters())}]
+        weights = [p for n, p in model.named_parameters() if not is_scale_parameter(n)]
+        scales = [p for n, p in model.named_parameters() if is_scale_parameter(n)]
+        param_groups: list[dict[str, Any]] = [{"params": weights}]
+        if scales:
+            param_groups.append({"params": scales, "weight_decay": 0.0})
         scale = None
         if cfg.logit_scale:
             scale = _initial_logit_scale(model, dataset, cfg.batch_size, device)

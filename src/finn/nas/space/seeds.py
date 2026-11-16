@@ -64,8 +64,9 @@ def mlp_like(weight_bits: int = 2, act_bits: int = 2) -> Genotype:
 def residual(weight_bits: int = 4, act_bits: int = 4) -> Genotype:
     """Stem, one residual block (identity skip + two conv blocks, add), pooling, flatten head.
 
-    The fork sits directly behind a quantized activation and the residual branch ends in one,
-    so the add sees two integer tensors.
+    The fork sits directly behind a quantized activation and the residual branch ends in one;
+    the join re-quantizes both operands with one bit more than the activations, so that the
+    skip operand is not clipped.
     """
     body = sequential(
         _block(conv(16, 3, weight_bits=weight_bits), act_bits),
@@ -76,6 +77,7 @@ def residual(weight_bits: int = 4, act_bits: int = 4) -> Genotype:
                 _block(conv(16, 3, weight_bits=weight_bits), act_bits),
             ),
             agg="add",
+            join_bits=act_bits + 1,
         ),
         maxpool(2, 2),
     )

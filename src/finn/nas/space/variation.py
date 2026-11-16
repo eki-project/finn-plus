@@ -16,7 +16,6 @@ from finn.nas.space.genotype import (
     Path,
     genotype_hash,
     get_node,
-    is_inner,
     iter_nodes,
     replace_node,
 )
@@ -60,7 +59,8 @@ def _resample_subtree(
 
 
 def _mutable_genes(genotype: Genotype, config: SpaceConfig) -> dict[Path | None, dict[str, list]]:
-    """Return, per terminal (and for the wrapper), the genes that have an alternative value."""
+    """Return, per terminal or branching node (and for the wrapper), the genes that have an
+    alternative value."""
     current = {
         "input_bits": genotype["input_bits"],
         "head.kind": genotype["head"]["kind"],
@@ -73,7 +73,7 @@ def _mutable_genes(genotype: Genotype, config: SpaceConfig) -> dict[Path | None,
         }
     }
     for path, node in iter_nodes(genotype["body"]):
-        if is_inner(node):
+        if node["kind"] == "sequential":
             continue
         genes[path] = {
             name: [v for v in values if v != node[name]]
