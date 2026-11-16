@@ -1,0 +1,58 @@
+{
+    "status": "ok",
+    "hls_estimate": {
+        "resources": {
+            "LUT": 94119.0,
+            "FF": 33413.0,
+            "DSP": 90.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 723.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 35984,
+            "FF": 41296,
+            "SRL": 78,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 1,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "power": {
+            "avg_0V85_power": 2116.2675875912387,
+            "avg_3V3_power": 936.8237317518244,
+            "avg_total_power": 3053.091319343066,
+            "min_0V85_power": 2116.2675875912387,
+            "min_3V3_power": 936.8237317518244,
+            "min_total_power": 3053.091319343066,
+            "max_0V85_power": 2116.2675875912387,
+            "max_3V3_power": 936.8237317518244,
+            "max_total_power": 3053.091319343066
+        }
+    },
+    "time": {
+        "export": 0,
+        "step_qonnx_to_finn": 0,
+        "step_tidy_up": 7,
+        "step_streamline": 12,
+        "step_convert_to_hw": 2,
+        "step_minimize_bit_width_initial": 5,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_set_folding": 0,
+        "step_minimize_bit_width": 5,
+        "step_generate_estimate_reports": 0,
+        "step_generate_hardware": 91,
+        "step_create_stitched_ip": 47,
+        "step_measure_rtlsim_performance": 0,
+        "step_out_of_context_synthesis": 0,
+        "step_synthesize_bitfile": 1630,
+        "step_make_driver": 1,
+        "step_deployment_package": 0,
+        "total_build_time": 1800
+    }
+}
