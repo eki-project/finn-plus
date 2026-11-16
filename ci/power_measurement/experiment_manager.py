@@ -97,6 +97,9 @@ class Experiment:
         self._bitstream_path = ex_config.get("bitstream_path", None)
         self._report_path = ex_config.get("report_path", None)
         self._record_warmup = ex_config.get("PAF").get("record_warmup", False)
+        # Sampling interval of the power recorder in seconds (default 1 s): short experiments
+        # keep their number of samples by sampling faster
+        self._interval = float(ex_config.get("PAF").get("interval", 1.0))
 
         self._driver_class = ex_config.get("driver_type")
         # Inspect Class functions to get the args
@@ -152,7 +155,12 @@ class Experiment:
         experiment_path = os.path.join(self._report_path, self._name.replace(" ", "_"))
 
         self._recorder = Recorder(
-            self._rails, self._sensors, self._power_supply_ip, omit_current=True, omit_voltage=True
+            self._rails,
+            self._sensors,
+            self._power_supply_ip,
+            interval=self._interval,
+            omit_current=True,
+            omit_voltage=True,
         )
         print(f"[EM] STARTING EXPERIMENT: {self._name}")
 

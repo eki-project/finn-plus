@@ -43,8 +43,10 @@ MAX_STREAM_WIDTH = min(1024, MAX_ALLOWED_AP_INT_W)
 # seconds. A legal but pathological sample (e.g. an MVAU_hls with 128 PEs and 255 thresholds
 # each, 16+ h in HLS) otherwise blocks its whole Slurm array task until the task's wall-clock
 # limit, taking the task's remaining runs with it. Overridable per run via the config
-# parameter ``tool_timeout_s`` (0 disables). The usual builds take minutes per tool call.
-TOOL_TIMEOUT_S = 2 * 3600
+# parameter ``tool_timeout_s`` (0 disables). The usual builds take minutes per tool call;
+# successful runs finish within 45 min at the 99th percentile, so the hour only ever pays for
+# runs that fail anyway.
+TOOL_TIMEOUT_S = 3600
 
 MICROBENCH_BUILD_STEPS = [
     "step_create_dataflow_partition",

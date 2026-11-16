@@ -107,12 +107,22 @@ Versal-only backends or two-stream elementwise operations.
 - Frames are limited to `MAX_FRAME_CYCLES` (2^22) expected cycles; resources and power do not
   depend on the loop bound.
 - Every external tool call of a microbenchmark build (Vitis HLS, Vivado) is limited to
-  `TOOL_TIMEOUT_S` (2 h; config parameter `tool_timeout_s`, 0 disables). The usual call takes
-  minutes, but a legal sample can make HLS run for a day (an MVAU_hls with 128 PEs and 255
-  thresholds each did), which would otherwise block its whole Slurm array task and the runs
-  behind it. A run that hits the limit fails like any other build failure and the batch
-  continues. The mechanism is `FINN_TOOL_TIMEOUT_S`, read by `launch_process_helper`, so it
-  can also be set by hand for other builds.
+  `TOOL_TIMEOUT_S` (1 h; config parameter `tool_timeout_s`, 0 disables). The usual call takes
+  minutes and successful runs finish within 45 min at the 99th percentile, but a legal sample
+  can make HLS run for a day (an MVAU_hls with 128 PEs and 255 thresholds each did), which
+  would otherwise block its whole Slurm array task and the runs behind it. A run that hits
+  the limit fails like any other build failure and the batch continues. The mechanism is
+  `FINN_TOOL_TIMEOUT_S`, read by `launch_process_helper`, so it can also be set by hand for
+  other builds.
+- Microbenchmark builds request a small Slurm allocation per array task (pipeline variables
+  `MICROBENCH_CPU_CORES`, `MICROBENCH_MEM`, `MICROBENCH_FINN_WORKERS`, defaults 16 cores,
+  64 GB, 4 workers; the regression models keep `BENCH_CPU_CORES`/`MEM_BENCH`): a
+  single-operator build uses one HLS thread and at most eight Vivado threads, so the small
+  request packs many more tasks on a node and is scheduled sooner. The runs of a task are
+  built one after another, so size `PARALLEL_JOBS` for about eight runs per task.
+- The board measures a microbenchmark with a 5 s idle and a 5 s load phase sampled at 5 Hz
+  (`ci/experiments/instrument_only_default.json`); interval and latency come from the
+  instrumentation counters and do not depend on the duration, only the power averages do.
 - Microbenchmarks run no RTL simulation and no Vivado power estimation (both simulated whole
   frames for hours per build): the build steps are codegen, IP generation, stitched IP,
   out-of-context synthesis, bitfile, driver and deployment package.

@@ -43,6 +43,15 @@ FINN Build:
   rules:
     - if: $COLLECT_PIPELINE_ID != ""
       when: never
+    # Microbenchmark builds are single-operator designs (one HLS thread, at most eight Vivado
+    # threads, a few GB of memory) built one after another per array task: the small request
+    # (MICROBENCH_* pipeline variables) packs many more tasks on a node and backfills sooner.
+    # The regression models keep the full request (BENCH_CPU_CORES, MEM_BENCH, ...).
+    - if: $BENCH_CFG =~ /^microbenchmark/ || $MANUAL_CFG_PATH =~ /microbenchmark/
+      variables:
+        SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $MICROBENCH_CPU_CORES --mem $MICROBENCH_MEM --array 0-$( expr $PARALLEL_JOBS - 1 ) --open-mode=append"
+        NUM_DEFAULT_WORKERS: "$MICROBENCH_FINN_WORKERS"
+        BUILD_FINN_WORKERS: "$MICROBENCH_FINN_WORKERS"
     - when: on_success
   needs:
     - job: Build
@@ -50,6 +59,7 @@ FINN Build:
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 ) --open-mode=append"
     NUM_DEFAULT_WORKERS: "$BENCH_FINN_WORKERS"
+    BUILD_FINN_WORKERS: "$BENCH_FINN_WORKERS"
   extends: .setup_full_2024_2
   script:
     # Launch additional monitoring
@@ -66,7 +76,7 @@ FINN Build:
       # novelty check of randomly sampled configurations), paths as seen from this runner
       export FINN_BENCH_EXCHANGE_DIR=$OTUS_EXCHANGE_DIR
       export FINN_MICROBENCHMARK_DATABASE=$OTUS_BENCHMARK_DIR_STORE
-      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config $BENCH_CFG
+      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BUILD_FINN_WORKERS --bench_config $BENCH_CFG
   cache:
     key:
       files:

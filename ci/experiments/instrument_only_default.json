@@ -8,7 +8,8 @@
           "0V85",
           "1V2_PL"
         ],
-        "sensors": []
+        "sensors": [],
+        "interval": 0.2
       }
     },
     "experiments": [
@@ -19,7 +20,7 @@
         "functions": [
           {
             "function_name": "idle",
-            "kwargs" : {"time" : 10}
+            "kwargs" : {"time" : 5}
           }
         ]
       },
@@ -30,7 +31,7 @@
         "functions": [
           {
             "function_name": "experiment_instrumentation",
-            "kwargs" : {"runtime": 20}
+            "kwargs" : {"runtime": 5}
           }
         ]
       }

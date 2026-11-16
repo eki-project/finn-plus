@@ -31,8 +31,17 @@ variables:
   MEM_BENCH:
     description: "Select memory for each regression/benchmark run"
     value: "256G"
+  MICROBENCH_CPU_CORES:
+    description: "CPU cores per Slurm array task of a microbenchmark build (single-operator designs: one HLS thread, at most eight Vivado threads)"
+    value: "16"
+  MICROBENCH_MEM:
+    description: "Memory per Slurm array task of a microbenchmark build"
+    value: "64G"
+  MICROBENCH_FINN_WORKERS:
+    description: "FINN workers per microbenchmark build (one-node graphs gain nothing from more)"
+    value: "4"
   PARALLEL_JOBS:
-    description: "Number of parallel Slurm array jobs per Benchmark job"
+    description: "Number of parallel Slurm array jobs per Benchmark job. Sampling pipelines build their runs sequentially per task; aim for about 8 runs per task (SAMPLE_COUNT x operators / 8)"
     value: "8"
   SLURM_TIMEOUT:
     description: "Select SLURM timeout"
