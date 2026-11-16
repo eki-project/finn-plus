@@ -626,6 +626,14 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Name of .npy file that will be used as the expected output for verification.
     verify_expected_output_npy: str | Path = "expected_output.npy"
 
+    #: (Only relevant if verify_steps contains stitched_ip_rtlsim)
+    #: Number of frames to verify in a single stitched-IP rtlsim run, so that consecutive
+    #: frames overlap inside the design. All other verification steps, and
+    #: stitched_ip_rtlsim when this is unset, verify one frame at a time.
+    #: A single-frame verification input/output pair is repeated to this many frames.
+    #: This is separate from rtlsim_batch_size, which controls the performance simulation.
+    verify_batch_size: Optional[int] = None
+
     #: (Only relevant if verify_steps is set)
     #: Save full execution context for each of the verify_steps.
     #: By default, only the top-level graph output is saved.

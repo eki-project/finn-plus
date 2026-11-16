@@ -13,7 +13,6 @@
 import errno
 import numpy as np
 import os
-import re
 import weakref
 
 # provided via pybind11
@@ -178,23 +177,22 @@ def compile_sim_obj(
 
 
 def get_simkernel_so() -> Literal["libxv_simulator_kernel.so", "librdi_simulator_kernel.so"]:
-    """Determine the correct XSI simulator kernel .so filename based on the Vivado version."""
+    """Return the file name of the XSI simulation kernel library of the Vivado
+    installation in XILINX_VIVADO. Vivado 2024.2 renamed it from
+    librdi_simulator_kernel.so to libxv_simulator_kernel.so.
+    """
     vivado_path = os.environ.get("XILINX_VIVADO")
-    if vivado_path is None:
-        raise OSError(
+    if not vivado_path:
+        raise FINNUserError(
             "XILINX_VIVADO environment variable is not set. "
             "Did you source the Vitis/Vivado settings script?"
         )
-    # xsi kernel lib name depends on Vivado version (renamed in 2024.2)
-    match = re.search(r"\b(20\d{2})\.(1|2)\b", vivado_path)
-    if match is None:
-        raise ValueError(f"Could not parse Vivado version from XILINX_VIVADO path: {vivado_path}")
-    year, minor = int(match.group(1)), int(match.group(2))
-    if (year, minor) > (2024, 1):
-        simkernel_so = "libxv_simulator_kernel.so"
-    else:
-        simkernel_so = "librdi_simulator_kernel.so"
-    return simkernel_so
+    lib_dir = Path(vivado_path) / "lib" / "lnx64.o"
+    if (lib_dir / "libxv_simulator_kernel.so").is_file():
+        return "libxv_simulator_kernel.so"
+    if (lib_dir / "librdi_simulator_kernel.so").is_file():
+        return "librdi_simulator_kernel.so"
+    raise FINNUserError(f"No XSI simulation kernel library found in {lib_dir}")
 
 
 # The XSI simulator kernel keeps process-global state, and every design library produced

@@ -9,12 +9,13 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 
 ### Added
-- **Sync with upstream `dev` branch** (up to Xilinx#1761): pulls in all upstream `dev` changes since September 2026, see the entries below for the user-facing ones
+- **Sync with upstream `dev` branch** (up to Xilinx#1762): pulls in all upstream `dev` changes since September 2026, see the entries below for the user-facing ones
 - `auto_fifo_strategy: heuristic_analytical`: FIFO depths from per-operator schedule models ("tree models") and a graph-level timing pass, without IP generation, synthesis or simulation, so it also runs in estimate-only builds. This is the analytical half of upstream's token-access-vector FIFO sizing; upstream's rtlsim characterization (`heuristic_rtlsim`, the rtlsim fallback) and `largefifo_rtlsim` are not part of FINN+. Operators without a tree model (e.g. the attention operators, `Squeeze`/`Unsqueeze`, `Reshape`) are treated as transparent and listed in `report/fifo_sizing.json`; MLO models are not supported. The method is described in `docs/finn/fifo_sizing_heuristics.rst` (Xilinx#1185)
 - (Xilinx) `ShellFlowType.VIVADO_VERSAL`: PYNQ shell for Versal boards (VCK190), built by the same `ZynqBuild`; not available together with instrumentation, live FIFO sizing or multi-DNN builds (Xilinx#1717)
 - (Xilinx) `DataflowOutputType.PORTABLE_RTL` with the build step `step_export_portable_rtl`: self-contained RTL export with file lists for simulators and Vivado (Xilinx#1704)
 - (Xilinx) `Requant_rtl` accepts floating-point inputs (RequantF, Versal only) and unsigned inputs (Xilinx#1707, Xilinx#1732)
 - (Xilinx) `fifo_log_verbose` and `fifo_log_flush_cycles` build options for the FIFO debug logs (Xilinx#1706)
+- (Xilinx) `verify_batch_size`: the `stitched_ip_rtlsim` verification step runs all verification frames through the design in one simulation, so consecutive frames overlap; a single-frame input/output pair is repeated to this many frames (Xilinx#1719)
 
 ### Changed
 - (Xilinx) HLS operators exchange data with the simulation through a tensor interface and need finn-hlslib `6ca75af`; the attention operators, `Squeeze`/`Unsqueeze` and `StreamingFIFO_hls` keep the previous interface (`LegacyHLSBackend`) and a second finn-hlslib checkout (`finn-hlslib-legacy`). Run `finn deps update` after pulling (Xilinx#1728)
@@ -30,6 +31,9 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - (Xilinx) The generic RTL data width converter runs at full rate for non-integer width ratios; upstream's `vpc.sv` replaces the FINN+ fix (Xilinx#1722, Xilinx#1731, Xilinx#1749)
 - (Xilinx) `InsertFIFO` takes the shape and datatype of the output a FIFO is attached to, relevant for `StreamingSplit` (Xilinx#1738)
 - (Xilinx) Cycle estimates of the data width converter, `LayerNorm` and `LabelSelect` (Xilinx#1730, Xilinx#1185)
+- (Xilinx) MLO designs could deadlock with several frames in flight: the loop control committed to a new input frame while the frame leaving the loop body waited for its next-iteration index (Xilinx#1721)
+- (Xilinx) `InferPWPolyFLayer` leaves an Erf-GELU alone whose `sqrt(2)` scaling node has other consumers instead of removing that node (Xilinx#1762)
+- (Xilinx) HLS max pooling of floating-point inputs gave a wrong result for windows of only negative values (finn-hlslib `a74d7e0`, Xilinx#1762)
 
 ## 1.6.2 - 13.11.2026
 

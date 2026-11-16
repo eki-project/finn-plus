@@ -13,6 +13,7 @@ Later lowered into ``InnerShuffle`` / ``OuterShuffle`` stages by
 ``transpose_decomposition``.
 """
 
+import math
 import numpy as np
 from onnx import NodeProto, helper
 from operator import itemgetter
@@ -28,6 +29,32 @@ from finn.util.logging import log
 
 if TYPE_CHECKING:
     from onnx import GraphProto
+
+
+def auto_size_simd(i_dim: int, simd: int) -> int | None:
+    """Return the smallest divisor of i_dim that is larger than simd, or None if
+    there is none. Shared by InnerShuffle and OuterShuffle, whose SIMD must divide
+    the innermost axis of their output and input respectively.
+    """
+    if i_dim <= 0:
+        raise ValueError("i_dim must be a positive integer")
+    if simd < 0:
+        raise ValueError("simd must be a non-negative integer")
+
+    candidates = []
+    limit = math.isqrt(i_dim)
+    for a in range(1, limit + 1):
+        if i_dim % a == 0:
+            b = i_dim // a
+            if a > simd:
+                candidates.append(a)
+            if b > simd:
+                candidates.append(b)
+
+    if not candidates:
+        return None
+
+    return min(candidates)
 
 
 @register_custom_op
@@ -199,7 +226,7 @@ class Shuffle(HWCustomOp):
         simd = self.simd
         data_type = self.get_nodeattr("data_type")
 
-        p_list, operation_types = decompose_transpose_with_constraints(perm, transpose_in_shape)
+        p_list, operation_types = decompose_transpose_with_constraints(perm)
 
         if len(p_list) == 0:
             return 0

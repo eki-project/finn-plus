@@ -1,7 +1,7 @@
 git_deps:
     finn-hlslib:
         url: "https://github.com/Xilinx/finn-hlslib.git"
-        commit: "6ca75afb514b84524e66521ec92fe6e114924580"
+        commit: "a74d7e0d71e3ee5f3270c45c75d724449453d9b0"
         pip_install: False
         install_editable: False
     # finn-hlslib as of before Xilinx/finn#1728 (tensor interface). The attention-hlslib and the

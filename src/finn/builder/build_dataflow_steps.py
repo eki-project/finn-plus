@@ -394,6 +394,7 @@ def verify_step(
     step_name: str,
     need_parent: bool,
     rtlsim_pre_hook: Callable[[SimEngine], None] | None = None,
+    batched: bool = False,
 ) -> None:
     """Verify a build step by running simulation and comparing results.
 
@@ -403,6 +404,9 @@ def verify_step(
         step_name: Name of the build step being verified
         need_parent: Whether parent model execution is needed for comparison
         rtlsim_pre_hook: Optional pre-hook function for RTL simulation
+        batched: Run all verification frames through the model in a single execution
+            (stitched-IP rtlsim only) instead of one frame at a time. A single-frame
+            IO pair is repeated to cfg.verify_batch_size frames.
     """
     log.info(f"Running verification for {step_name}")
     verify_out_dir = cfg.get_verification_output_directory()
@@ -420,13 +424,32 @@ def verify_step(
     bsize_out = exp_out_npy_all.shape[0]
     if not (bsize_in == bsize_out):
         raise FINNInternalError("Batch sizes don't match for verification IO pair")
+    if batched and cfg.verify_batch_size is not None:
+        target_batch = int(cfg.verify_batch_size)
+        if target_batch < 1:
+            raise FINNUserError("verify_batch_size must be > 0")
+        if bsize_in not in (1, target_batch):
+            raise FINNUserError(
+                f"Verification IO has batch size {bsize_in}, cannot expand it to "
+                f"verify_batch_size={target_batch}"
+            )
+        if bsize_in == 1 and target_batch > 1:
+            in_npy_all = np.repeat(in_npy_all, target_batch, axis=0)
+            exp_out_npy_all = np.repeat(exp_out_npy_all, target_batch, axis=0)
+            bsize_in = target_batch
     all_res = True
     out_dict: dict[str, np.ndarray] = {}
     parent_model = None
     res_to_str = {True: "SUCCESS", False: "FAIL"}
-    for b in range(bsize_in):
-        in_npy = np.expand_dims(in_npy_all[b], axis=0)
-        exp_out_npy = np.expand_dims(exp_out_npy_all[b], axis=0)
+    if batched:
+        # all frames in one execution, reported as verification input 0
+        chunks = [(in_npy_all, exp_out_npy_all, 0)]
+    else:
+        chunks = [
+            (np.expand_dims(in_npy_all[b], axis=0), np.expand_dims(exp_out_npy_all[b], axis=0), b)
+            for b in range(bsize_in)
+        ]
+    for in_npy, exp_out_npy, b in chunks:
         if need_parent:
             if not (cfg.save_intermediate_models):
                 raise FINNInternalError("Enable save_intermediate_models for verification")
@@ -449,11 +472,31 @@ def verify_step(
                 )
                 log.info("Attempting to force model shape on verification input")
                 in_npy = in_npy.reshape(target_ishape)
-            out_dict = cast(
-                "dict[str, np.ndarray]",
-                execute_parent(parent_model_fn, child_model_fn, in_npy, return_full_ctx=True),
+            parent_result = execute_parent(
+                parent_model_fn,
+                child_model_fn,
+                in_npy,
+                return_full_ctx=True,
+                batch_child=batched,
             )
-            out_npy = out_dict[out_tensor_name]
+            if isinstance(parent_result, list):
+                # batched execution: one parent context per frame
+                frame_contexts = parent_result
+                out_npy = np.concatenate(
+                    [context[out_tensor_name] for context in frame_contexts], axis=0
+                )
+                out_dict = {out_tensor_name: out_npy}
+                if cfg.verify_save_full_context:
+                    parent_input_name = parent_model.get_first_global_in()
+                    out_dict[parent_input_name] = np.concatenate(
+                        [context[parent_input_name] for context in frame_contexts], axis=0
+                    )
+                    for batch_index, context in enumerate(frame_contexts):
+                        for tensor_name, value in context.items():
+                            out_dict[f"frame_{batch_index}_{tensor_name}"] = value
+            else:
+                out_dict = cast("dict[str, np.ndarray]", parent_result)
+                out_npy = out_dict[out_tensor_name]
             if cfg.verify_nodewise_report:
                 # Compare every node of the simulated child model against a Python reference
                 # execution of the same graph to locate where a deviation originates.
@@ -531,7 +574,11 @@ def verify_step(
         res_str = res_to_str[bool(res)]
         if cfg.verify_save_full_context and (rtlsim_pre_hook is None):
             verification_output_fn = verify_out_dir / f"verify_{step_name}_{b}_{res_str}.npz"
-            np.savez(verification_output_fn, **out_dict)  # type: ignore[arg-type]
+            # skip qonnx's None placeholder for empty tensor names, np.savez would pickle it
+            np.savez(
+                verification_output_fn,
+                **{k: v for k, v in out_dict.items() if v is not None},  # type: ignore[arg-type]
+            )
 
             # Log tensor statistics for debugging (only output tensors, in topological order)
             tensors_to_log = ["global_in"]
@@ -551,7 +598,7 @@ def verify_step(
 
             tensor_stats = []
             for key in tensors_to_log:
-                if key in out_dict:
+                if out_dict.get(key) is not None:
                     stat_dict = {
                         "tensor": key,
                         "shape": list(out_dict[key].shape),
@@ -1924,7 +1971,13 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
                 verify_model.set_metadata_prop("rtlsim_behavioral", "1")
             # MLO and non-MLO both route through the parent (need_parent=True); the
             # stitched child self-derives its FINNLoop memory-init pre-hook (rtlsim_exec).
-            verify_step(verify_model, cfg, "stitched_ip_rtlsim", need_parent=True)
+            verify_step(
+                verify_model,
+                cfg,
+                "stitched_ip_rtlsim",
+                need_parent=True,
+                batched=cfg.verify_batch_size is not None,
+            )
     return model
 
 
