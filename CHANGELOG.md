@@ -6,6 +6,11 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
+## Unreleased
+
+### Fixed
+- `StreamlinePlus` never terminated on a `Transpose` followed by a scalar `Mul` that nothing downstream absorbs: `MoveTransposePastEltwise` and `MoveScalarLinearPastInvariants` moved the two past each other forever. The Transpose is no longer moved past scalar constants, the graph input/output shapes survive the reordering, and the join movers handle a join of a tensor with itself (eki-project#321)
+
 ## 1.6.2 - 13.11.2026
 
 ### Added
