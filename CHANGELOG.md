@@ -6,6 +6,11 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
+## Unreleased
+
+### Fixed
+- `MoveMulPastJoinAdd` raised `ValueError: The truth value of an array ... is ambiguous` when the Mul constants in front of the join were per-channel arrays; they are now compared element-wise
+
 ## 1.6.2 - 13.11.2026
 
 ### Added

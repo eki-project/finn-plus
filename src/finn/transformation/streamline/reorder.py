@@ -1776,7 +1776,9 @@ class MoveMulPastJoinAdd(MoveIdenticalOpPastJoinOp):
         first_mul = model.get_initializer(producers[0].input[1])
         if first_mul is None:
             return False
-        return all(first_mul == model.get_initializer(producer.input[1]) for producer in producers)
+        # per-channel constants are arrays: compare element-wise, `==` would be ambiguous
+        others = [model.get_initializer(producer.input[1]) for producer in producers[1:]]
+        return all(other is not None and np.array_equal(first_mul, other) for other in others)
 
 
 class MoveMulPastJoinMul(MoveIdenticalOpPastJoinOp):
