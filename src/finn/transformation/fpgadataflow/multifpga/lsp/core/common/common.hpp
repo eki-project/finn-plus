@@ -13,20 +13,6 @@
 
 
 namespace lsp {
-    /** A debug struct that can be switched on at comptime. */
-    template<bool Debug> struct lsp_stat_counters_t;
-    template <> struct lsp_stat_counters_t<true> {
-        void countZeroChunkSegment() {
-            zeroChunkSegments++;
-        }
-
-        private:
-        ap_uint<64> zeroChunkSegments = 0;
-    };
-    template <> struct lsp_stat_counters_t<false> {
-        void countZeroChunkSegment() {}
-    };
-
     namespace messages {
         using lsp::constants::BEAT_WIDTH;
         using lsp::constants::creditsPerBeat;
@@ -75,26 +61,7 @@ namespace lsp {
                 header._reserved = bits.range(WIDTH-1, reservedOffset);
                 return header;
             }
-
-            // Check that the version can be stored in the header
-            static_assert(
-                clog2(lsp::constants::CURRENT_VERSION)+1 <= AP_WIDTH(version),
-                "Cannot accommodate version number in protocol header!"
-            );
         };
-
-        // Enforce that the fields fill exactly WIDTH bits
-        static_assert(
-            helpers::widthSum<
-                AP_WIDTH(header_t::version),
-                AP_WIDTH(header_t::frameType),
-                AP_WIDTH(header_t::flags),
-                AP_WIDTH(header_t::frameSequenceNumber),
-                AP_WIDTH(header_t::payloadChunks),
-                AP_WIDTH(header_t::_reserved)
-            >() == header_t::WIDTH,
-            "Header fields must fill exactly WIDTH bits"
-        );
 
 
         template<int PayloadWidth>
@@ -149,15 +116,7 @@ namespace lsp {
                 return data_segment_t<constants::MAX_SEGMENT_PAYLOAD_WIDTH>::unpack(aligned);
             }
 
-            static_assert(
-                helpers::widthSum<
-                    AP_WIDTH(stream),
-                    AP_WIDTH(validBytesLastChunk),
-                    AP_WIDTH(chunks),
-                    AP_WIDTH(_reserved)
-                >() == HEADER_WIDTH,
-                "Segment header fields must fill exactly HEADER_WIDTH bits"
-            );
+            // Depends on the template parameter, so it is checked per instantiation
             static_assert(
                 PayloadWidth % lsp::constants::CHUNK_SIZE_BITS == 0,
                 "Payload width must be a multiple of the chunk size"
@@ -184,15 +143,6 @@ namespace lsp {
                 // TODO
                 return record;
             }
-
-            static_assert(
-                helpers::widthSum<
-                    AP_WIDTH(stream),
-                    AP_WIDTH(limit),
-                    AP_WIDTH(_reserved)
-                >() == WIDTH,
-                "Credit record fields must fill exactly WIDTH bits"
-            );
         };
 
     }
@@ -303,6 +253,50 @@ namespace lsp {
             // TODO
         }
 
+    }
+
+    // Compile time checks of the message layouts
+    namespace messages {
+        // Check that the version can be stored in the header
+        static_assert(
+            clog2(lsp::constants::CURRENT_VERSION)+1 <= AP_WIDTH(header_t::version),
+            "Cannot accommodate version number in protocol header!"
+        );
+
+        // Enforce that the header fields fill exactly WIDTH bits
+        static_assert(
+            helpers::widthSum<
+                AP_WIDTH(header_t::version),
+                AP_WIDTH(header_t::frameType),
+                AP_WIDTH(header_t::flags),
+                AP_WIDTH(header_t::frameSequenceNumber),
+                AP_WIDTH(header_t::payloadChunks),
+                AP_WIDTH(header_t::_reserved)
+            >() == header_t::WIDTH,
+            "Header fields must fill exactly WIDTH bits"
+        );
+
+        // The segment header fields do not depend on the payload width, so checking one instantiation
+        // covers all of them
+        using checked_segment_t = data_segment_t<lsp::constants::MAX_SEGMENT_PAYLOAD_WIDTH>;
+        static_assert(
+            helpers::widthSum<
+                AP_WIDTH(checked_segment_t::stream),
+                AP_WIDTH(checked_segment_t::validBytesLastChunk),
+                AP_WIDTH(checked_segment_t::chunks),
+                AP_WIDTH(checked_segment_t::_reserved)
+            >() == checked_segment_t::HEADER_WIDTH,
+            "Segment header fields must fill exactly HEADER_WIDTH bits"
+        );
+
+        static_assert(
+            helpers::widthSum<
+                AP_WIDTH(credit_record_t::stream),
+                AP_WIDTH(credit_record_t::limit),
+                AP_WIDTH(credit_record_t::_reserved)
+            >() == credit_record_t::WIDTH,
+            "Credit record fields must fill exactly WIDTH bits"
+        );
     }
 }
 

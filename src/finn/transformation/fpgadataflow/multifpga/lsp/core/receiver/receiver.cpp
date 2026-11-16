@@ -26,7 +26,7 @@ namespace lsp {
             hls::stream<ap_uint<constants::BEAT_WIDTH>>& s0,
             hls::stream<ap_uint<constants::BEAT_WIDTH>>& s1
         ) {
-            using PEERS = lsp_peers_t<0xA1, 0xA2>;
+            using PEERS = mac_index_lookup_t<0xA1, 0xA2>;
 
             // CMAC side FIFOs, each holding at least one whole frame (see CMAC_BEAT_BUFFER)
             hls::stream<beat_t, CMAC_BEAT_BUFFER> ingress("ingress");

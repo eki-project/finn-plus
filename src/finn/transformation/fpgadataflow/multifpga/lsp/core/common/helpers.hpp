@@ -11,6 +11,22 @@ namespace lsp {
 
     using MAC = ap_uint<lsp::constants::MAC_WIDTH>;
 
+    namespace debug {
+        /** A debug struct that can be switched on at comptime. */
+        template<bool Debug> struct lsp_stat_counters_t;
+        template <> struct lsp_stat_counters_t<true> {
+            void countZeroChunkSegment() {
+                zeroChunkSegments++;
+            }
+
+            private:
+            ap_uint<64> zeroChunkSegments = 0;
+        };
+        template <> struct lsp_stat_counters_t<false> {
+            void countZeroChunkSegment() {}
+        };
+    }
+
     namespace helpers {
         /** Offset of a data segment within a beat, in whole chunks. Prefer it over a bit offset whenever
         * segments are chunk aligned: aligning by it costs an 8:1 mux instead of a full barrel shifter.
@@ -90,7 +106,7 @@ namespace lsp {
     * source of this mapping, so that every block that handles several peers (e.g. the RX manager
     * dispatching by source MAC, the CTRL controller addressing a connection's peer) agrees on it. */
     template<uint64_t... MACs>
-    struct lsp_peers_t {
+    struct mac_index_lookup_t {
         static constexpr size_t N = sizeof...(MACs);
         static_assert(N > 0, "At least one peer MAC address is required");
         static_assert(

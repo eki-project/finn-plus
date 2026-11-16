@@ -66,25 +66,27 @@ namespace lsp {
             template<typename ...Rings>
             static ctrl_status_t makeCreditUpdateStatus(
                 ap_uint<constants::FSN_WIDTH> expectedFSN,
+                bool gapOpen,
                 ap_uint<constants::STREAM_ID_WIDTH> stream,
                 std::tuple<Rings...>& buffers
             ) {
                 ctrl_status_t<Streams> ctrl;
                 ctrl.ackNow = true;
                 ctrl.expectedFSN = expectedFSN;
-                ctrl.gapOpen = false;
-                // If we specified an invalid stream index do nothing
+                ctrl.gapOpen = gapOpen;
+                // If we specified an invalid stream index do nothing: neither mark a stream as
+                // changed nor write a limit outside of the array
                 if (stream < Streams) {
                     ap_uint<Streams> m = 0;
                     m[stream] = 1;
                     ctrl.changed = m;
+                    ctrl.limit[stream] = visitRing(
+                        buffers,
+                        stream,
+                        [&](auto& ring){ return ring.creditUpdate(); },
+                        ap_uint<constants::CREDIT_LIMIT_WIDTH>(0)
+                    );
                 }
-                ctrl.limit[stream] = visitRing(
-                    buffers,
-                    stream,
-                    [&](auto& ring){ return ring.creditUpdate(); },
-                    ap_uint<constants::CREDIT_LIMIT_WIDTH>(0)
-                );
                 return ctrl;
             }
 
@@ -104,16 +106,16 @@ namespace lsp {
                 return ctrl;
             }
 
-            static ctrl_status_t makeACKNowStatus(ap_uint<constants::FSN_WIDTH> expectedFSN) {
+            static ctrl_status_t makeACKNowStatus(ap_uint<constants::FSN_WIDTH> expectedFSN, bool gapOpen) {
                 ctrl_status_t<Streams> ctrl;
                 ctrl.ackNow = true;
                 ctrl.expectedFSN = expectedFSN;
-                ctrl.gapOpen = false;
+                ctrl.gapOpen = gapOpen;
                 return ctrl;
             }
         };
 
-        // Effectively a dict that maps the MAC addresses of the peers (Peers, an lsp_peers_t) to AXI
+        // Effectively a dict that maps the MAC addresses of the peers (Peers, an mac_index_lookup_t) to AXI
         // Streams. These streams are connected to the connecting kernels which read the beats.
         // Frames are forwarded unchanged; the connection parses the L2 header itself.
         template<typename Peers>

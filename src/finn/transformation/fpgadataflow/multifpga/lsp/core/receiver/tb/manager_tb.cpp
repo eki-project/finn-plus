@@ -10,7 +10,7 @@ using namespace lsp::receiver;
 int main() {
     hls::stream<beat_t> streams[2];
     hls::stream<beat_t, CMAC_BEAT_BUFFER> fromCMAC;
-    using PEERS = lsp::lsp_peers_t<0x1, 0x2>;
+    using PEERS = lsp::mac_index_lookup_t<0x1, 0x2>;
     bool failed = false;
     auto getStream = [&](const MAC& mac) -> decltype(auto) { return streams[PEERS::getIndexFromMAC(mac)]; };
 

@@ -68,7 +68,7 @@ int testCtrlStatus() {
 }
 
 int testMacDispatcher() {
-    using PEERS = lsp::lsp_peers_t<0x1, 0x2, 0xA, 0xB>;
+    using PEERS = lsp::mac_index_lookup_t<0x1, 0x2, 0xA, 0xB>;
     hls::stream<beat_t> streams[4];
     mac_dispatcher<PEERS> dispatcher(streams);
     bool failed = false;

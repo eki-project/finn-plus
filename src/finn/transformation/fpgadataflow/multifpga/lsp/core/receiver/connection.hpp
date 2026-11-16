@@ -9,18 +9,20 @@
 
 namespace lsp {
     namespace receiver {
-        template<int... Ws> struct stream_widths_t {};
-        template<size_t... Ds> struct ring_depths_t {};
 
         // Same state logic as the manager
         enum class connection_state : unsigned char {
             EXPECT_FRAME_START,
             EXPECT_BEAT,
-            DISCARDING_INVALID_FRAME
+            DISCARDING_INVALID_FRAME,
+            EXPECT_FRAME_START_AFTER_INVALID_FRAME
         };
 
         // TODO: Make the L2 ethertype comptime
         // TODO: connection(macStream, ringBuffer, ctrlStatus, outStream)
+        template<int... Ws> struct stream_widths_t {};
+        template<size_t... Ds> struct ring_depths_t {};
+
         template<int... Ws, size_t... Ds>
         inline void connection(
             stream_widths_t<Ws...>,
@@ -35,8 +37,11 @@ namespace lsp {
             // Stateful variables
             static connection_state state = connection_state::EXPECT_FRAME_START;
             static ap_uint<constants::FSN_WIDTH> expectedFSN = 0;
-            static lsp_stream_ring_buffers_t<lsp_ring_depths_t<Ds...>, Ws...> buffers;
+            static ring_buffer::stream_ring_buffers_t<ring_buffer::lsp_ring_depths_t<Ds...>, Ws...> buffers;
             static ap_uint<header_t::PAYLOAD_WIDTH> frameChunksLeft;
+            // A NACK was sent for expectedFSN and the gap is still open. The controller_tx replaces its
+            // gapOpen with the one of every newer status, so every status has to carry this value
+            static bool gapOpen = false;
 
             // TODO: controlStream.write_nb below drops the status if the stream is full. Keep one
             // pending status instead, merge every new one into it with takeNewer, and retry write_nb
@@ -49,37 +54,40 @@ namespace lsp {
                 ap_uint<clog2(1 + constants::BEAT_WIDTH)> initialOffset,
                 beat_t& data
             ) -> connection_state {
+                constexpr int SEGMENT_HEADER_CHUNKS = constants::SEGMENT_HEADER_WIDTH / constants::CHUNK_SIZE_BITS;
                 data_segment_t<constants::MAX_SEGMENT_PAYLOAD_WIDTH> segment;
                 chunk_offset_t chunkOffset{initialOffset/64};
+
+                // Drop the whole frame, handled like a lost one: roll back its segments, and let the
+                // caller skip FSN++ and ACK
+                auto _dropFrame = [&]() -> connection_state {
+                    ring_buffer::rollbackAll(buffers);
+                    if (data.last) {
+                        return connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME;
+                    } else {
+                        return connection_state::DISCARDING_INVALID_FRAME;
+                    }
+                };
+
                 for (unsigned int i = 0; i < constants::CHUNKS_PER_BEAT; ++i) {
                     #pragma HLS PIPELINE II=1
                     segment = decltype(segment)::unpackMaxSizeSegment(data.data, chunkOffset);
 
-                    // A segment never crosses the beat: more chunks than the rest
-                    // of the beat make the frame malformed. Checked before advancing, which also
-                    // keeps chunkOffset.index from wrapping on a corrupt chunks field
-                    if (segment.chunks > constants::CHUNKS_PER_BEAT - 1 - chunkOffset.index) {
-                        // Drop the whole frame, handled like a lost one (spec 5.3)
-                        // TODO (#69): roll back the segments of this frame already in the rings
-                        // TODO: Returning EXPECT_FRAME_START here (malformed in the last beat) looks
-                        // to the caller like a finished frame, so it increments expectedFSN and
-                        // ACKs. The sender then frees the frame and the rest of its data is lost.
-                        // Return a distinct result (e.g. FRAME_DONE / MALFORMED / NEED_BEAT) and let
-                        // the caller drop the frame without FSN++ or ACK
-                        if (data.last) {
-                            return connection_state::EXPECT_FRAME_START;
-                        } else {
-                            return connection_state::DISCARDING_INVALID_FRAME;
-                        }
-                    }
-                    if (frameChunksLeft == 0) {
-                        return connection_state::EXPECT_FRAME_START;
+                    // Malformed segment or chunk count. Checked before advancing, which also keeps
+                    // chunkOffset.index and frameChunksLeft from wrapping on a corrupt chunks field.
+                    // Cause 1: The segment goes over the beat boundary.
+                    // Cause 2: The segment has more chunks than the frame's payloadChunks has left.
+                    if (
+                        segment.chunks > constants::CHUNKS_PER_BEAT - 1 - chunkOffset.index
+                        || segment.chunks + SEGMENT_HEADER_CHUNKS > frameChunksLeft
+                    ) {
+                        return _dropFrame();
                     }
 
                     // Since we have read a header we can definitely already advance the counters
                     // by the number of chunks required by a segment header.
-                    chunkOffset.index += (constants::SEGMENT_HEADER_WIDTH / constants::CHUNK_SIZE_BITS);
-                    frameChunksLeft -= (constants::SEGMENT_HEADER_WIDTH / constants::CHUNK_SIZE_BITS);
+                    chunkOffset.index += SEGMENT_HEADER_CHUNKS;
+                    frameChunksLeft -= SEGMENT_HEADER_CHUNKS;
 
                     // Normal DATA or BLOCKED?
                     if (segment.chunks == 0) {
@@ -87,6 +95,7 @@ namespace lsp {
                         controlStream.write_nb(
                             ctrl_status_t::makeCreditUpdateStatus(
                                 expectedFSN,
+                                gapOpen,
                                 segment.stream,
                                 buffers
                             )
@@ -97,11 +106,18 @@ namespace lsp {
                         chunkOffset.index += segment.chunks;
                         frameChunksLeft -= segment.chunks;
                     }
-                    if (frameChunksLeft == 0) {
-                        return connection_state::EXPECT_FRAME_START;
-                    }
-                    if (chunkOffset.index >= constants::CHUNKS_PER_BEAT) {
-                        if (data.last) {
+
+                    // The frame must end exactly with its last beat. Only then is the frame done,
+                    // and since the FCS of the last beat was checked before parsing, it can be
+                    // committed.
+                    const bool frameDone = frameChunksLeft == 0;
+                    if (frameDone || chunkOffset.index >= constants::CHUNKS_PER_BEAT) {
+                        if (frameDone != bool(data.last)) {
+                            // The frame ends before its last beat, or its last beat comes before
+                            // the frame ends
+                            return _dropFrame();
+                        }
+                        if (frameDone) {
                             return connection_state::EXPECT_FRAME_START;
                         } else {
                             return connection_state::EXPECT_BEAT;
@@ -112,16 +128,42 @@ namespace lsp {
                 return connection_state::EXPECT_BEAT;
             };
 
-            // TODO: No FCS check yet. The CMAC flags a bad FCS in tuser on the last beat
-            // but both accept paths below increment expectedFSN and ACK at data.last without
-            // looking at data.user. A corrupted frame is therefore accepted and its data stays in
-            // the rings. At data.last with data.user set: drop the frame silently, without FSN++ or
-            // ACK and roll back its segments. This also contains garbage parsed
-            // from a corrupt header, e.g. a wrapped frameChunksLeft.
 
-            // Read a beat from stream
-            beat_t data = macStream.read();
-            if (state == connection_state::EXPECT_FRAME_START) {
+            // Send credit updates for streams where it is necessary. Runs on every call, also when no
+            // beat arrives, since the consumer frees space independently of incoming frames. The
+            // status carries the current FSN state, because the controller_tx takes it over
+            ctrl_status_t creditUpdate;
+            creditUpdate.expectedFSN = expectedFSN;
+            creditUpdate.gapOpen = gapOpen;
+            for (size_t index = 0; index < sizeof...(Ws); index++) {
+                #pragma HLS unroll
+                if (ring_buffer::creditUpdateDue(buffers, index)) {
+                    creditUpdate.changed[index] = 1;
+                    creditUpdate.limit[index] = ring_buffer::creditUpdate(buffers, index);
+                }
+            }
+            if (creditUpdate.changed != 0) {
+                controlStream.write_nb(creditUpdate);
+            }
+
+            // Read a beat from stream. Non-blocking, so that the credit check above keeps running
+            // while no frames arrive
+            beat_t data;
+            if (!macStream.read_nb(data)) {
+                return;
+            }
+
+            // The CMAC flags a bad FCS in tuser on the last beat. Drop the frame silently (no FSN++
+            // or ACK) and roll back its segments. Checked before parsing, so the last beat is never
+            // written. The frame ends with this beat, so the next beat starts a new frame.
+            if (data.last && data.user == 1) {
+                ring_buffer::rollbackAll(buffers);
+                state = connection_state::EXPECT_FRAME_START;
+                return;
+            }
+
+            // Handle frame reader FSM
+            if (state == connection_state::EXPECT_FRAME_START || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME) {
                 ap_uint<clog2(1 + constants::BEAT_WIDTH)> offset = 0;
 
                 // Check for tag/ethertype. The field is read in wire byte order, so the constants
@@ -156,7 +198,7 @@ namespace lsp {
                     if (!data.last) {
                         state = connection_state::DISCARDING_INVALID_FRAME;
                     }
-                    controlStream.write_nb(ctrl_status_t::makeACKNowStatus(expectedFSN));
+                    controlStream.write_nb(ctrl_status_t::makeACKNowStatus(expectedFSN, gapOpen));
                 }
 
                 // Check FSN
@@ -172,6 +214,7 @@ namespace lsp {
                     } else {
                         state = connection_state::DISCARDING_INVALID_FRAME;
                     }
+                    gapOpen = true;
                     controlStream.write_nb(ctrl_status_t::makeNACKStatus(expectedFSN));
                     // TODO: Set NACK interval timeout
                 } else if (helpers::serialBefore(header.frameSequenceNumber, expectedFSN)) {
@@ -180,19 +223,25 @@ namespace lsp {
                     if (!data.last) {
                         state = connection_state::DISCARDING_INVALID_FRAME;
                     }
-                    controlStream.write_nb(ctrl_status_t::makeACKNowStatus(expectedFSN));
+                    controlStream.write_nb(ctrl_status_t::makeACKNowStatus(expectedFSN, gapOpen));
                 } else if (header.frameSequenceNumber == expectedFSN) {
                     state = _readDataSegments(offset, data);
                     if (state == connection_state::EXPECT_FRAME_START) {
+                        // The expected frame arrived, so a gap at it is closed
+                        gapOpen = false;
                         expectedFSN++;
                         controlStream.write_nb(ctrl_status_t::makeACKStatus(expectedFSN));
+                        ring_buffer::commitAll(buffers);
                     }
                 }
             } else if (state == connection_state::EXPECT_BEAT) {
                 state = _readDataSegments(0, data);
                 if (state == connection_state::EXPECT_FRAME_START) {
+                    // The expected frame arrived, so a gap at it is closed
+                    gapOpen = false;
                     expectedFSN++;
                     controlStream.write_nb(ctrl_status_t::makeACKStatus(expectedFSN));
+                    ring_buffer::commitAll(buffers);
                 }
             } else if (state == connection_state::DISCARDING_INVALID_FRAME) {
                 // Repeatedly discard until a new frame arrives
@@ -201,7 +250,6 @@ namespace lsp {
                 }
             }
 
-            // TODO: Check if a ring buffer update is necessary
         }
     }
 }
