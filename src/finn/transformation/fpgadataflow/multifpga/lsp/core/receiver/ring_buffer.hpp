@@ -11,6 +11,8 @@
 
 namespace lsp {
     namespace receiver {
+        using namespace messages;
+
         /** Helper to determine the result of a ring buffer update. */
         enum class lsp_stream_ring_buffer_update_result : unsigned char {
             SEGMENT_READ,
@@ -32,7 +34,7 @@ namespace lsp {
 
         */
         template<size_t StreamIndex, int StreamWidth, size_t Depth>
-        struct lsp_stream_ring_buffer_t {
+        struct stream_ring_buffer_t {
             static_assert(StreamWidth % 8 == 0, "The stream widths must be multiples full bytes!");
             static constexpr int PointerWidth = clog2(Depth + 1);
 
@@ -45,7 +47,7 @@ namespace lsp {
             ap_uint<constants::CREDIT_LIMIT_WIDTH> lastCreditLimitSent = Depth;
 
             // ap_uint's default constructor leaves the value uninitialized, so `= {}` would not zero it
-            lsp_stream_ring_buffer_t() {
+            stream_ring_buffer_t() {
                 for (size_t i = 0; i < Depth; ++i) {
                     buffer[i] = 0;
                 }
@@ -64,7 +66,7 @@ namespace lsp {
             }
 
             template<int PayloadWidth>
-            lsp_stream_ring_buffer_update_result updateFrom(const data::lsp_data_segment_t<PayloadWidth>& segment) {
+            lsp_stream_ring_buffer_update_result updateFrom(const data_segment_t<PayloadWidth>& segment) {
                 // Figure out how wide a pointer into the segments payload needs to be
                 constexpr size_t PAYLOAD_WIDTH = PayloadWidth;
                 constexpr size_t SegmentPointerWidth = clog2(PAYLOAD_WIDTH + 1);
@@ -188,7 +190,7 @@ namespace lsp {
                 sizeof...(Depths) == sizeof...(StreamWidths),
                 "Exactly one ring buffer depth per stream is required"
             );
-            using type = std::tuple<lsp_stream_ring_buffer_t<StreamIndices, StreamWidths, Depths>...>;
+            using type = std::tuple<stream_ring_buffer_t<StreamIndices, StreamWidths, Depths>...>;
         };
 
         /** One ring buffer per stream: element I is the ring buffer for stream index I with the
@@ -228,7 +230,7 @@ namespace lsp {
         template<typename... Rings, int PayloadWidth>
         lsp_stream_ring_buffer_update_result dispatchSegment(
             std::tuple<Rings...>& rings,
-            const data::lsp_data_segment_t<PayloadWidth>& segment
+            const data_segment_t<PayloadWidth>& segment
         ) {
             #pragma HLS inline
             return visitRing(

@@ -5,6 +5,7 @@
 
 #include "common.hpp"
 #include "utils.hpp"
+#include "ring_buffer.hpp"
 
 namespace lsp {
     namespace receiver {
@@ -27,15 +28,15 @@ namespace lsp {
             hls::stream<beat_t>& macStream,
             hls::stream<ctrl_status_t<sizeof...(Ws)>>& controlStream
         ) {
-            using namespace protocol;
-            using namespace data;
+            using namespace messages;
+            using namespace helpers;
             using ctrl_status_t = ctrl_status_t<sizeof...(Ws)>;
 
             // Stateful variables
             static connection_state state = connection_state::EXPECT_FRAME_START;
             static ap_uint<constants::FSN_WIDTH> expectedFSN = 0;
             static lsp_stream_ring_buffers_t<lsp_ring_depths_t<Ds...>, Ws...> buffers;
-            static ap_uint<lsp_header_t::PAYLOAD_WIDTH> frameChunksLeft;
+            static ap_uint<header_t::PAYLOAD_WIDTH> frameChunksLeft;
 
             // TODO: controlStream.write_nb below drops the status if the stream is full. Keep one
             // pending status instead, merge every new one into it with takeNewer, and retry write_nb
@@ -48,11 +49,11 @@ namespace lsp {
                 ap_uint<clog2(1 + constants::BEAT_WIDTH)> initialOffset,
                 beat_t& data
             ) -> connection_state {
-                lsp_data_segment_t<constants::MAX_SEGMENT_PAYLOAD_WIDTH> segment;
+                data_segment_t<constants::MAX_SEGMENT_PAYLOAD_WIDTH> segment;
                 chunk_offset_t chunkOffset{initialOffset/64};
                 for (unsigned int i = 0; i < constants::CHUNKS_PER_BEAT; ++i) {
                     #pragma HLS PIPELINE II=1
-                    segment = unpackMaxSizeSegment(data.data, chunkOffset);
+                    segment = decltype(segment)::unpackMaxSizeSegment(data.data, chunkOffset);
 
                     // A segment never crosses the beat: more chunks than the rest
                     // of the beat make the frame malformed. Checked before advancing, which also
@@ -136,9 +137,9 @@ namespace lsp {
 
                 // Read LSP header
                 // TODO: Increase error counter if frameType != DATA.
-                auto header = lsp_header_t::unpack(data.data >> offset);
+                auto header = header_t::unpack(data.data >> offset);
                 frameChunksLeft = header.payloadChunks;
-                offset += lsp_header_t::WIDTH;
+                offset += header_t::WIDTH;
 
                 // We cannot receive anything other than DATA in this kernel.
                 // Having a device act both as receiver and sender requires
