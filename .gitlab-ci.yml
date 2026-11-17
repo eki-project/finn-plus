@@ -38,8 +38,8 @@ variables:
     description: "Memory per Slurm array task of a microbenchmark build"
     value: "64G"
   MICROBENCH_FINN_WORKERS:
-    description: "FINN workers per microbenchmark build (one-node graphs gain nothing from more)"
-    value: "4"
+    description: "FINN workers per microbenchmark build; also the number of parallel Vivado synthesis runs (launch_runs -jobs), so keep it equal to MICROBENCH_CPU_CORES"
+    value: "16"
   PARALLEL_JOBS:
     description: "Number of parallel Slurm array jobs per Benchmark job. Sampling pipelines build their runs sequentially per task; aim for about 8 runs per task (SAMPLE_COUNT x operators / 8)"
     value: "8"

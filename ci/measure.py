@@ -20,6 +20,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from finn.benchmarking import exchange  # noqa: E402
 
 
+def _previous_measurement_ok(run_out_dir):
+    """True if ``run_out_dir`` carries a DONE marker of an earlier measurement with status ok."""
+    marker = run_out_dir / exchange.DONE_MARKER
+    if not marker.is_file():
+        return False
+    try:
+        with open(marker) as f:
+            return json.load(f).get("status") == "ok"
+    except (OSError, ValueError):
+        return False
+
+
 def delete_dir_contents(dir):
     """Delete all contents of a directory."""
     for filename in os.listdir(dir):
@@ -80,6 +92,13 @@ if __name__ == "__main__":
         deploy_archive = run_in_dir / "deploy.zip"
         extract_dir = "measurement"
         if not deploy_archive.is_file():
+            continue
+        # A retried job resumes: runs whose previous measurement completed (DONE marker with
+        # status ok) keep their reports, so an infrastructure failure (share outage, board
+        # reboot) after hundreds of runs does not cost a full re-measurement
+        if _previous_measurement_ok(run_out_dir):
+            print("ALREADY MEASURED %s (DONE marker), SKIPPING.." % run_in_dir.name)
+            summary[f"run_{run_id}"] = "ok"
             continue
         print("FOUND DEPLOYMENT PACKAGE IN %s, EXTRACTING.." % run_in_dir)
 

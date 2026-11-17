@@ -43,10 +43,11 @@ FINN Build:
   rules:
     - if: $COLLECT_PIPELINE_ID != ""
       when: never
-    # Microbenchmark builds are single-operator designs (one HLS thread, at most eight Vivado
-    # threads, a few GB of memory) built one after another per array task: the small request
-    # (MICROBENCH_* pipeline variables) packs many more tasks on a node and backfills sooner.
-    # The regression models keep the full request (BENCH_CPU_CORES, MEM_BENCH, ...).
+    # Microbenchmark builds are single-operator designs (a few GB of memory, one HLS thread,
+    # Vivado synthesis of the stitched IP with as many parallel runs as FINN workers) built
+    # one after another per array task: the small request (MICROBENCH_* pipeline variables)
+    # packs many more tasks on a node and backfills sooner. The regression models keep the
+    # full request (BENCH_CPU_CORES, MEM_BENCH, ...).
     - if: $BENCH_CFG =~ /^microbenchmark/ || $MANUAL_CFG_PATH =~ /microbenchmark/
       variables:
         SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $MICROBENCH_CPU_CORES --mem $MICROBENCH_MEM --array 0-$( expr $PARALLEL_JOBS - 1 ) --open-mode=append"

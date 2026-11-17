@@ -116,10 +116,13 @@ Versal-only backends or two-stream elementwise operations.
   other builds.
 - Microbenchmark builds request a small Slurm allocation per array task (pipeline variables
   `MICROBENCH_CPU_CORES`, `MICROBENCH_MEM`, `MICROBENCH_FINN_WORKERS`, defaults 16 cores,
-  64 GB, 4 workers; the regression models keep `BENCH_CPU_CORES`/`MEM_BENCH`): a
-  single-operator build uses one HLS thread and at most eight Vivado threads, so the small
-  request packs many more tasks on a node and is scheduled sooner. The runs of a task are
-  built one after another, so size `PARALLEL_JOBS` for about eight runs per task.
+  64 GB, 16 workers; the regression models keep `BENCH_CPU_CORES`/`MEM_BENCH`): a
+  single-operator build needs a few GB and one HLS thread, so the small request packs many
+  more tasks on a node and is scheduled sooner. Keep the worker count equal to the cores:
+  it is also the number of parallel Vivado synthesis runs of the stitched IP
+  (`launch_runs -jobs`), and 4 workers doubled the build time of every operator. The runs
+  of a task are built one after another, so size `PARALLEL_JOBS` for about eight runs per
+  task. A retried `Measurement` job resumes after the runs it already measured.
 - The board measures a microbenchmark with a 5 s idle and a 5 s load phase sampled at 5 Hz
   (`ci/experiments/instrument_only_default.json`); interval and latency come from the
   instrumentation counters and do not depend on the duration, only the power averages do.
