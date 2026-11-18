@@ -74,6 +74,7 @@ namespace lsp {
         static const ap_uint<FRAME_TYPE_WIDTH> FRAME_DATA = 0;
         static const ap_uint<FRAME_TYPE_WIDTH> FRAME_CREDIT_ACK = 1;
         static const ap_uint<FRAME_TYPE_WIDTH> FRAME_NACK = 2;
+        static const ap_uint<FRAME_TYPE_WIDTH> FRAME_PROBE = 3;
 
         // ---------------------------------------------------------------------------------------
         // Data segments
@@ -86,6 +87,7 @@ namespace lsp {
         // the rest of the beat behind its header. Every segment fits into this width, whatever its
         // stream's word width
         constexpr int MAX_SEGMENT_PAYLOAD_WIDTH = BEAT_WIDTH - SEGMENT_HEADER_WIDTH;
+        constexpr int SEGMENT_HEADER_CHUNKS = SEGMENT_HEADER_WIDTH / CHUNK_SIZE_BITS;
 
         // ---------------------------------------------------------------------------------------
         // Credit records

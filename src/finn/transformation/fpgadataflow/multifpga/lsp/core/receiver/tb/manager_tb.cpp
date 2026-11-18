@@ -6,6 +6,7 @@
 #include "utils.hpp"
 
 using namespace lsp::receiver;
+using lsp::MAC;
 
 int main() {
     hls::stream<beat_t> streams[2];

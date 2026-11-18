@@ -16,37 +16,55 @@ namespace lsp {
         constexpr size_t CMAC_BEAT_BUFFER = constants::MAX_BEATS_PER_FRAME;
 
         /** CTRL status of one connection with Streams streams, sent by the connection to the
-        controller_tx whenever it changes. The controller_tx reads it non-blocking and keeps
-        the newest one per connection (see takeNewer), so the connection never has to wait for the
-        controller_tx. The connection decides when credit is due; the controller_tx
-        only copies the limits of the changed streams into the credit records. */
+        controller_tx whenever a CTRL frame becomes due. The controller_tx reads it non-blocking and
+        merges every status into the one it holds per connection (see takeNewer), so the connection
+        never has to wait for the controller_tx.
+
+        There are four cases:
+        - NACK immediately (nackImmediately, makeNACKImmediately): a NACK for expectedFSN, at once.
+        - ACK immediately (ackImmediately, makeACKImmediately or makeACK<true>): a CREDIT_ACK at
+          once, with the limits of the changed streams.
+        - ACK when ready (neither flag, changed != 0, makeACK<false>): a CREDIT_ACK with the limits
+          of the changed streams, once the controller_tx has time.
+        - FSN update (neither flag, changed == 0, makeFSNUpdate): no frame. An accepted frame is not
+          ACKed on its own; its ACK rides on the next CREDIT_ACK. The update keeps the
+          controller_tx's expectedFSN current, which closes an open gap.
+        Both flags can be pending at once, e.g. after a malformed frame with a BLOCKED report: a NACK
+        carries no credit records, so the controller_tx then sends both frames.
+        */
         template<int Streams>
         struct ctrl_status_t {
             static_assert(Streams >= 1, "A connection has at least one stream");
 
-            // Next expected FSN: the cumulative ACK, and the FSN to NACK while gapOpen is set
+            // Next expected FSN: the cumulative ACK, and the FSN a NACK replays from. A state, so
+            // every status carries the current value
             ap_uint<constants::FSN_WIDTH> expectedFSN = 0;
-            // A gap was seen at expectedFSN and is still open: NACK it, and again if it stays open
-            bool gapOpen = false;
-            // Send a CREDIT_ACK at once instead of after the ACK delay, e.g. for an accepted probe or
-            // a duplicate frame
-            bool ackNow = false;
+            // Send a NACK for expectedFSN at once: a gap, or a lost, corrupt or malformed frame at
+            // expectedFSN
+            bool nackImmediately = false;
+            // Send a CREDIT_ACK at once instead of when the controller_tx has time: a BLOCKED
+            // report, a PROBE without a gap, or a duplicate frame
+            bool ackImmediately = false;
             // Absolute credit limit per stream, consumed + ring capacity mod 2^32.
             // Absolute, not the free space: the sender cannot tell which of its in-flight words a
             // free count already covers, and a lost absolute limit is repaired by the next one
             ap_uint<constants::CREDIT_LIMIT_WIDTH> limit[Streams] = {};
-            // Streams whose limit is due in a credit record, e.g. after half a ring was freed or at
-            // once for a BLOCKED stream. Only these limits are sent, so the others may be stale
+            // Streams whose limit is due in a credit record, e.g. after half a ring was freed or for
+            // a BLOCKED stream. Only these limits are sent, so the others may be stale
             ap_uint<Streams> changed = 0;
 
-            /** Take the values of a newer status. expectedFSN, gapOpen and the limits are states, so
-            the newer values replace the held ones. ackNow and changed are events, so pending ones stay
-            set until the controller_tx has sent the CREDIT_ACK and cleared them. */
+            /** Merge a newer status into this one. expectedFSN is a state, so the newer value replaces
+            the held one; a limit is replaced only if the newer status marks its stream as changed, since
+            the other limits of a status are not set. nackImmediately, ackImmediately and changed are
+            events, so pending ones stay set until the controller_tx has sent the frame and cleared
+            them. A pending NACK only stays while expectedFSN is unchanged: once it advanced, the
+            NACKed frame has arrived. */
             void takeNewer(const ctrl_status_t& newer) {
                 #pragma HLS inline
+                nackImmediately =
+                    (nackImmediately && newer.expectedFSN == expectedFSN) || newer.nackImmediately;
                 expectedFSN = newer.expectedFSN;
-                gapOpen = newer.gapOpen;
-                ackNow = ackNow || newer.ackNow;
+                ackImmediately = ackImmediately || newer.ackImmediately;
                 for (int s = 0; s < Streams; ++s) {
                     #pragma HLS unroll
                     if (newer.changed.bit(s) == 1) {
@@ -56,61 +74,72 @@ namespace lsp {
                 changed |= newer.changed;
             }
 
-            /** Whether a CREDIT_ACK must go out at once instead of after the ACK delay: an ACK or a
-            credit update is due. */
-            bool creditAckNow() const {
-                #pragma HLS inline
-                return ackNow || changed != 0;
+            /** NACK immediately: a gap, or a lost, corrupt or malformed frame at expectedFSN. */
+            static ctrl_status_t makeNACKImmediately(ap_uint<constants::FSN_WIDTH> expectedFSN) {
+                ctrl_status_t ctrl;
+                ctrl.expectedFSN = expectedFSN;
+                ctrl.nackImmediately = true;
+                return ctrl;
             }
 
-            template<typename ...Rings>
-            static ctrl_status_t makeCreditUpdateStatus(
+            /** ACK immediately without credit: a PROBE without a gap, or a duplicate frame. */
+            static ctrl_status_t makeACKImmediately(ap_uint<constants::FSN_WIDTH> expectedFSN) {
+                ctrl_status_t ctrl;
+                ctrl.expectedFSN = expectedFSN;
+                ctrl.ackImmediately = true;
+                return ctrl;
+            }
+
+            /** ACK with the current limit of one stream, e.g. a BLOCKED stream. With Immediately the
+            CREDIT_ACK goes out at once, otherwise when the controller_tx has time. A stream ID the
+            connection does not have adds no credit record; the status is then an ACK immediately
+            without credit, or an FSN update. */
+            template<bool Immediately, typename ...Rings>
+            static ctrl_status_t makeACK(
                 ap_uint<constants::FSN_WIDTH> expectedFSN,
-                bool gapOpen,
                 ap_uint<constants::STREAM_ID_WIDTH> stream,
                 std::tuple<Rings...>& buffers
             ) {
-                ctrl_status_t<Streams> ctrl;
-                ctrl.ackNow = true;
-                ctrl.expectedFSN = expectedFSN;
-                ctrl.gapOpen = gapOpen;
-                // If we specified an invalid stream index do nothing: neither mark a stream as
-                // changed nor write a limit outside of the array
+                ctrl_status_t ctrl = makeFSNUpdate(expectedFSN);
+                // Bounds check, so that no limit is written outside of the array
                 if (stream < Streams) {
-                    ap_uint<Streams> m = 0;
-                    m[stream] = 1;
-                    ctrl.changed = m;
-                    ctrl.limit[stream] = visitRing(
-                        buffers,
-                        stream,
-                        [&](auto& ring){ return ring.creditUpdate(); },
-                        ap_uint<constants::CREDIT_LIMIT_WIDTH>(0)
-                    );
+                    ctrl.changed[stream] = 1;
+                    ctrl.limit[stream] = creditUpdate(buffers, stream);
+                }
+                if (Immediately) {
+                    ctrl.ackImmediately = true;
                 }
                 return ctrl;
             }
 
-            static ctrl_status_t makeNACKStatus(ap_uint<constants::FSN_WIDTH> expectedFSN) {
-                ctrl_status_t<Streams> ctrl;
-                ctrl.ackNow = false;
+            /** FSN update: an accepted frame. Sends no frame, but keeps the controller_tx's
+            expectedFSN current, so an open gap closes. */
+            static ctrl_status_t makeFSNUpdate(ap_uint<constants::FSN_WIDTH> expectedFSN) {
+                ctrl_status_t ctrl;
                 ctrl.expectedFSN = expectedFSN;
-                ctrl.gapOpen = true;
                 return ctrl;
             }
 
-            static ctrl_status_t makeACKStatus(ap_uint<constants::FSN_WIDTH> expectedFSN) {
-                ctrl_status_t<Streams> ctrl;
-                ctrl.ackNow = false;
-                ctrl.expectedFSN = expectedFSN;
-                ctrl.gapOpen = false;
-                return ctrl;
-            }
-
-            static ctrl_status_t makeACKNowStatus(ap_uint<constants::FSN_WIDTH> expectedFSN, bool gapOpen) {
-                ctrl_status_t<Streams> ctrl;
-                ctrl.ackNow = true;
-                ctrl.expectedFSN = expectedFSN;
-                ctrl.gapOpen = gapOpen;
+            /** ACK with the limits of every stream whose credit update is due, after its consumer
+            freed enough space. With Immediately the CREDIT_ACK goes out at once, otherwise when the
+            controller_tx has time. changed stays 0 if no update is due; without Immediately the
+            status is then an FSN update and need not be sent. */
+            template<bool Immediately, typename ...Rings>
+            static ctrl_status_t makeACK(
+                ap_uint<constants::FSN_WIDTH> expectedFSN,
+                std::tuple<Rings...>& buffers
+            ) {
+                ctrl_status_t ctrl = makeFSNUpdate(expectedFSN);
+                for (int s = 0; s < Streams; ++s) {
+                    #pragma HLS unroll
+                    if (creditUpdateDue(buffers, s)) {
+                        ctrl.changed[s] = 1;
+                        ctrl.limit[s] = creditUpdate(buffers, s);
+                    }
+                }
+                if (Immediately) {
+                    ctrl.ackImmediately = true;
+                }
                 return ctrl;
             }
         };
