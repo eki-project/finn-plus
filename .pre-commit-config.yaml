@@ -36,7 +36,7 @@ repos:
   rev: v4.4.0
   hooks:
   - id: trailing-whitespace
-    exclude: '\.dat$'
+    exclude: '\.dat$|^src/finn/templates/codegen/'
   - id: check-added-large-files
   - id: check-ast
   - id: check-json
@@ -47,6 +47,9 @@ repos:
   - id: debug-statements
     exclude: '^src/finn/builder/build_dataflow.py$'
   - id: end-of-file-fixer
+    # codegen templates are byte-exact scaffolding: some legitimately end in a
+    # blank line, which this hook would strip and change the generated output
+    exclude: '^src/finn/templates/codegen/'
   - id: requirements-txt-fixer
   - id: mixed-line-ending
     args: ['--fix=no']
@@ -64,11 +67,8 @@ repos:
     args: [--line-length=100]
     exclude: '^scripts/split_api_docs.py$'
 
-- repo: https://github.com/PyCQA/flake8
-  rev: 6.1.0
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.15.10
   hooks:
-  - id: flake8
-    # black-compatible flake-8 config
-    args: ['--max-line-length=100',  # black default
-           '--extend-ignore=E203']  # E203 is not PEP8 compliant
-    exclude: '^scripts/split_api_docs.py$'
+    - id: ruff-check
+      files: '^src/'

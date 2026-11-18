@@ -1,5 +1,5 @@
 {
-  "Defaults": {},
+  "Defaults": {"ram_cascade_height": [0, ["MVAU_rtl", "VVAU_hls"]]},
   "ConvolutionInputGenerator_rtl_0": {
     "SIMD": 1,
     "parallel_window": 0,

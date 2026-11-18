@@ -1,3 +1,5 @@
+"""Tests for the multi-FPGA network metadata model."""
+
 import pytest
 
 import onnx.helper as oh

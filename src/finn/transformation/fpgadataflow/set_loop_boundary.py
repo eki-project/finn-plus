@@ -62,11 +62,12 @@ class SetLoopBoundary(Transformation):
         count = 0
         for op_type in ["BinaryQuant", "Quant", "Trunc", "IntQuant", "FloatQuant", "Constant"]:
             count += len(model.get_nodes_by_op_type(op_type))
-        assert (
-            count == 0
-        ), """The model is either in QONNX format (Quant nodes present)
-            or const folding was not applied yet. SetLoopBoundary can only be applied
-            to cleaned up and const-folded FINN-ONNX model."""
+        if count != 0:
+            raise FINNInternalError(
+                "The model is either in QONNX format (Quant nodes present) "
+                "or const folding was not applied yet. SetLoopBoundary can only be applied "
+                "to cleaned up and const-folded FINN-ONNX model."
+            )
 
         apply_metadata = False
 

@@ -14,6 +14,7 @@ from qonnx.util.basic import qonnx_make_model
 
 from finn.analysis.fpgadataflow.fifo_transaction_counts import fifo_transaction_counts
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
+from finn.util.exception import FINNUserError
 
 
 def make_multi_fclayer_model(ch, wdt, adt, nnodes):
@@ -135,5 +136,5 @@ def test_fifo_transaction_counts_requires_fifos():
     # a model without any FIFOs must raise a clear assertion
     model = make_multi_fclayer_model(64, DataType["INT4"], DataType["INT4"], 3)
     model = model.transform(GiveUniqueNodeNames())
-    with pytest.raises(AssertionError):
+    with pytest.raises(FINNUserError):
         model.analysis(fifo_transaction_counts)

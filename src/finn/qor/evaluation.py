@@ -13,7 +13,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     # only for annotations, keeps scikit-learn optional for the end2end report script
@@ -99,7 +99,7 @@ def plot_learning_curve(curve: pd.DataFrame, out_path: str) -> None:
     for name in curve.columns:
         series = curve[name].dropna()
         if not series.empty:
-            ax.plot(series.index, series.values, marker="o", label=name)
+            ax.plot(series.index, cast("np.ndarray", series.values), marker="o", label=name)
     ax.set_xlabel("Fraction of training data")
     scoring = curve.attrs.get("scoring", "score")
     evaluation = curve.attrs.get("evaluation", "")
@@ -131,14 +131,14 @@ def error_metrics(actual: pd.Series, predicted: pd.Series) -> dict[str, float]:
         if nonzero.any()
         else np.nan
     )
-    return {"RMSE": float(np.sqrt(np.mean((p - a) ** 2))), "MAPE": mape, "n": int(len(a))}
+    return {"RMSE": float(np.sqrt(np.mean((p - a) ** 2))), "MAPE": mape, "n": len(a)}
 
 
 def estimation_error_table(
     df: pd.DataFrame,
     actual_col: str,
     estimate_cols: dict[str, str],
-    subsets: Optional[dict[str, pd.Series]] = None,
+    subsets: dict[str, pd.Series] | None = None,
 ) -> pd.DataFrame:
     """Compare estimators (rows) on data subsets (columns) by RMSE and MAPE.
 
@@ -160,14 +160,20 @@ def estimation_error_table(
         if "params.sparsity_type" in df.columns:
             subsets["Sparse"] = df["params.sparsity_type"] == "unstructured"
     columns = pd.MultiIndex.from_product([subsets.keys(), ["RMSE", "MAPE", "n"]])
-    table = pd.DataFrame(index=list(estimate_cols.keys()), columns=columns, dtype=float)
+    # pandas' SequenceNotStr protocol does not accept list[str], although it is a valid index
+    table = pd.DataFrame(
+        index=list(estimate_cols.keys()),  # pyright: ignore[reportArgumentType]
+        columns=columns,
+        dtype=float,
+    )
     for label, col in estimate_cols.items():
         for subset, mask in subsets.items():
             if col not in df.columns:
                 table.loc[label, (subset, "n")] = 0
                 continue
-            sub = df[mask]
-            for k, v in error_metrics(sub[actual_col], sub[col]).items():
+            sub = cast("pd.DataFrame", df[mask])
+            actual = cast("pd.Series", sub[actual_col])
+            for k, v in error_metrics(actual, cast("pd.Series", sub[col])).items():
                 table.loc[label, (subset, k)] = v
     for subset in subsets:
         table[(subset, "n")] = table[(subset, "n")].fillna(0).astype(int)
@@ -214,8 +220,8 @@ def _aggregate_resources(src: dict[str, Any], dst: dict[str, float]) -> None:
 
 
 def breakdown_resources(
-    report: dict[str, dict[str, Any]], categories: Optional[dict[str, list[str]]] = None
-) -> Optional[dict[str, dict[str, float]]]:
+    report: dict[str, dict[str, Any]], categories: dict[str, list[str]] | None = None
+) -> dict[str, dict[str, float]] | None:
     """Summarize a per-layer resource report into operator categories.
 
     ``report`` maps node names (plus ``"total"`` or ``"(top)"``) to resource dicts, as in
@@ -244,7 +250,7 @@ def breakdown_resources(
     if "(top)" in report:
         totals["Top"] = {}
         _aggregate_resources(report["(top)"], totals["Top"])
-        for cat in list(categories) + ["Other"]:
+        for cat in [*categories, "Other"]:
             _aggregate_resources(totals[cat], totals["Total"])
     elif "total" in report:
         _aggregate_resources(report["total"], totals["Total"])
@@ -259,11 +265,11 @@ def plot_resource_breakdown(
     out_path: str,
     prefix: str = MEASURED_RESOURCES,
     resources: tuple[str, ...] = ("LUT", "DSP", "BRAM", "URAM"),
-    categories: Optional[dict[str, list[str]]] = None,
+    categories: dict[str, list[str]] | None = None,
 ) -> None:
     """One row of bar charts per model: resources per operator category, annotated with the
     share of the model total."""
-    cats = list(categories or OPTYPE_CATEGORIES) + ["Other"]
+    cats = [*(categories or OPTYPE_CATEGORIES), "Other"]
     fig, axes = plt.subplots(
         len(df), len(resources), figsize=(4 * len(resources), 3 * len(df)), squeeze=False
     )
@@ -278,7 +284,7 @@ def plot_resource_breakdown(
             ax.set_title(f"{row.get('model_name', i)} - {res}", fontsize=9)
             ax.grid(True, axis="y", linewidth=0.5)
             if total:
-                for bar, val in zip(bars, values):
+                for bar, val in zip(bars, values, strict=True):
                     ax.text(
                         bar.get_x() + bar.get_width() / 2,
                         bar.get_height(),
@@ -298,7 +304,7 @@ def plot_estimates_vs_measured(
     out_path: str,
     category: str = "Total",
     resources: tuple[str, ...] = ("LUT", "DSP", "BRAM"),
-    estimators: Optional[dict[str, str]] = None,
+    estimators: dict[str, str] | None = None,
 ) -> None:
     """Per model and resource: bars for the measured value and each estimator's estimate of one
     operator category (default: the whole design)."""
@@ -325,14 +331,19 @@ def plot_estimates_vs_measured(
 def mean_relative_error_by_category(
     df: pd.DataFrame,
     resource: str,
-    estimators: Optional[dict[str, str]] = None,
-    categories: Optional[dict[str, list[str]]] = None,
+    estimators: dict[str, str] | None = None,
+    categories: dict[str, list[str]] | None = None,
 ) -> pd.DataFrame:
     """Mean absolute relative error of each estimator (columns) per operator category (rows)
     for one resource type, averaged over all models with a non-zero measured value."""
     estimators = estimators or RESOURCE_ESTIMATORS
-    cats = list(categories or OPTYPE_CATEGORIES) + ["Other", "Total"]
-    table = pd.DataFrame(index=cats, columns=list(estimators), dtype=float)
+    cats = [*(categories or OPTYPE_CATEGORIES), "Other", "Total"]
+    # pandas' SequenceNotStr protocol does not accept list[str], although it is a valid index
+    table = pd.DataFrame(
+        index=cats,  # pyright: ignore[reportArgumentType]
+        columns=list(estimators),  # pyright: ignore[reportArgumentType]
+        dtype=float,
+    )
     for cat in cats:
         measured = df.get(f"{MEASURED_RESOURCES}.{cat}.{resource}")
         if measured is None:
@@ -355,13 +366,13 @@ def plot_mean_relative_error(
     df: pd.DataFrame,
     out_path: str,
     resources: tuple[str, ...] = ("LUT", "DSP", "BRAM"),
-    estimators: Optional[dict[str, str]] = None,
+    estimators: dict[str, str] | None = None,
 ) -> None:
-    """Grouped bar chart per resource type: mean relative estimation error per operator
+    """Plot a grouped bar chart per resource type: mean relative estimation error per operator
     category for each estimator."""
     estimators = estimators or RESOURCE_ESTIMATORS
     fig, axes = plt.subplots(1, len(resources), figsize=(6 * len(resources), 5), squeeze=False)
-    for ax, res in zip(axes[0], resources):
+    for ax, res in zip(axes[0], resources, strict=True):
         table = mean_relative_error_by_category(df, res, estimators)
         x = np.arange(len(table))
         width = 0.8 / len(estimators)
@@ -382,7 +393,7 @@ def end2end_results_table(
     df: pd.DataFrame,
     categories: tuple[str, ...] = ("Total", "MVAU"),
     resource: str = "LUT",
-    estimators: Optional[dict[str, str]] = None,
+    estimators: dict[str, str] | None = None,
     measured_power_col: str = "measured_power.avg_0V85_power",
     estimated_power_col: str = "estimate_power_empirical.Total.power",
     power_unit: str = "mW",
@@ -400,7 +411,7 @@ def end2end_results_table(
             entry[(group, "Actual")] = actual
             for label, prefix in estimators.items():
                 est = row.get(f"{prefix}.{cat}.{resource}", np.nan)
-                err = (est - actual) / actual * 100 if actual and pd.notna(est) else np.nan
+                err = (est - actual) / actual * 100 if actual and bool(pd.notna(est)) else np.nan
                 entry[(group, f"{label} err. %")] = err
         entry[(f"Power [{power_unit}]", "Measured")] = row.get(measured_power_col, np.nan)
         entry[(f"Power [{power_unit}]", "Estimated")] = row.get(estimated_power_col, np.nan)
