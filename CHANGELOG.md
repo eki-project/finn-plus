@@ -16,6 +16,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ### Fixed
 - `StreamlinePlus` never terminated on a `Transpose` followed by a scalar `Mul` that nothing downstream absorbs: `MoveTransposePastEltwise` and `MoveScalarLinearPastInvariants` moved the two past each other forever. The Transpose is no longer moved past scalar constants, the graph input/output shapes survive the reordering, and the join movers handle a join of a tensor with itself (eki-project#321)
+- `MoveMulPastJoinAdd` raised `ValueError: The truth value of an array ... is ambiguous` when the Mul constants in front of the join were per-channel arrays; they are now compared element-wise (eki-project#325)
 
 ## 1.6.2 - 13.11.2026
 
