@@ -39,7 +39,6 @@ from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
-from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
@@ -160,14 +159,22 @@ class ConvolutionInputGenerator(HWCustomOp):
         ifm_dim_h, ifm_dim_w = self.ifm_dim
         return (1, ifm_dim_h, ifm_dim_w, self.ifm_channels)
 
+    def _check_simd_folding(self) -> None:
+        """Raise a FINNFoldingError unless SIMD divides IFMChannels."""
+        if self.ifm_channels % self.simd != 0:
+            raise self._folding_error(
+                f"SIMD must divide IFMChannels (SIMD = {self.simd}, "
+                f"IFMChannels = {self.ifm_channels})"
+            )
+
+    def check_folding(self) -> None:
+        """Check the folding: SIMD must divide IFMChannels."""
+        self._check_simd_folding()
+
     def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
         ifm_dim_h, ifm_dim_w = self.ifm_dim
-        if self.ifm_channels % self.simd != 0:
-            raise FINNInternalError(
-                f"{self.onnx_node.name}: SIMD ({self.simd}) must divide "
-                f"IFMChannels ({self.ifm_channels})"
-            )
+        self._check_simd_folding()
         wf = self.ifm_channels // self.simd
         return (1, ifm_dim_h, ifm_dim_w, wf, self.simd)
 
@@ -192,11 +199,7 @@ class ConvolutionInputGenerator(HWCustomOp):
         pad = 0
         ofm_dim_h = compute_conv_output_dim(ifm_dim_h, k_h, stride_h, pad, dilation_h)
         ofm_dim_w = compute_conv_output_dim(ifm_dim_w, k_w, stride_w, pad, dilation_w)
-        if self.ifm_channels % simd != 0:
-            raise FINNInternalError(
-                f"{self.onnx_node.name}: SIMD ({simd}) must divide "
-                f"IFMChannels ({self.ifm_channels})"
-            )
+        self._check_simd_folding()
         if self.use_parallel_window_output():
             wf = self.ifm_channels // simd
             return (1, ofm_dim_h, ofm_dim_w, wf, k_h * k_w * simd)
@@ -241,11 +244,7 @@ class ConvolutionInputGenerator(HWCustomOp):
         Input and output stream width are equal for the sliding window function.
         """
         ibits = self.get_input_datatype().bitwidth()
-        if self.ifm_channels % self.simd != 0:
-            raise FINNInternalError(
-                f"{self.onnx_node.name}: SIMD ({self.simd}) must divide "
-                f"IFMChannels ({self.ifm_channels})"
-            )
+        self._check_simd_folding()
         return self.simd * ibits
 
     def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
