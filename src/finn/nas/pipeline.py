@@ -20,13 +20,14 @@ from typing import TYPE_CHECKING, Any
 
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
+from finn.analysis.fpgadataflow.folding_violations import folding_violations
 from finn.analysis.fpgadataflow.op_and_param_counts import aggregate_dict_keys, op_and_param_counts
 from finn.analysis.fpgadataflow.res_estimation import res_estimation
 from finn.builder.build_dataflow import resolve_build_steps
 from finn.builder.build_dataflow_config import DataflowBuildConfig, estimate_only_dataflow_steps
 from finn.nas.classify import (
     LAYOUT_OPS,
-    boundary_unmapped_nodes,
+    boundary_unmapped_report,
     classify_failure,
     classify_interior_float,
     classify_unmapped,
@@ -152,6 +153,14 @@ def _is_hw(node: Any) -> bool:
     return is_hls_node(node) or is_rtl_node(node)
 
 
+def _is_float32(getter: Callable[[int], DataType], index: int) -> bool | None:
+    """Return whether the datatype at ``index`` is FLOAT32, or ``None`` if it is not set yet."""
+    try:
+        return getter(index) == DataType["FLOAT32"]
+    except Exception:  # custom ops raise anything for a missing annotation
+        return None
+
+
 def interior_float_nodes(model: ModelWrapper) -> list[list[str]]:
     """Return ``[name, op_type]`` of HW nodes that are neither first nor last and use FLOAT32."""
     graph_inputs = {vi.name for vi in model.graph.input}
@@ -165,20 +174,9 @@ def interior_float_nodes(model: ModelWrapper) -> list[list[str]]:
         ):
             continue
         inst = getCustomOp(node)
-        is_float = False
-        for i in range(len(node.input)):
-            try:
-                if inst.get_input_datatype(i) == DataType["FLOAT32"]:
-                    is_float = True
-            except Exception:  # some inputs have no datatype yet
-                break
-        for o in range(len(node.output)):
-            try:
-                if inst.get_output_datatype(o) == DataType["FLOAT32"]:
-                    is_float = True
-            except Exception:
-                break
-        if is_float:
+        probes = [_is_float32(inst.get_input_datatype, i) for i in range(len(node.input))]
+        probes += [_is_float32(inst.get_output_datatype, o) for o in range(len(node.output))]
+        if any(probes):
             found.append([node.name, node.op_type])
     return found
 
@@ -352,7 +350,6 @@ def _run_stages(
     for (name, _), step in zip(stages, steps, strict=True):
         notify(name)
         t0 = time.perf_counter()
-        mark = logs.mark()
         last_model = model
         try:
             model = step(model, cfg)
@@ -363,7 +360,7 @@ def _run_stages(
             return (name, exc, last_model, None, None, None, None)
         timings[name] = time.perf_counter() - t0
         if name == "step_create_dataflow_partition":
-            result.unmapped_boundary_nodes = boundary_unmapped_nodes(logs.since(mark), last_model)
+            result.unmapped_boundary_nodes = boundary_unmapped_report(last_model)
             # Layout ops (the NCHW -> NHWC Transpose in front of every CNN) cost nothing on the
             # host; only real computation left there makes the estimates incomplete.
             host = [n for n, op in result.unmapped_boundary_nodes if op not in LAYOUT_OPS]
@@ -393,6 +390,22 @@ def _run_stages(
     timings["folding"] = time.perf_counter() - t0
     model = outcome.model
     result.throughput_target_missed = not outcome.target_met
+    # The legality check of every hardware layer's folding (what step_apply_folding_config runs
+    # for a folding file): SetFolding can produce foldings a layer cannot implement, which
+    # otherwise only surface when code is generated.
+    violations = model.analysis(folding_violations, apply_to_subgraphs=True)
+    if violations:
+        first = next(iter(violations))
+        first_node = next((n for n in model.graph.node if n.name == first), None)
+        return (
+            "folding",
+            None,
+            None,
+            FailureCategory.FOLDING_INFEASIBLE,
+            f"Illegal folding of {len(violations)} node(s): " + "; ".join(violations.values()),
+            first,
+            None if first_node is None else first_node.op_type,
+        )
     if outcome.unhandled_op_types and policy.fail_on_unhandled_op:
         op_type = outcome.unhandled_op_types[0]
         node = next((n.name for n in model.graph.node if n.op_type == op_type), None)

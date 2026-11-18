@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from finn.nas.classify import unhandled_folding_ops
 from finn.transformation.fpgadataflow.set_folding import SetFolding
 from finn.transformation.general import ApplyConfig
 from finn.transformation.qonnx.give_unique_node_names_recursive import GiveUniqueNodeNamesRecursive
@@ -27,6 +26,8 @@ class FoldingOutcome:
     model: ModelWrapper
     target_cycles: int | None = None
     target_met: bool = True
+    #: Cycles per frame of the slowest node after folding, as SetFolding estimated them.
+    achieved_cycles: int | None = None
     unhandled_op_types: list[str] = field(default_factory=list)
 
 
@@ -52,13 +53,17 @@ class TargetFpsFolding:
     fail_on_unhandled_op: bool = True
 
     def apply(
-        self, model: ModelWrapper, cfg: DataflowBuildConfig, logs: CapturedLogs
+        self, model: ModelWrapper, cfg: DataflowBuildConfig, logs: CapturedLogs  # noqa: ARG002
     ) -> FoldingOutcome:
-        """Mirror ``step_target_fps_parallelization`` but keep the SetFolding instance."""
+        """Mirror ``step_target_fps_parallelization`` but keep the SetFolding instance.
+
+        SetFolding is run without ``strict``: the oracle decides itself whether an unhandled op
+        type or a missed target is a failure (``fail_on_unhandled_op``, ``require_target_met``)
+        and reads the outcome from the transformation's attributes.
+        """
         cfg.target_fps = self.target_fps
         target_cycles = cfg._resolve_cycles_per_frame()  # noqa: SLF001
         assert target_cycles is not None
-        mark = logs.mark()
         transform = SetFolding(
             target_cycles,
             mvau_wwidth_max=cfg.mvau_wwidth_max,
@@ -66,15 +71,16 @@ class TargetFpsFolding:
         )
         model = model.transform(transform, apply_to_subgraphs=True)
         model = model.transform(GiveUniqueNodeNamesRecursive())
-        # SetFolding's any_throughput_target_missed flag is only a hint (it is also set when a
-        # later attribute meets the target after all, and not set for every unmet node), so the
-        # pipeline re-derives the verdict from the achieved cycle count after estimation.
-        target_met = not getattr(transform, "any_throughput_target_missed", False)
+        achieved = transform.achieved_cycles_per_frame
+        # The pipeline re-derives the verdict from the cycle estimates after estimation; this
+        # is the preliminary answer from the folding pass itself.
+        target_met = achieved is None or achieved <= target_cycles
         return FoldingOutcome(
             model=model,
             target_cycles=target_cycles,
             target_met=target_met,
-            unhandled_op_types=unhandled_folding_ops(logs.since(mark)),
+            achieved_cycles=achieved,
+            unhandled_op_types=list(transform.unhandled_op_types),
         )
 
 
@@ -89,7 +95,7 @@ class FixedFolding:
     def apply(
         self, model: ModelWrapper, cfg: DataflowBuildConfig, logs: CapturedLogs  # noqa: ARG002
     ) -> FoldingOutcome:
-        """Apply the folding JSON onto the model."""
+        """Apply the folding JSON onto the model (the legality check follows in the pipeline)."""
         if not self.folding_config_file.exists():
             raise FINNConfigurationError(
                 f"Folding config file {self.folding_config_file} does not exist."

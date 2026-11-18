@@ -72,32 +72,24 @@ class TestStrictCodegen:
             name.startswith("Thresholding_rtl") and name.endswith(".v") for name in generated
         )
 
-    def test_illegal_simd_is_only_found_by_codegen(self, tmp_path: Path) -> None:
-        # 5 does not divide the 16 inputs of the first layer. The estimate flow never asks
-        # the MVAU for a consistency check and happily returns numbers for it.
+    @pytest.mark.parametrize(("attr", "value"), [("SIMD", 5), ("PE", 3)])
+    def test_illegal_folding_is_found_without_codegen(
+        self, tmp_path: Path, attr: str, value: int
+    ) -> None:
+        # 5 does not divide the 16 inputs, 3 not the 8 outputs of the first layer. The folding
+        # legality check (check_folding of every HW layer) runs right after folding, so no
+        # code generation is needed to reject either.
         mvau = _first_mvau(tmp_path, "TinyMLP")
-        folding = _fixed_folding(tmp_path, {mvau: {"SIMD": 5}})
-        plain = _evaluate(tmp_path, "TinyMLP", folding=folding)
-        assert plain.feasible
-        assert plain.folding[mvau]["SIMD"] == 5
-
-        strict = _evaluate(tmp_path, "TinyMLP", folding=folding, strict_codegen=True)
-        assert not strict.feasible
-        assert strict.failure_category == FailureCategory.CODEGEN_ASSERT
-        assert strict.failure_stage == "step_hw_codegen"
-        assert strict.failure_node == mvau
-        assert strict.failure_op_type == "MVAU_hls"
-        assert "SIMD" in strict.failure_message
-
-    def test_illegal_pe_is_found_without_codegen(self, tmp_path: Path) -> None:
-        # 3 does not divide the 8 outputs. Unlike SIMD, PE enters the folded output shape
-        # that bit-width minimization queries, so every mode rejects it.
-        mvau = _first_mvau(tmp_path, "TinyMLP")
-        res = _evaluate(tmp_path, "TinyMLP", folding=_fixed_folding(tmp_path, {mvau: {"PE": 3}}))
+        res = _evaluate(
+            tmp_path, "TinyMLP", folding=_fixed_folding(tmp_path, {mvau: {attr: value}})
+        )
         assert not res.feasible
         assert res.failure_category == FailureCategory.FOLDING_INFEASIBLE
-        assert res.failure_stage == "step_minimize_bit_width"
+        assert res.failure_stage == "folding"
         assert res.failure_node == mvau
+        assert res.failure_op_type == "MVAU_hls"
+        assert attr in res.failure_message
+        assert "step_hw_codegen" not in res.timings_s
 
     def test_setfolding_result_rejected_by_codegen(self, tmp_path: Path) -> None:
         # Not only hand-written foldings: SetFolding itself leaves the 2048-input layer at

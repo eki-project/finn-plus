@@ -68,8 +68,11 @@ Results of category `TIMEOUT`, `INTERNAL_ERROR` and `CONFIG_ERROR` are never cac
 
 ## How failures are classified
 
-FINN+ signals incompatibility in different ways (typed `FINNUserError`, plain `Exception`
-with a known message, bare `assert`, or a logged warning). `classify.py` maps them:
+FINN+ signals incompatibility in different ways: typed node errors (`FINNUnsupportedOpError`
+with the `unmapped_layer_report` of every unmapped node and its position, `FINNFoldingError`
+with the folding violations), other `FINNUserError`s, plain `Exception`s with a known
+message, bare `assert`s, or a logged warning. `classify.py` prefers the typed errors and maps
+them:
 
 | Signal | Category |
 |---|---|
@@ -79,7 +82,7 @@ with a known message, bare `assert`, or a logged warning). `classify.py` maps th
 | a `Quant`/`Trunc`/`MultiThreshold` that FINN did not convert (bit width above `max_multithreshold_bit_width`, unsupported signedness, ...), unquantized weights, or non-integer data (float ReLU, missing input quantizer) feeding a layer | `DATATYPE_UNSUPPORTED` |
 | a float scale/shift that streamlining could not absorb (`ElementwiseMul`/`Add` with a float constant: unabsorbed BatchNorm, residual branches with different or non-unit scales) in front of an unmapped layer or on an interior HW node, or a leftover `Transpose`/`Reshape` between HW layers | `STREAMLINE_INCOMPLETE` |
 | other unmapped-layer / multi-partition errors | `UNMAPPED_LAYER` |
-| `SetFolding` raised, "doesn't know how to handle op_type" (`fail_on_unhandled_op`), or a HW layer rejects its `PE`/`SIMD` after folding | `FOLDING_INFEASIBLE` |
+| `SetFolding` raised, left an op type unhandled (`fail_on_unhandled_op`), the `folding_violations` analysis run right after folding reports a layer that cannot be implemented with its `PE`/`SIMD` (`check_folding`), or a HW layer rejects its folding later | `FOLDING_INFEASIBLE` |
 | throughput target missed and `require_target_met` | `THROUGHPUT_TARGET_MISSED` |
 | `strict_codegen` and `step_hw_codegen` raised an assertion or `FINNUserError` | `CODEGEN_ASSERT` |
 | `device_fit` > 1 for any resource | `RESOURCE_BUDGET_EXCEEDED` |
@@ -90,8 +93,8 @@ quantizer, then the producer of non-integer data that starves a convertible laye
 `Im2Col`, ...), then leftover streamlinable ops. The original FINN message is kept in
 `failure_message` after the diagnosis.
 
-Nodes at the graph boundary that FINN leaves to the host are listed in
-`unmapped_boundary_nodes`. Pure layout ops there (the NCHW -> NHWC `Transpose` in front of
+Nodes at the graph boundary that FINN leaves to the host (position `start`/`end` in the
+`unmapped_layer_report`) are listed in `unmapped_boundary_nodes`. Pure layout ops there (the NCHW -> NHWC `Transpose` in front of
 every CNN) are harmless. Anything else means the estimates do not cover the whole network:
 a `QuantLinear`/`QuantConv2d` without an input quantizer runs its *entire first layer* on the
 host and the oracle would still report `feasible=True` if `boundary_unmapped_is_failure` were

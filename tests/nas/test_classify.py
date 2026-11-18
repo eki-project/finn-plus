@@ -9,6 +9,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.nas.classify import (
     boundary_unmapped_nodes,
+    boundary_unmapped_report,
     classify_failure,
     classify_interior_float,
     classify_unmapped,
@@ -16,7 +17,13 @@ from finn.nas.classify import (
     unhandled_folding_ops,
 )
 from finn.nas.result import FailureCategory
-from finn.util.exception import FINNConfigurationError, FINNInternalError, FINNUserError
+from finn.util.exception import (
+    FINNConfigurationError,
+    FINNFoldingError,
+    FINNInternalError,
+    FINNUnsupportedOpError,
+    FINNUserError,
+)
 
 
 def _model_with(op_types: list[tuple[str, str, str]]) -> ModelWrapper:
@@ -330,3 +337,61 @@ class TestClassify:
         ]
         assert unhandled_folding_ops(msgs) == ["Foo_hls"]
         assert boundary_unmapped_nodes(msgs, model) == [["Mul_0", "Mul"], ["TopK_1", "TopK"]]
+
+
+@pytest.mark.util
+class TestTypedErrors:
+    """The typed node errors of the partitioning and folding steps are used directly."""
+
+    def test_unsupported_op_error_uses_the_unmapped_report(self) -> None:
+        # The report names the harmless boundary Transpose too; only the interior Sigmoid
+        # (and the MatMul it starves) keep the HW layers from forming one partition.
+        model = _model_with(
+            [
+                ("Transpose_0", "Transpose", ""),
+                ("MVAU_0", "MVAU", "finn.custom_op.fpgadataflow"),
+                ("Sigmoid_0", "Sigmoid", ""),
+                ("MatMul_0", "MatMul", ""),
+                ("MVAU_1", "MVAU", "finn.custom_op.fpgadataflow"),
+            ]
+        )
+        exc = FINNUnsupportedOpError(
+            "Unsupported/unmapped layer(s) found in between FINN operators, starting with node "
+            "MatMul_0. Complete list of unmapped nodes: Transpose_0, Sigmoid_0, MatMul_0",
+            node_name="MatMul_0",
+            op_type="MatMul",
+            unmapped_nodes=[
+                {"name": "Transpose_0", "op_type": "Transpose", "domain": "", "position": "start"},
+                {"name": "Sigmoid_0", "op_type": "Sigmoid", "domain": "", "position": "interior"},
+                {"name": "MatMul_0", "op_type": "MatMul", "domain": "", "position": "interior"},
+            ],
+        )
+        f = classify_failure("step_create_dataflow_partition", exc, model)
+        assert f.category == FailureCategory.UNSUPPORTED_OP
+        assert (f.node, f.op_type) == ("Sigmoid_0", "Sigmoid")
+
+    def test_folding_error_with_violations(self) -> None:
+        exc = FINNFoldingError(
+            "Illegal folding configuration of 2 node(s): ...",
+            node_name="MVAU_hls_0",
+            op_type="MVAU_hls",
+            violations={"MVAU_hls_0": "MVAU_hls_0: SIMD 5 does not divide MW 8", "VVAU_1": "x"},
+        )
+        f = classify_failure("folding", exc, None)
+        assert f.category == FailureCategory.FOLDING_INFEASIBLE
+        assert (f.node, f.op_type) == ("MVAU_hls_0", "MVAU_hls")
+        assert "SIMD 5 does not divide MW 8" in f.message
+        f = classify_failure(
+            "step_hw_codegen", FINNFoldingError("PE 3 > 8", "N0", "VVAU_hls"), None
+        )
+        assert f.category == FailureCategory.FOLDING_INFEASIBLE and f.node == "N0"
+
+    def test_boundary_unmapped_report(self) -> None:
+        model = _model_with(
+            [
+                ("Transpose_0", "Transpose", ""),
+                ("MVAU_0", "MVAU", "finn.custom_op.fpgadataflow"),
+                ("TopK_1", "TopK", ""),
+            ]
+        )
+        assert boundary_unmapped_report(model) == [["Transpose_0", "Transpose"], ["TopK_1", "TopK"]]

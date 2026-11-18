@@ -50,7 +50,7 @@ def _graph_state(model: ModelWrapper) -> str:
     The constants matter: a transformation may legitimately report a modification that only
     changes initializer values (threshold rounding), which is not a revisited state.
     """
-    digest = hashlib.sha1()  # noqa: S324 - not used for security
+    digest = hashlib.sha1()
     for node in model.graph.node:
         digest.update(node.SerializeToString())
     for init in model.graph.initializer:
@@ -107,8 +107,8 @@ def bounded_streamline_plus(budget: int = MAX_STREAMLINE_MODIFICATIONS) -> Trans
 
 
 def step_streamline_plus(
-    model: ModelWrapper, cfg: DataflowBuildConfig
-) -> ModelWrapper:  # noqa: ARG001
+    model: ModelWrapper, cfg: DataflowBuildConfig  # noqa: ARG001
+) -> ModelWrapper:
     """Streamline with ``StreamlinePlus``; otherwise the builder's ``step_streamline``."""
     model = model.transform(absorb.AbsorbScalarBiasIntoMultiThreshold())
     model = model.transform(bounded_streamline_plus())

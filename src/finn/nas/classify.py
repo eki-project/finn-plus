@@ -1,9 +1,12 @@
 """Map FINN+'s heterogeneous failure signals onto :class:`FailureCategory`.
 
-FINN+ reports incompatibilities in several ways: typed ``FINNUserError`` s, plain
-``Exception`` s with a recognizable message, bare ``assert`` s inside custom ops, and
-warnings that are only logged. This module turns any of these into a structured
-:class:`Failure` so the NAS loop gets a stable, machine-readable signal.
+FINN+ reports incompatibilities in several ways: typed node errors (``FINNUnsupportedOpError``
+with the report of every unmapped node and its position, ``FINNFoldingError`` with the
+folding violations), other ``FINNUserError`` s, plain ``Exception`` s with a recognizable
+message, bare ``assert`` s inside custom ops, and warnings that are only logged. This module
+turns any of these into a structured :class:`Failure` so the NAS loop gets a stable,
+machine-readable signal. The typed errors are preferred; the message patterns remain for the
+transformations that still raise plain exceptions.
 """
 
 from __future__ import annotations
@@ -12,8 +15,15 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from finn.analysis.fpgadataflow.unsupported_layers import unmapped_layer_report
 from finn.nas.result import FailureCategory
-from finn.util.exception import FINNConfigurationError, FINNInternalError, FINNUserError
+from finn.util.exception import (
+    FINNConfigurationError,
+    FINNFoldingError,
+    FINNInternalError,
+    FINNUnsupportedOpError,
+    FINNUserError,
+)
 
 if TYPE_CHECKING:
     from onnx import NodeProto
@@ -187,7 +197,11 @@ def unhandled_folding_ops(messages: list[str]) -> list[str]:
 
 
 def boundary_unmapped_nodes(messages: list[str], model: ModelWrapper | None) -> list[list[str]]:
-    """Extract ``[name, op_type]`` of boundary nodes FINN reported as staying on the host."""
+    """Extract ``[name, op_type]`` of boundary nodes FINN reported as staying on the host.
+
+    Parses the warning of the partitioning step; :func:`boundary_unmapped_report` reads the
+    same information from the model and is what the pipeline uses.
+    """
     result: list[list[str]] = []
     for msg in messages:
         m = _RE_BOUNDARY_UNMAPPED.search(msg)
@@ -199,6 +213,16 @@ def boundary_unmapped_nodes(messages: list[str], model: ModelWrapper | None) -> 
             info = lookup_node(model, name)
             result.append([name, info[0] if info else "?"])
     return result
+
+
+def boundary_unmapped_report(model: ModelWrapper) -> list[list[str]]:
+    """Return ``[name, op_type]`` of the unmapped nodes at the start or end of ``model``.
+
+    Uses FINN's ``unmapped_layer_report`` analysis on the model as it enters the partitioning
+    step: nodes with position ``"start"`` or ``"end"`` stay outside the dataflow partition.
+    """
+    report = model.analysis(unmapped_layer_report)
+    return [[n["name"], n["op_type"]] for n in report if n["position"] != "interior"]
 
 
 def _is_float(model: ModelWrapper, tensor: str) -> bool:
@@ -430,11 +454,23 @@ def classify_failure(
     msg = first_line(exc)
     tb_node, tb_op = node_from_traceback(exc)
 
-    # 1. Typed FINN exceptions carrying node information (future upstream change).
+    # 1. Typed FINN exceptions carrying node information.
     node_attr = getattr(exc, "node_name", None)
     op_attr = getattr(exc, "op_type", None)
     if isinstance(exc, FINNConfigurationError):
         return Failure(FailureCategory.CONFIG_ERROR, stage, node_attr, op_attr, msg)
+    if isinstance(exc, FINNUnsupportedOpError) and exc.unmapped_nodes:
+        # The partitioning step reports every unmapped node with its position; only the
+        # interior ones keep the hardware layers from forming one partition.
+        interior = [n["name"] for n in exc.unmapped_nodes if n["position"] == "interior"]
+        names = interior or [n["name"] for n in exc.unmapped_nodes]
+        return classify_unmapped(stage, names, msg, last_model, interior=not interior)
+    if isinstance(exc, FINNFoldingError):
+        if exc.violations:
+            msg = f"Illegal folding of {len(exc.violations)} node(s): " + "; ".join(
+                exc.violations.values()
+            )
+        return Failure(FailureCategory.FOLDING_INFEASIBLE, stage, node_attr, op_attr, msg[:500])
 
     # 2. Message patterns.
     m = _RE_NO_HW_VARIANT.search(msg)
