@@ -14,6 +14,9 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ### Changed
 - A folding that cannot be implemented (e.g. a `PE` that does not divide the number of channels of an MVAU, VVAU, sliding window generator, padding, pooling, stream duplication or label selection layer) fails at the end of `step_apply_folding_config` with a `FINNFoldingError` that lists all affected nodes, instead of an assertion during code generation or FIFO insertion. Estimate-only builds, which used to report estimates for such a folding, fail as well (eki-project#310)
 
+### Fixed
+- `StreamlinePlus` never terminated on a `Transpose` followed by a scalar `Mul` that nothing downstream absorbs: `MoveTransposePastEltwise` and `MoveScalarLinearPastInvariants` moved the two past each other forever. The Transpose is no longer moved past scalar constants, the graph input/output shapes survive the reordering, and the join movers handle a join of a tensor with itself (eki-project#321)
+
 ## 1.6.2 - 13.11.2026
 
 ### Added
