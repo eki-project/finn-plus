@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
-from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
@@ -97,16 +96,18 @@ class DuplicateStreams(HWCustomOp):
         """Return normal input shape."""
         return (*self.num_input_vectors, self.num_channels)
 
+    def check_folding(self) -> None:
+        """Check the folding: PE must divide NumChannels."""
+        if self.num_channels % self.pe != 0:
+            raise self._folding_error(
+                f"PE must divide NumChannels (PE = {self.pe}, NumChannels = {self.num_channels})"
+            )
+
     def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
-        ch = self.num_channels
-        pe = self.pe
-        if ch % pe != 0:
-            raise FINNInternalError(
-                f"{self.onnx_node.name}: PE ({pe}) must divide NumChannels ({ch})"
-            )
-        folds = ch // pe
-        return (*self.num_input_vectors, folds, pe)
+        self.check_folding()
+        folds = self.num_channels // self.pe
+        return (*self.num_input_vectors, folds, self.pe)
 
     def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal output shape.
