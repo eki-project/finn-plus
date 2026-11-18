@@ -311,6 +311,29 @@ class VVAU(MemStreamOp):
         o_bits = self.get_output_datatype().bitwidth()
         return o_bits * self.pe
 
+    def _check_simd_folding(self) -> None:
+        """Raise a FINNFoldingError unless SIMD divides the kernel size (k_h * k_w)."""
+        k_h, k_w = self.kernel
+        if (k_h * k_w) % self.simd != 0:
+            raise self._folding_error(
+                "Requirement kernel (k_h * k_w) divisable by SIMD is violated. "
+                f"(k_h * k_w = {k_h * k_w}, SIMD = {self.simd})"
+            )
+
+    def _check_pe_folding(self) -> None:
+        """Raise a FINNFoldingError unless PE divides Channels."""
+        if self.channels % self.pe != 0:
+            raise self._folding_error(
+                "Requirement Channels divisable by PE is violated. "
+                f"(Channels = {self.channels}, PE = {self.pe})"
+            )
+
+    def check_folding(self) -> None:
+        """Check the folding: SIMD must divide the kernel size (k_h * k_w) and PE must
+        divide Channels."""
+        self._check_simd_folding()
+        self._check_pe_folding()
+
     def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:
         """Return the folded input shape for hardware implementation."""
         k_h, k_w = self.kernel
@@ -319,11 +342,8 @@ class VVAU(MemStreamOp):
         simd = self.simd
         pe = self.pe
         kernel_2 = k_h * k_w
-        if kernel_2 % simd != 0:
-            raise FINNInternalError("Requirement kernel (k_h * k_w) divisable by SIMD is violated.")
+        self.check_folding()
         sf = kernel_2 // simd
-        if ch % pe != 0:
-            raise FINNInternalError("Requirement Channels divisable by PE is violated.")
         nf = ch // pe
 
         if ind == 0:
@@ -604,8 +624,7 @@ class VVAU(MemStreamOp):
         ch = self.channels
         pe = self.pe
         tmem = self.calc_tmem()
-        if ch % pe != 0:
-            raise FINNInternalError("Requirement Channels divisable by PE is violated.")
+        self._check_pe_folding()
         if orig_thres_matrix.ndim != 2:
             raise FINNInternalError("Threshold matrix dimension is not as expected (2).")
         n_thres_steps = orig_thres_matrix.shape[1]
