@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <ap_int.h>
@@ -57,6 +58,16 @@ void tensorstream2npy(hls::stream<tensor<ElemT, DIMS...>> &in_stream, std::vecto
 		outer *= shape[d];
 	}
 	for(size_t  o = 0; o < outer; o++) {
+		if(in_stream.empty()) {
+			// A read from an empty hls::stream blocks forever in C simulation. The
+			// free-running testbench stopped before the operator produced every
+			// output, usually because its idle timeout is shorter than the gap
+			// between two outputs (see HLSBackend.timeout_value).
+			throw  std::runtime_error(
+				"cppsim: output stream of " + std::string(npy_path) + " ran empty after "
+				+ std::to_string(o) + " of " + std::to_string(outer) + " tokens"
+			);
+		}
 		tensor<ElemT, DIMS...>  t;
 		in_stream >> t;
 		auto  flat = t.template reshape<ElemT, ELEMS>();

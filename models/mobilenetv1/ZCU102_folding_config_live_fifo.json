@@ -1,5 +1,13 @@
 {
-  "Defaults": {"ram_cascade_height": [0, ["MVAU_rtl", "VVAU_hls"]]},
+  "Defaults": {
+    "ram_cascade_height": [
+      0,
+      [
+        "MVAU_rtl",
+        "VVAU_hls"
+      ]
+    ]
+  },
   "ConvolutionInputGenerator_rtl_0": {
     "SIMD": 1,
     "parallel_window": 0,
@@ -1404,17 +1412,6 @@
     ],
     "depth_trigger_uram": 32768,
     "depth_trigger_bram": 16384
-  },
-  "ConvolutionInputGenerator_rtl_14": {
-    "SIMD": 1,
-    "parallel_window": 0,
-    "ram_style": "block",
-    "inFIFODepths": [
-      2
-    ],
-    "outFIFODepths": [
-      2
-    ]
   },
   "Pool_hls_0": {
     "PE": 1,

@@ -12,9 +12,6 @@
   "FMPadding_1": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_1": {
-    "preferred_impl_style": "rtl"
-  },
   "Pool_0": {
     "preferred_impl_style": "hls"
   },
@@ -30,7 +27,7 @@
   "FMPadding_2": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_2": {
+  "ConvolutionInputGenerator_1": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_3": {
@@ -60,7 +57,7 @@
   "FMPadding_3": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_3": {
+  "ConvolutionInputGenerator_2": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_6": {
@@ -90,7 +87,7 @@
   "FMPadding_4": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_4": {
+  "ConvolutionInputGenerator_3": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_9": {
@@ -123,7 +120,7 @@
   "FMPadding_5": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_5": {
+  "ConvolutionInputGenerator_4": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_13": {
@@ -153,7 +150,7 @@
   "FMPadding_6": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_6": {
+  "ConvolutionInputGenerator_5": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_16": {
@@ -183,7 +180,7 @@
   "FMPadding_7": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_7": {
+  "ConvolutionInputGenerator_6": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_19": {
@@ -213,7 +210,7 @@
   "FMPadding_8": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_8": {
+  "ConvolutionInputGenerator_7": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_22": {
@@ -246,7 +243,7 @@
   "FMPadding_9": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_9": {
+  "ConvolutionInputGenerator_8": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_26": {
@@ -276,7 +273,7 @@
   "FMPadding_10": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_10": {
+  "ConvolutionInputGenerator_9": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_29": {
@@ -306,7 +303,7 @@
   "FMPadding_11": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_11": {
+  "ConvolutionInputGenerator_10": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_32": {
@@ -336,7 +333,7 @@
   "FMPadding_12": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_12": {
+  "ConvolutionInputGenerator_11": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_35": {
@@ -366,7 +363,7 @@
   "FMPadding_13": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_13": {
+  "ConvolutionInputGenerator_12": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_38": {
@@ -396,7 +393,7 @@
   "FMPadding_14": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_14": {
+  "ConvolutionInputGenerator_13": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_41": {
@@ -432,7 +429,7 @@
   "FMPadding_15": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_15": {
+  "ConvolutionInputGenerator_14": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_45": {
@@ -462,7 +459,7 @@
   "FMPadding_16": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_16": {
+  "ConvolutionInputGenerator_15": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_48": {
@@ -492,7 +489,7 @@
   "FMPadding_17": {
     "preferred_impl_style": "rtl"
   },
-  "ConvolutionInputGenerator_17": {
+  "ConvolutionInputGenerator_16": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_51": {
@@ -509,9 +506,6 @@
   },
   "ChannelwiseOp_1": {
     "preferred_impl_style": "hls"
-  },
-  "ConvolutionInputGenerator_18": {
-    "preferred_impl_style": "rtl"
   },
   "Pool_1": {
     "preferred_impl_style": "hls"

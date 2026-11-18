@@ -199,6 +199,16 @@ class MVAU_hls(MVAU, HLSBackend):
             static constexpr unsigned PE1 = {self.pe};"""
         ]
 
+    def timeout_value(self) -> None:
+        """Set the number of consecutive idle calls after which cppsim stops.
+
+        The free-running top consumes one SIMD-wide input token per call and emits an
+        output only after MW/SIMD of them, so the default of 1000 idle calls is too
+        short for wider or less folded layers (e.g. MW 1152 at SIMD 1): the loop then
+        ends early and the final output read blocks forever.
+        """
+        self.code_gen_dict["$TIMEOUT_VALUE$"] = [str(self.mw // self.simd + 1000)]
+
     def read_npy_data(self) -> None:
         """Emit C++ code that reads the input (and streamed weight) numpy data for cppsim."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")

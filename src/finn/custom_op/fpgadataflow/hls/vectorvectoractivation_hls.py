@@ -279,6 +279,16 @@ class VVAU_hls(VVAU, HLSBackend):
             static constexpr unsigned PE1 = {self.pe};"""
         ]
 
+    def timeout_value(self) -> None:
+        """Set the number of consecutive idle calls after which cppsim stops.
+
+        One output needs k_h * k_w / SIMD input tokens (one per call), so the default
+        of 1000 idle calls is too short for large kernels at small SIMD, see
+        MVAU_hls.timeout_value.
+        """
+        k_h, k_w = self.kernel
+        self.code_gen_dict["$TIMEOUT_VALUE$"] = [str(k_h * k_w // self.simd + 1000)]
+
     def read_npy_data(self) -> None:
         """Return read npy data."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")

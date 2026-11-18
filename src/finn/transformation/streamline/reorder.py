@@ -2254,11 +2254,12 @@ class MoveTransposePastEltwise(Transformation):
                         node.input[0] = mid
                         # Transpose now produces the original output tensor
                         node.output[0] = out
-                        # Delete the shape annotation of the connecting tensors
-                        # to be re-done later
-                        _clear_tensor_shape(model, inp)
+                        # Only the middle tensor changes shape (it now holds the
+                        # elementwise result in the input's layout), so only its
+                        # annotation is redone. The input may be a graph input,
+                        # whose shape InferShapes cannot recover once cleared, and
+                        # the output keeps its shape.
                         _clear_tensor_shape(model, mid)
-                        _clear_tensor_shape(model, out)
                         # Track whether the graph has been modified, never
                         # resets to False
                         graph_modified = True

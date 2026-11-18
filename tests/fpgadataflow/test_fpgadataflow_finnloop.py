@@ -1002,9 +1002,13 @@ def test_finnloop_end2end_mlo_batched_verification():
 
     parent = ModelWrapper(out_dir + "/intermediate_models/dataflow_parent.onnx")
     assert parent.get_nodes_by_op_type("Transpose")
-    # a single SUCCESS file: all 5 frames were checked in one stitched-IP rtlsim run
-    results = os.listdir(out_dir + "/verification_output")
-    assert results == ["verify_stitched_ip_rtlsim_0_SUCCESS.npz"], results
+    # a single SUCCESS context (plus its FINN+ statistics file): all 5 frames were checked
+    # in one stitched-IP rtlsim run
+    results = sorted(os.listdir(out_dir + "/verification_output"))
+    assert results == [
+        "verify_stitched_ip_rtlsim_0_SUCCESS.npz",
+        "verify_stitched_ip_rtlsim_0_SUCCESS_stats.txt",
+    ], results
 
 
 @pytest.mark.fpgadataflow

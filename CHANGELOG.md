@@ -19,6 +19,8 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ### Changed
 - (Xilinx) HLS operators use the tensor stream interface of finn-hlslib `a74d7e0` (`hls::stream<tensor<T, N>>` instead of packed `ap_uint` streams). The FINN+-only HLS operators (attention, head split/merge, `Squeeze`/`Unsqueeze`, `StreamingFIFO_hls`) are ported to it, the attention operator together with attention-hlslib (iksnagreb/attention-hlslib#3). Run `finn deps update` after pulling (Xilinx#1728)
+- (Xilinx) `StreamingFIFO_rtl` stores the unpadded payload only, and fifo.sv's `auto` storage selection sees that width: FIFOs narrower than 5 bits are built in LUTRAM at any depth (previously the AXI-Stream byte padding made them BRAM/URAM candidates). The Python-side style and resource prediction (`resolve_ram_style`, `*_estimation`) uses the unpadded width accordingly (Xilinx#1749, eki-project#323)
+- The folding and `specialize_layers` configurations of the regression models under `models/` are regenerated for the consolidated `Pool` (the window-generator nodes in front of pooling layers are gone and the remaining `ConvolutionInputGenerator` nodes are renumbered) (eki-project#323)
 - `ScaledDotProductAttention_hls` raises an error for a thresholds activation whose bias and output type the finn-hlslib `ThresholdsActivation` cannot represent (negative bias with an output type wider than the threshold count needs) instead of computing wrong values (eki-project#323)
 - (Xilinx) One `Pool` operator covers max/average/sum pooling including its window generation; models containing the previous `Pool` nodes fed by a `ConvolutionInputGenerator` have to be regenerated (Xilinx#1756)
 - (Xilinx) The `binaryXnorMode` attribute of `MVAU`/`VVAU` is removed, bipolar weights and inputs are specified as such (Xilinx#1728)
@@ -29,6 +31,8 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - (Xilinx) A node or stitched-IP simulation whose RTL raises `$error`/`$fatal` fails with `finn.xsi.SimulationError` (Xilinx#1756)
 
 ### Fixed
+- `MoveTransposePastEltwise` dropped the shape annotation of the graph input it rewired, which shape inference cannot restore; only the middle tensor is re-inferred now, as upstream does (eki-project#323)
+- The cppsim of `MVAU_hls` and `VVAU_hls` stopped before the last outputs for layers that need more than 1000 input tokens per output (e.g. MW 1152 at SIMD 1) and then hung forever in the final stream read; the idle timeout now covers the input fold, and `tensorstream2npy` fails with a message instead of blocking when an output stream runs empty (eki-project#323)
 - (Xilinx) The generic RTL data width converter runs at full rate for non-integer width ratios; upstream's `vpc.sv` replaces the FINN+ fix (Xilinx#1722, Xilinx#1731, Xilinx#1749)
 - (Xilinx) `InsertFIFO` takes the shape and datatype of the output a FIFO is attached to, relevant for `StreamingSplit` (Xilinx#1738)
 - (Xilinx) Cycle estimates of the data width converter, `LayerNorm` and `LabelSelect` (Xilinx#1730, Xilinx#1185)
