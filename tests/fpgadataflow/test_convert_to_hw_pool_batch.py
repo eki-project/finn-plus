@@ -257,6 +257,11 @@ def test_convert_to_hw_maxpool_ceil_mode(ceil_config, exec_mode):
     pe = 2
 
     ofm_dim = compute_pool_output_dim(ifm_dim, k, stride, pad, ceil_mode=1)
+    # The last window must not start inside the end padding (ONNX MaxPool since opset 22,
+    # onnx/onnx#5741). qonnx releases up to 1.0.0 compute the output dimension without that
+    # rule (fixed in qonnx c4f7649), so the reference and the converted model disagree there.
+    if (ofm_dim - 1) * stride >= ifm_dim + pad:
+        pytest.skip("installed qonnx lacks the ceil_mode window-drop rule (qonnx c4f7649)")
     model = make_single_maxpool_modelwrapper(
         k, stride, pad, ifm_ch, ifm_dim, ofm_dim, idt, ceil_mode=1
     )
