@@ -12,6 +12,17 @@ from finn_plus_driver import get_driver_class
 from measurement_util import PAF, Recorder
 from pynq import PL
 
+_T0 = time.monotonic()
+
+
+def em_log(msg):
+    """Print an experiment manager log line prefixed with the seconds elapsed since import.
+
+    The board trace carries no timestamps, so these stamps are the only way to attribute the
+    per-run measurement time (overlay load, warmup, experiment, report writing).
+    """
+    print(f"[EM +{time.monotonic() - _T0:6.1f}s] {msg}", flush=True)
+
 
 class ExperimentManager:
     """Manages multiple experiments."""
@@ -76,7 +87,8 @@ class ExperimentManager:
             e = experiment.start_experiment()
             if e != 0:
                 exit_code = 1
-                print(f"[EM] EXPERIMENT {experiment._name} EXITED WITH ERROR: {e}")
+                em_log(f"EXPERIMENT {experiment._name} EXITED WITH ERROR: {e}")
+        em_log("ALL EXPERIMENTS DONE")
         sys.exit(exit_code)
 
 
@@ -145,12 +157,13 @@ class Experiment:
         Before an experiment is executed it is initialized and then run
         with the specified configuration.
         """
-        print(f"[EM] SETTING UP EXPERIMENT: {self._name}")
-        print(f"[EM] MONITORING RAILS: {self._rails}")
-        print(f"[EM] MONITORING SENSORS: {self._sensors}")
+        em_log(f"SETTING UP EXPERIMENT: {self._name}")
+        em_log(f"MONITORING RAILS: {self._rails}")
+        em_log(f"MONITORING SENSORS: {self._sensors}")
         self.load_experiment_overlay()
+        em_log(f"OVERLAY LOADED FOR EXPERIMENT: {self._name}")
         if self._power_supply_ip is not None:
-            print(f"[EM] POWER SUPPLY IP: {self._power_supply_ip}")
+            em_log(f"POWER SUPPLY IP: {self._power_supply_ip}")
 
         experiment_path = os.path.join(self._report_path, self._name.replace(" ", "_"))
 
@@ -162,21 +175,21 @@ class Experiment:
             omit_current=True,
             omit_voltage=True,
         )
-        print(f"[EM] STARTING EXPERIMENT: {self._name}")
+        em_log(f"STARTING EXPERIMENT: {self._name}")
 
         for i in range(1, self._iterations + 1):
             iteration_path = os.path.join(experiment_path, f"exp_itr_{i}")
             os.makedirs(iteration_path, exist_ok=True)
             if self._record_warmup:
                 self._recorder.start()
-                print("Record warmup")
+                em_log("RECORDING WARMUP")
 
             for function in self._functions:
                 name = function["function_name"]
                 kwargs = function.get("kwargs", {})
                 kwargs["report_dir"] = iteration_path
 
-                print(f"[EM] STARTING ITERATION {i} OF FUNCTION {name}, KWARGS= {kwargs}")
+                em_log(f"STARTING ITERATION {i} OF FUNCTION {name}, KWARGS= {kwargs}")
                 func = getattr(self._driver_inst, name)
 
                 if self._timeout is None:
@@ -191,17 +204,19 @@ class Experiment:
                 time.sleep(self._warmup)
 
                 if not self._record_warmup and not self._recorder.is_running():
-                    print(f"[EM] STARTING RECORDING AFTER {self._warmup} s OF WARMUP", flush=True)
+                    em_log(f"STARTING RECORDING AFTER {self._warmup} s OF WARMUP")
                     self._recorder.start()
 
                 # wait on DUT to finish
                 p.join()
+                em_log(f"FINISHED ITERATION {i} OF FUNCTION {name}")
 
             # stop & reset recorder and save results
             self._recorder.stop()
             self._recorder.save_dfs_to_xlsx(experiment_path, f"{self._name}_run_{i}")
             self._recorder.save_dfs_to_json(experiment_path, f"{self._name}_run_{i}")
             self._recorder.reset()
+            em_log(f"RESULTS SAVED FOR ITERATION {i} OF EXPERIMENT: {self._name}")
 
             if (
                 p.exitcode != 0
@@ -219,5 +234,5 @@ if __name__ == "__main__":
         ex_flow = ExperimentManager(json_path, working_dir)
         ex_flow.start_experiments()
     else:
-        print("[EM] ERROR: Provide settings.json path and working directory as argument")
+        em_log("ERROR: Provide settings.json path and working directory as argument")
         sys.exit(1)
