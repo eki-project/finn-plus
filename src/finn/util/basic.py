@@ -206,6 +206,12 @@ def wait_for_file(
         if stable_for <= 0:
             return True
 
+        # A path last modified more than stable_for ago is already stable. Without this check a
+        # heavily loaded process can miss the deadline before taking the second sample below and
+        # report an existing, long finished file as missing.
+        if time.time() - st.st_mtime_ns / 1e9 >= stable_for:
+            return True
+
         cur = (st.st_size, st.st_mtime_ns)
         now = time.monotonic()
         if cur == last:

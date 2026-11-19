@@ -183,6 +183,7 @@ class PartitionForMultiFPGA(Transformation):
             self.cfg._resolve_fpga_part(),  # noqa
             self.cfg.partitioning_configuration.considered_resources,
             True,
+            self.cfg.partitioning_configuration.use_node_ooc_estimates,
         )
         device_resources = available_resources_on_platform(
             platforms[self.cfg.board](), self.cfg.partitioning_configuration.considered_resources

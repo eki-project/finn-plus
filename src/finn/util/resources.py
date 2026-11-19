@@ -1,10 +1,14 @@
 """Resource utility functions."""
 
+import json
 from qonnx.core.modelwrapper import ModelWrapper
+from typing import cast
 
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.res_estimation import res_estimation
+from finn.util.basic import getHWCustomOp
 from finn.util.exception import FINNInternalError, FINNUserError
+from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 from finn.util.platforms import Platform
 
@@ -63,6 +67,7 @@ def get_estimated_model_resources(  # noqa
     fpga_part: str,
     considered_resources: list[str],
     add_missing_resources: bool,
+    use_node_ooc_estimates: bool = False,
 ) -> ResourceEstimates:
     """Gather resources of all layers based on estimates both from FINNs HWCustomOp implementation,
     as well as the HLS reports. These are then merged to produce
@@ -78,10 +83,37 @@ def get_estimated_model_resources(  # noqa
             resource types are set to 0. If, for example, a layer has no `FF` estimate
             in either FINN or HLS estimation, FF: 0 is entered for these layers. If set
             to `False`, an error is raised instead.
+        `use_node_ooc_estimates`: Replace the merged estimates by the per-node
+            out-of-context results (`res_ooc` node attribute) where they exist.
     """
     estimates: ResourceEstimates = res_estimation(model, fpga_part)
     hls_estimates: ResourceEstimates = hls_synth_res_estimation(model)
     result: ResourceEstimates = _merge_resource_estimations(estimates, hls_estimates)
+
+    if use_node_ooc_estimates:
+        nodes_without_ooc = []
+        for node in model.graph.node:
+            if not (is_hls_node(node) or is_rtl_node(node)):
+                continue
+            res_ooc = cast("str", getHWCustomOp(node).get_nodeattr("res_ooc"))
+            if res_ooc == "":
+                nodes_without_ooc.append(node.name)
+                continue
+            ooc: dict[str, int | float] = json.loads(res_ooc)
+            # Vivado counts RAMB36 and RAMB18 primitives separately, the estimates count
+            # 18K blocks, so a RAMB36 counts as two
+            ooc["BRAM_18K"] = ooc.get("BRAM_18K", 0) + 2 * ooc.get("BRAM_36K", 0)
+            result[node.name] = {
+                restype: value
+                for restype, value in ooc.items()
+                if restype in ["LUT", "FF", "DSP", "URAM", "BRAM_18K"]
+            }
+        if nodes_without_ooc:
+            log.info(
+                "No per-node out-of-context results, using the merged FINN and HLS estimates "
+                f"for: {', '.join(nodes_without_ooc)}"
+            )
+
     resource_missing = False
 
     # Check if resource types are missing (and add them)

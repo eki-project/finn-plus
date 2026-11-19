@@ -99,6 +99,10 @@ class HWCustomOp(CustomOp):
             "rtlsim_trace": ("s", False, ""),
             "res_estimate": ("s", False, ""),
             "res_synth": ("s", False, ""),
+            # Vivado project of the per-node out-of-context run (BuildNodeOOC) and the
+            # resource utilization extracted from it as JSON (AnnotateNodeOOCResources)
+            "ooc_proj_path": ("s", False, ""),
+            "res_ooc": ("s", False, ""),
             "rtlsim_so": ("s", False, ""),
             # partitioning info
             # ID of SLR to which the Op is attached in Vitis builds

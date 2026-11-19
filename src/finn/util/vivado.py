@@ -42,7 +42,7 @@ from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
 
 
-def _parse_vivado_utilization_report(report_path: str | Path) -> dict[str, int]:
+def parse_vivado_utilization_report(report_path: str | Path) -> dict[str, int]:
     """Parse a Vivado utilization report file to extract resource counts.
 
     The utilization report has a table format with | delimiters. We look for
@@ -245,7 +245,7 @@ def parse_ooc_synth_results(report_dir: str | Path) -> dict[str, Any] | None:
 
     # Parse all reports
     ret = {}
-    ret.update(_parse_vivado_utilization_report(util_path))
+    ret.update(parse_vivado_utilization_report(util_path))
     ret.update(_parse_vivado_timing_report(timing_path))
     ret.update(_parse_vivado_power_report(power_path))
     ret.update(_parse_ooc_metadata(metadata_path))
@@ -267,12 +267,17 @@ def run_ooc_pnr(
     block_name: str,
     clk_period_ns: float,
     clk_name: str = "ap_clk",
+    place_and_route: bool = True,
 ) -> Path:
     """Open an existing stitched-IP Vivado project, make sure it is synthesized
     out-of-context, then run opt/place/route and write the OOC report files
     (ooc_utilization.rpt, ooc_timing.rpt, ooc_power.rpt, ooc_metadata.txt) into
     the project directory. Returns the project directory; use
     :func:`parse_ooc_synth_results` to read the reports.
+
+    The utilization after opt_design is always written to ooc_opt_utilization.rpt.
+    With ``place_and_route=False`` the flow stops there, so only that report and
+    ooc_metadata.txt are written.
 
     This mirrors the ``run_pnr`` path of ``CreateStitchedIP`` but can be invoked
     as a separate build step on a project that was already created and
@@ -300,24 +305,29 @@ def run_ooc_pnr(
         "# --- Place and Route for OOC Metrics ---",
         f"create_clock -period {float(clk_period_ns)} [get_ports {clk_name}]",
         "opt_design",
-        "place_design",
-        "route_design",
-        "",
-        "# Write reports to files for Python-side parsing",
-        f'report_utilization -file "{proj_dir}/ooc_utilization.rpt"',
-        f'report_timing_summary -file "{proj_dir}/ooc_timing.rpt"',
-        f'report_power -file "{proj_dir}/ooc_power.rpt"',
+        f'report_utilization -file "{proj_dir}/ooc_opt_utilization.rpt"',
         "",
         "# Write metadata (clock period, Vivado version) to a simple file",
         f'set fp [open "{proj_dir}/ooc_metadata.txt" w]',
         f'puts $fp "clk_period_ns={float(clk_period_ns)}"',
         'puts $fp "vivado_version=[version -short]"',
         "close $fp",
-        "",
-        "# Save routed checkpoint",
-        f"write_checkpoint -force {proj_dir}/{block_name}_routed.dcp",
-        "close_project",
     ]
+    if place_and_route:
+        tcl += [
+            "",
+            "place_design",
+            "route_design",
+            "",
+            "# Write reports to files for Python-side parsing",
+            f'report_utilization -file "{proj_dir}/ooc_utilization.rpt"',
+            f'report_timing_summary -file "{proj_dir}/ooc_timing.rpt"',
+            f'report_power -file "{proj_dir}/ooc_power.rpt"',
+            "",
+            "# Save routed checkpoint",
+            f"write_checkpoint -force {proj_dir}/{block_name}_routed.dcp",
+        ]
+    tcl.append("close_project")
     tcl_file = proj_dir / "ooc_pnr.tcl"
     tcl_file.write_text("\n".join(tcl) + "\n")
     try:

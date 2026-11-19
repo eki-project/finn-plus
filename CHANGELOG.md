@@ -6,6 +6,11 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
+## Unreleased
+
+### Added
+- Per-node out-of-context resource estimates: `step_node_ooc_estimates` (output `node_ooc_estimates`, flow chosen by `node_ooc_flow`: `synth_opt` or `place_and_route`) implements every node on its own in Vivado and writes `estimate_layer_resources_ooc_{opt,route}.json`; the Multi-FPGA partitioner uses these numbers with `use_node_ooc_estimates` (eki-project#PR)
+
 ## 1.6.2 - 13.11.2026
 
 ### Added
