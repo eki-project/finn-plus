@@ -61,6 +61,11 @@ def _clear_tensor_shape(model: ModelWrapper, tensor_name: str) -> None:
     passing ``None`` through to ``onnx.helper.make_tensor_value_info`` is a
     supported way of marking a tensor's shape as unknown/to-be-inferred.
     """
+    # The shapes of the graph inputs and outputs are fixed by the interface; shape inference
+    # could not restore them and the graph would be left without an input shape
+    interface = [vi.name for vi in model.graph.input] + [vi.name for vi in model.graph.output]
+    if tensor_name in interface:
+        return
     model.set_tensor_shape(tensor_name, cast("Sequence[int]", None))
 
 
@@ -1624,6 +1629,17 @@ class MoveTransposePastScalarMul(Transformation):
         return (model, graph_modified)
 
 
+def _remove_other_producers(model: ModelWrapper, producers: list[NodeProto]) -> None:
+    """Delete the producers of a join except the first one, which was moved past the join.
+
+    ``producers`` has one entry per join input. A join of a tensor with itself (``Add(x, x)``)
+    lists the same node for every input; that node must survive as the moved one (#321).
+    """
+    for prod in producers[1:]:
+        if prod != producers[0] and prod in model.graph.node:
+            model.graph.node.remove(prod)
+
+
 class MoveIdenticalOpPastJoinOp(Transformation):
     """Move multiple identical operations on different branches past the common join node.
     It assumes the shape to be preserved by the join op in the default move_node() method.
@@ -1659,8 +1675,7 @@ class MoveIdenticalOpPastJoinOp(Transformation):
         producers[0].input[0] = new_join_output
         producers[0].output[0] = join_out
 
-        for prod in producers[1:]:
-            model.graph.node.remove(prod)
+        _remove_other_producers(model, producers)
 
         return True
 
@@ -1702,7 +1717,10 @@ class MoveIdenticalOpPastJoinOp(Transformation):
 
                 # check for producers that are fork nodes (need to fork them before our transform)
                 for prod in producers:
-                    if model.is_fork_node(prod) and not model.is_join_node(prod):
+                    successors = model.find_direct_successors(prod) or []
+                    # a producer whose every consumer is this join is not a fork, even if the
+                    # join consumes it more than once
+                    if any(succ != n for succ in successors) and not model.is_join_node(prod):
                         model = model.transform(MoveOpPastFork(self.ops_to_move))
                         # topology modified, "ask" ModelWrapper to apply this transform again
                         return (model, True)
@@ -1776,7 +1794,9 @@ class MoveMulPastJoinAdd(MoveIdenticalOpPastJoinOp):
         first_mul = model.get_initializer(producers[0].input[1])
         if first_mul is None:
             return False
-        return all(first_mul == model.get_initializer(producer.input[1]) for producer in producers)
+        # per-channel constants are arrays: compare element-wise, `==` would be ambiguous
+        others = [model.get_initializer(producer.input[1]) for producer in producers[1:]]
+        return all(other is not None and np.array_equal(first_mul, other) for other in others)
 
 
 class MoveMulPastJoinMul(MoveIdenticalOpPastJoinOp):
@@ -1890,8 +1910,7 @@ class MoveTransposePastJoinConcat(MoveIdenticalOpPastJoinOp):
         producers[0].input[0] = new_concat_out
         producers[0].output[0] = concat_out
 
-        for prod in producers[1:]:
-            model.graph.node.remove(prod)
+        _remove_other_producers(model, producers)
 
         return True
 
@@ -2002,8 +2021,7 @@ class MoveAffinePastJoinConcat(MoveIdenticalOpPastJoinOp):
         producers[0].input[0] = new_concat_out
         producers[0].output[0] = concat_out
 
-        for prod in producers[1:]:
-            model.graph.node.remove(prod)
+        _remove_other_producers(model, producers)
 
         return True
 
@@ -2218,19 +2236,16 @@ class MoveTransposePastEltwise(Transformation):
                     # second input is a constant initializer
                     if (value := model.get_initializer(a)) is not None:
                         value = cast("npt.NDArray[Any]", value)
-                        # Do not transpose scalar or effectively scalar
-                        # initializers
-                        # fmt: off
-                        if not (value.shape is None or all(
-                                x == 1 for x in value.shape)):
-                            # fmt: on
-                            # Transpose the initializer and re-insert into the
-                            # model
-                            # fmt: off
-                            model.set_initializer(
-                                a, value.transpose(inverse_perm)
-                            )
-                            # fmt: on
+                        # Scalar (or effectively scalar) constants are left to
+                        # MoveScalarLinearPastInvariants, which moves them
+                        # downstream past the Transpose. Moving the Transpose
+                        # past them here would undo that and the exhaustive
+                        # streamlining would never terminate (#321).
+                        if value.shape is None or all(x == 1 for x in value.shape):
+                            continue
+                        # Transpose the initializer and re-insert into the
+                        # model
+                        model.set_initializer(a, value.transpose(inverse_perm))
                         # Rewire the graph to feed original input and the
                         # transposed initializer into the Add node first
                         successor.input[:] = [inp, a]

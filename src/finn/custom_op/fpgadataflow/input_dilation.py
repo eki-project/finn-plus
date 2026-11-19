@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
-from finn.util.exception import FINNInternalError, FINNUserError
+from finn.util.exception import FINNUserError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
@@ -158,25 +158,25 @@ class InputDilation(HWCustomOp):
         odim_h, odim_w = self.get_padded_odim()
         return (1, odim_h, odim_w, self.num_channels)
 
+    def check_folding(self) -> None:
+        """Check the folding: SIMD must divide NumChannels."""
+        if self.num_channels % self.simd != 0:
+            raise self._folding_error(
+                f"SIMD must divide input channels (SIMD = {self.simd}, "
+                f"NumChannels = {self.num_channels})"
+            )
+
     def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
         normal_ishape = list(self.get_normal_input_shape())
-        if self.num_channels % self.simd != 0:
-            raise FINNInternalError(
-                f"{self.onnx_node.name}: SIMD ({self.simd}) must divide "
-                f"input channels ({self.num_channels})"
-            )
+        self.check_folding()
         fold = normal_ishape[-1] // self.simd
         return (*normal_ishape[:-1], fold, self.simd)
 
     def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded output shape."""
         normal_oshape = list(self.get_normal_output_shape())
-        if self.num_channels % self.simd != 0:
-            raise FINNInternalError(
-                f"{self.onnx_node.name}: SIMD ({self.simd}) must divide "
-                f"input channels ({self.num_channels})"
-            )
+        self.check_folding()
         fold = normal_oshape[-1] // self.simd
         return (*normal_oshape[:-1], fold, self.simd)
 

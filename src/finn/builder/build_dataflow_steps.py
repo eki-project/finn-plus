@@ -70,12 +70,13 @@ from finn.analysis.fpgadataflow.empirical_qor_estimation import (
     empirical_res_estimation,
 )
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
+from finn.analysis.fpgadataflow.folding_violations import folding_violations
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.node_ooc_res_estimation import node_ooc_res_estimation
 from finn.analysis.fpgadataflow.op_and_param_counts import aggregate_dict_keys, op_and_param_counts
 from finn.analysis.fpgadataflow.post_synth_res import post_synth_res
 from finn.analysis.fpgadataflow.res_estimation import res_estimation, res_estimation_complete
-from finn.analysis.fpgadataflow.unsupported_layers import unsupported_layers
+from finn.analysis.fpgadataflow.unsupported_layers import unmapped_layer_report, unsupported_layers
 from finn.builder.build_dataflow_config import (
     AutoFIFOSizingMethod,
     DataflowBuildConfig,
@@ -218,7 +219,8 @@ from finn.util.exception import (
     FINNConfigurationError,
     FINNInternalError,
     FINNMultiFPGAUserError,
-    FINNUserError,
+    FINNFoldingError,
+    FINNUnsupportedOpError,
 )
 from finn.util.execution import execute_parent
 from finn.util.fpgadataflow import is_mlo, warn_hls_rtl_dsp_conflict
@@ -1354,10 +1356,13 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
     # This would cause a "cyclic-free graph partitioning violated" error otherwise
     results = model.analysis(unsupported_layers)
     if results[0] is False:
-        raise FINNUserError(
+        raise FINNUnsupportedOpError(
             f"Unsupported/unmapped layer(s) found in between FINN operators, "
             f"starting with node {results[1].name}. "
-            "Complete list of unmapped nodes: " + ", ".join(unmapped_layers)
+            "Complete list of unmapped nodes: " + ", ".join(unmapped_layers),
+            node_name=results[1].name,
+            op_type=results[1].op_type,
+            unmapped_nodes=model.analysis(unmapped_layer_report),
         )
 
     # Warn if unsupported layers remain at the start or end of the graph
@@ -1530,7 +1535,12 @@ def step_target_fps_parallelization(model: ModelWrapper, cfg: DataflowBuildConfi
 @register_build_dataflow_step()
 def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Apply the folding configuration file onto the model to set folding (parallelization)
-    and other attributes, if config file is specified."""
+    and other attributes, if config file is specified.
+
+    Afterwards the folding of all layers is checked (see the `folding_violations` analysis),
+    no matter whether it was set by this step, by `step_target_fps_parallelization` or before
+    the build: a folding that cannot be implemented raises a FINNFoldingError here instead of
+    failing later, e.g. during code generation or FIFO insertion."""
     model = model.transform(GiveUniqueNodeNamesRecursive())
     if cfg.folding_config_file is not None:
         model = model.transform(ApplyConfig(cfg.folding_config_file), apply_to_subgraphs=True)
@@ -1560,6 +1570,19 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
         )
     else:
         log.info("No folding config json provided, skipping step_apply_folding_config.")
+
+    # Fail early if a layer cannot be implemented with its folding
+    violations = model.analysis(folding_violations, apply_to_subgraphs=True)
+    if violations:
+        first_name = next(iter(violations))
+        first_node = model.get_node_from_name(first_name)
+        raise FINNFoldingError(
+            f"Illegal folding configuration of {len(violations)} node(s): "
+            + "; ".join(violations.values()),
+            node_name=first_name,
+            op_type=None if first_node is None else first_node.op_type,
+            violations=violations,
+        )
 
     return model
 

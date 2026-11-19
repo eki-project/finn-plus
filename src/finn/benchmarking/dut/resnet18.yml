@@ -18,6 +18,7 @@ steps:
   - step_generate_estimate_reports
   - step_generate_hardware
   - step_create_stitched_ip
+  - step_prepare_synthesis
   - step_synthesize_bitfile
   - step_make_driver
   - step_deployment_package
