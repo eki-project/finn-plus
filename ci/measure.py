@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
@@ -105,7 +106,9 @@ if __name__ == "__main__":
         # Extract to a temporary dir on the local disk (never unpack onto the share)
         os.makedirs(extract_dir, exist_ok=True)
         delete_dir_contents(extract_dir)
+        t_start = time.monotonic()
         shutil.unpack_archive(str(deploy_archive), extract_dir)
+        t_unpacked = time.monotonic()
 
         # Prefix stdout to make it easier to identify the run in the console output
         print("LAUNCHING MEASUREMENT MANAGER FOR DEPLOY PACKAGE: %s" % run_in_dir.name)
@@ -123,6 +126,7 @@ if __name__ == "__main__":
             text=True,
         )
 
+        t_measured = time.monotonic()
         for line in result.stdout.splitlines():
             print(f"[{run_in_dir.name}] {line}")
         for line in result.stderr.splitlines():
@@ -148,6 +152,18 @@ if __name__ == "__main__":
             status = "failed"
 
         exchange.mark_done(run_out_dir, status, returncode=result.returncode)
+        # Per-phase wall-clock of this run (the board trace carries no timestamps): where the
+        # time goes between the experiments themselves and the share/board overhead
+        print(
+            "TIMING %s: unpack %.1f s, measure %.1f s, collect %.1f s (%s)"
+            % (
+                run_in_dir.name,
+                t_unpacked - t_start,
+                t_measured - t_unpacked,
+                time.monotonic() - t_measured,
+                time.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+        )
         exchange.chown_to_sudo_user(run_out_dir)
         summary[f"run_{run_id}"] = status
         delete_dir_contents(extract_dir)
