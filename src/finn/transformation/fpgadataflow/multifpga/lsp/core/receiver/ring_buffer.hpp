@@ -347,6 +347,26 @@ namespace lsp {
                     ap_uint<constants::CREDIT_LIMIT_WIDTH>(0)
                 );
             }
+
+            /** Implementation of tryReadIntoStream: ring I feeds the I-th stream. */
+            template<int... Ws, typename... Rings, size_t... Is>
+            void _tryReadIntoStream(
+                std::index_sequence<Is...>,
+                std::tuple<Rings...>& rings,
+                hls::stream<ap_uint<Ws>>&... streams
+            ) {
+                #pragma HLS inline
+                int a[] = {0, ((void) std::get<Is>(rings).tryReadIntoStream(streams), 0)...};
+                (void) a;
+            }
+
+            /** Try to write one committed word of every ring into its stream: ring I feeds the I-th stream. In
+            hardware every ring gets its own copy, all running in parallel. */
+            template<int... Ws, typename... Rings>
+            void tryReadIntoStream(std::tuple<Rings...>& rings, hls::stream<ap_uint<Ws>>&... streams) {
+                #pragma HLS inline
+                _tryReadIntoStream(std::make_index_sequence<sizeof...(Ws)>(), rings, streams...);
+            }
         }
     }
 }

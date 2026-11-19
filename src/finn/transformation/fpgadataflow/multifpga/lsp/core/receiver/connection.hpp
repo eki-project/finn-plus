@@ -41,13 +41,15 @@ namespace lsp {
             }
         }
 
-        /** Parse the segments of one beat into the rings and return the next parser state; a malformed frame is dropped whole. */
+        /** Parse the segments of one beat into the rings and return the next parser state; a malformed frame is
+        dropped whole. In a PROBE frame (isProbe) every entry must be a BLOCKED report. */
         template <int... Ws, size_t... Ds>
         connection_state _readDataSegments(
             stream_widths_t<Ws...>,
             ring_depths_t<Ds...>,
             ap_uint<clog2(1 + constants::BEAT_WIDTH)> initialOffset,
             beat_t& data,
+            bool isProbe,
             ctrl_status_t<sizeof...(Ws)>& creditUpdate,
             ring_buffer::stream_ring_buffers_t<ring_buffer::lsp_ring_depths_t<Ds...>, Ws...> &buffers,
             ap_uint<header_t::PAYLOAD_WIDTH>& frameChunksLeft,
@@ -77,6 +79,9 @@ namespace lsp {
                     creditUpdate.takeNewer(
                         ctrl_status_t<sizeof...(Ws)>::template makeACK<true>(creditUpdate.expectedFSN, segment.stream, buffers)
                     );
+                } else if (isProbe) {
+                    // Malformed: a PROBE entry with payload
+                    return _dropFrame(data, buffers);
                 } else {
                     switch (ring_buffer::dispatchSegment(buffers, segment)) {
                         case ring_buffer::lsp_stream_ring_buffer_update_result::SEGMENT_READ:
@@ -144,8 +149,10 @@ namespace lsp {
             stream_widths_t<Ws...> widths,
             ring_depths_t<Ds...> depths,
             hls::stream<beat_t>& macStream,
-            hls::stream<ctrl_status_t<sizeof...(Ws)>>& controlStream
+            hls::stream<ctrl_status_t<sizeof...(Ws)>>& controlStream,
+            hls::stream<ap_uint<Ws>>&... outStreams
         ) {
+#pragma HLS pipeline II=1
             using ctrl_status_t = ctrl_status_t<sizeof...(Ws)>;
 
             // State kept across calls
@@ -157,6 +164,9 @@ namespace lsp {
 
             // BLOCKED answers collected over the current frame, sent at once when it ends
             static ctrl_status_t creditUpdate;
+
+            // Try to empty streams
+            ring_buffer::tryReadIntoStream(buffers, outStreams...);
 
             // Credit check on every call, beat or not: report the limits of all streams whose credit update is due
             auto currentCreditStatus = ctrl_status_t::template makeACK<false>(expectedFSN, buffers);
@@ -195,9 +205,13 @@ namespace lsp {
                 frameChunksLeft = header.payloadChunks;
                 offset += header_t::WIDTH;
 
-                // Neither DATA nor PROBE
+                // Neither DATA nor PROBE: discard. An unknown frame type is NACKed at once, since the frame will be
+                // replayed anyway
                 if (header.frameType != constants::FRAME_DATA && header.frameType != FRAME_PROBE) {
                     state = !data.last ? connection_state::DISCARDING_INVALID_FRAME : state;
+                    if (header.frameType != FRAME_CREDIT_ACK && header.frameType != FRAME_NACK) {
+                        controlStream.write_nb(ctrl_status_t::makeNACKImmediately(expectedFSN));
+                    }
                     return;
                 }
 
@@ -227,8 +241,17 @@ namespace lsp {
                 || state == connection_state::EXPECT_FRAME_START
                 || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME
             ) {
-                state = _readDataSegments(widths, depths, offset, data, creditUpdate, buffers, frameChunksLeft, controlStream);
-                if (state == connection_state::EXPECT_FRAME_START && header.frameType != FRAME_PROBE) {
+                const bool isProbe = header.frameType == FRAME_PROBE;
+                state = _readDataSegments(
+                    widths, depths, offset, data, isProbe, creditUpdate, buffers, frameChunksLeft, controlStream
+                );
+                const bool dropped = state == connection_state::DISCARDING_INVALID_FRAME
+                    || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME;
+                if (dropped && !isProbe) {
+                    // A malformed DATA frame will be replayed anyway: NACK it at once instead of waiting for the
+                    // next frame to show the gap. A dropped PROBE gets no answer, the sender repeats it
+                    controlStream.write_nb(ctrl_status_t::makeNACKImmediately(expectedFSN));
+                } else if (state == connection_state::EXPECT_FRAME_START && !isProbe) {
                     expectedFSN++;
                     controlStream.write_nb(ctrl_status_t::makeFSNUpdate(expectedFSN));
                     ring_buffer::commitAll(buffers);
