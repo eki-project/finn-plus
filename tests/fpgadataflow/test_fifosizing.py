@@ -187,7 +187,7 @@ def test_fifosizing_linear(topology: Literal["tfc", "cnv"]) -> None:
                 # in the first 112 cycles of a 7168-cycle frame, so it needs the next vector
                 # buffered up front to run at full rate.
                 "StreamingFIFO_rtl_3": 160,
-                "StreamingFIFO_rtl_4": 32,
+                "StreamingFIFO_rtl_4": 35,
                 "StreamingFIFO_rtl_5": 32,
                 "StreamingFIFO_rtl_6": 32,
                 "StreamingFIFO_rtl_7": 32,
@@ -199,7 +199,7 @@ def test_fifosizing_linear(topology: Literal["tfc", "cnv"]) -> None:
                 "StreamingFIFO_rtl_1": 1024,
                 "StreamingFIFO_rtl_2": 64,
                 "StreamingFIFO_rtl_3": 2240,
-                "StreamingFIFO_rtl_4": 64,
+                "StreamingFIFO_rtl_4": 70,
                 "StreamingFIFO_rtl_5": 64,
                 "StreamingFIFO_rtl_6": 64,
                 "StreamingFIFO_rtl_7": 256,

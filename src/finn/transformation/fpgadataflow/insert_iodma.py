@@ -181,7 +181,9 @@ class InsertIODMA(Transformation):
             dwc_outputs,
             domain="finn.custom_op.fpgadataflow",
             backend="fpgadataflow",
-            shape=shape,
+            # the converter changes the stream width only, the tensor shape is kept
+            inShape=shape,
+            outShape=shape,
             inWidth=dwc_in_width,
             outWidth=dwc_out_width,
             dataType=dtype,

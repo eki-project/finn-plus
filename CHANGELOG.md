@@ -31,6 +31,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - (Xilinx) A node or stitched-IP simulation whose RTL raises `$error`/`$fatal` fails with `finn.xsi.SimulationError` (Xilinx#1756)
 
 ### Fixed
+- `InferThresholdingLayer` converts a channels-first `MultiThreshold` to NHWC also when its `data_layout` attribute or the output tensor layout is unset: per-channel thresholds follow the declared layout, otherwise the input tensor layout decides, and only an annotated NCHW/NHWC disagreement between input and output is an error, as upstream does (eki-project#323)
 - `MoveTransposePastEltwise` dropped the shape annotation of the graph input it rewired, which shape inference cannot restore; only the middle tensor is re-inferred now, as upstream does (eki-project#323)
 - The cppsim of `MVAU_hls` and `VVAU_hls` stopped before the last outputs for layers that need more than 1000 input tokens per output (e.g. MW 1152 at SIMD 1) and then hung forever in the final stream read; the idle timeout now covers the input fold, and `tensorstream2npy` fails with a message instead of blocking when an output stream runs empty (eki-project#323)
 - (Xilinx) The generic RTL data width converter runs at full rate for non-integer width ratios; upstream's `vpc.sv` replaces the FINN+ fix (Xilinx#1722, Xilinx#1731, Xilinx#1749)

@@ -1111,7 +1111,8 @@ def test_finnloop_end2end_mlo_index_deadlock():
         mlo=True,
         loop_body_hierarchy=[["", "layers.0"]],
         loop_body_range=(model.graph.node[0], model.graph.node[2]),
-        auto_fifo_depths=False,
+        # shallow FIFOs everywhere (upstream: auto_fifo_depths=False without a config)
+        auto_fifo_strategy=build_cfg.AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS,
         verify_steps=["stitched_ip_rtlsim"],
         verify_input_npy=output_dir + "/input.npy",
         verify_expected_output_npy=output_dir + "/expected_output.npy",
