@@ -217,10 +217,11 @@ from finn.util.basic import (
 from finn.util.config import extract_model_config_to_json
 from finn.util.exception import (
     FINNConfigurationError,
+    FINNFoldingError,
     FINNInternalError,
     FINNMultiFPGAUserError,
-    FINNFoldingError,
     FINNUnsupportedOpError,
+    FINNUserError,
 )
 from finn.util.execution import execute_parent
 from finn.util.fpgadataflow import is_mlo, warn_hls_rtl_dsp_conflict
