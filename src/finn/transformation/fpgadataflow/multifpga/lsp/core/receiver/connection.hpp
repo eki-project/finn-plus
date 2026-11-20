@@ -13,12 +13,7 @@ namespace lsp {
         using namespace messages;
         using namespace helpers;
         using namespace constants;
-
-        template <int... Ws>
-        struct stream_widths_t {};
-
-        template <size_t... Ds>
-        struct ring_depths_t {};
+        using namespace utils;
 
 
         // Parser state, kept across beats

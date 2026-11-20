@@ -1,0 +1,44 @@
+// Generated from {{ config_name }}, do not edit
+#include "manager.hpp"
+#include "connection.hpp"
+#include "controller_tx.hpp"
+
+using namespace lsp;
+using namespace lsp::receiver;
+
+void receiver_top(
+    hls::stream<beat_t>& fromCMAC,
+    hls::stream<beat_t>& toCMAC
+{%- for conn in connections %}
+{%- set c = loop.index0 %}
+{%- for stream in conn.streams %},
+    hls::stream<ap_uint<{{ stream.width }}>>& c{{ c }}_s{{ loop.index0 }}
+{%- endfor %}
+{%- endfor %}
+) {
+    using PEERS = mac_index_lookup_t<{{ connections | map(attribute="mac") | join(", ") }}>;
+
+    hls::stream<beat_t, CMAC_BEAT_BUFFER> ingress("ingress");
+    hls::stream<beat_t, CMAC_BEAT_BUFFER> egress("egress");
+    hls::stream<beat_t> macStreams[PEERS::N];
+
+    cmacIngress(fromCMAC, ingress);
+    manager<PEERS>(ingress, egress, macStreams);
+
+    // TODO: CONTROLLER_TX + SELECTOR
+
+{% for conn in connections %}
+{%- set c = loop.index0 %}
+    // Connection {{ c }}, peer {{ conn.mac }}
+    hls::stream<ctrl_status_t<{{ conn.streams | length }}>> ctrlStatus{{ c }}("ctrl_status_{{ c }}");
+    connection(
+        stream_widths_t<{{ conn.streams | map(attribute="width") | join(", ") }}>{},
+        ring_depths_t<{{ conn.streams | map(attribute="depth") | join(", ") }}>{},
+        macStreams[{{ c }}],
+        ctrlStatus{{ c }}
+        {%- for stream in conn.streams %},
+        c{{ c }}_s{{ loop.index0 }}
+        {%- endfor %}
+    );
+{% endfor -%}
+}

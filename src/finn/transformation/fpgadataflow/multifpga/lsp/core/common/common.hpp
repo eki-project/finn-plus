@@ -1,8 +1,6 @@
 #ifndef LSP_COMMON_HPP
 #define LSP_COMMON_HPP
 
-#define DEVELOP
-
 #include <ap_axi_sdata.h>
 #include <ap_int.h>
 #include <hls_stream.h>
@@ -13,6 +11,14 @@
 
 
 namespace lsp {
+    namespace utils {
+        template <int... Ws>
+        struct stream_widths_t {};
+
+        template <size_t... Ds>
+        struct ring_depths_t {};
+    }
+
     namespace messages {
         using lsp::constants::BEAT_WIDTH;
         using lsp::constants::creditsPerBeat;

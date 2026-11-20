@@ -7,7 +7,29 @@
 
 namespace lsp {
     namespace receiver {
-        // TODO: template<typename Peers> controller_tx(egress, egressFrames, ctrlStatus)
+        template<int Streams>
+        void controllerTX(
+            hls::stream<ctrl_status_t<Streams>>& controllerInStream,
+            hls::stream<beat_t>& toCMAC
+        ) {
+            #pragma HLS pipeline II=1
+            static ctrl_status_t<Streams> status;
+
+            // Read controller stream and react to it. If no ack or nack is required, this simply overwrites the
+            // current state.
+            status.takeNewer(controllerInStream.read());
+            if (!status.ackImmediately && !status.nackImmediately) {
+                return;
+            }
+
+            if (status.ackImmediately && !status.nackImmediately) {
+                // TODO
+            } else if (!status.ackImmediately && status.nackImmediately) {
+                // TODO
+            } else if (status.ackImmediately && status.nackImmediately) {
+                // TODO
+            }
+        }
     }
 }
 #endif  // LSP_RECEIVER_CONTROLLER_TX_HPP

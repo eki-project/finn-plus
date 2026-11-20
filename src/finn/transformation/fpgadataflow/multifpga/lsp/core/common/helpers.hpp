@@ -6,6 +6,7 @@
 #include "constants.hpp"
 #include <ap_int.h>
 #include <cassert>
+#include <hls_stream.h>
 
 namespace lsp {
 
@@ -34,6 +35,55 @@ namespace lsp {
         struct chunk_offset_t {
             ap_uint<clog2(constants::CHUNKS_PER_BEAT + 1)> index;
         };
+
+        /** Round robin selector/priority encoder. Searches and returns index of the first valid stream. Manually
+        advance using advancePast() if the stream could be used successfully. Keeps state across calls. */
+        template<int... Ws>
+        struct round_robin_selector_t {
+            static constexpr int N = sizeof...(Ws);
+            static constexpr int INDEX_WIDTH = clog2(N + 1);
+            ap_uint<INDEX_WIDTH> index = 0;
+
+            ap_uint<INDEX_WIDTH> select(hls::stream<ap_uint<Ws>>&... streams) {
+                // Get an array of all valid streams and only consider these
+                bool _valids[N] = {!streams.empty()...};
+                ap_uint<N> valids = 0;
+
+                // Transfer into ap_uint
+                for (unsigned i = 0; i < sizeof...(Ws); ++i) {
+                    #pragma HLS unroll
+                    valids[i] = _valids[i];
+                }
+
+                // Return faulty value if no index is valid
+                if (valids == 0) {
+                    return N;
+                }
+
+                // From right pick the lowest (implicitly) valid thats larger than index
+                ap_uint<INDEX_WIDTH> lower = 0, upper = 0;
+                bool foundUpper = false;
+                for (int i = N - 1; i >= 0; --i) {
+                    #pragma HLS unroll
+                    if (valids[i]) {
+                        lower = i;
+                        if (i >= index) {
+                            upper = i;
+                            foundUpper = true;
+                        }
+                    }
+                }
+
+                // Set index to 1 after the selected field
+                return foundUpper ? upper : lower;
+            }
+
+            void advancePast(ap_uint<INDEX_WIDTH> target) {
+                index = (target == sizeof...(Ws) - 1) ? ap_uint<INDEX_WIDTH>(0) : ap_uint<INDEX_WIDTH>(target + 1);
+            }
+
+        };
+
 
         /** Reverse the byte order of `value`. Converts a multi-byte field between wire order (most
         * significant byte first, so in the lowest bits of an AXI Stream beat) and its numeric value,
