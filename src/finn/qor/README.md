@@ -232,6 +232,11 @@ git commit per run plus a push of all of them, and the collection job skips the 
 the experiment fetch and the push for microbenchmark configs. Consequently there is no
 `ci_known_good` reference comparison for microbenchmarks; the smoke config checks that
 the flow builds and measures, the database tells whether the numbers moved.
+Microbenchmark samples also set `save_local_artifacts: on_failure`: a bench run normally copies
+its complete build output and a zip of the FINN tmp dir into the local artifact directory of
+the pipeline (about 180 files and 100 MB per microbenchmark run, nothing downstream reads
+them); with this setting only failed runs leave that debugging material behind. The other
+values are `always` (default for regression runs) and `never`.
 
 **Artifact exchange.** Per-run artifacts (reports, `deploy.zip` bitstream packages) are
 exchanged between the build (cluster), measurement (board) and collection runners through a

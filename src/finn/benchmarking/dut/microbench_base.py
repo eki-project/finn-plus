@@ -165,6 +165,10 @@ class MicrobenchDUT(bench):
             # are not needed and dominated the collection time (one git commit per run)
             "store_results_in_dvc_data": True,
             "store_results_in_dvc_experiment": False,
+            # the uncompressed build output and the zipped FINN tmp dir (~180 files and
+            # ~100 MB per run) are only useful for debugging failed runs; everything the
+            # collection needs is on the exchange and samples can be rebuilt from the seed
+            "save_local_artifacts": "on_failure",
             # 200 MHz: HLS target, out-of-context synthesis, shell clocking wizard and the
             # frequency the design runs at on the board all follow this value
             "synth_clk_period_ns": 5,

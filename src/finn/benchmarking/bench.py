@@ -294,8 +294,9 @@ def start_bench_run(config_name, config=None):
 
         # save per-run artifacts (e.g., reports and deployment package) to the exchange
         bench_object.save_artifacts_collection()
-        # save local artifacts of this run (e.g., full build dir, detailed debug info)
-        bench_object.save_local_artifacts_collection()
+        # save local artifacts of this run (e.g., full build dir, detailed debug info),
+        # subject to the save_local_artifacts run parameter
+        bench_object.save_local_artifacts_collection(failed=run_id in failed_runs)
         # signal completion to the measurement/collection jobs
         exchange.mark_done(
             os.path.join(artifacts_dir, "runs_output", "run_%d" % run_id),

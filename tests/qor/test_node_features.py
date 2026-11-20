@@ -521,3 +521,9 @@ def test_microbenchmarks_do_not_track_dvc_experiments():
     assert isinstance(entries, list) and entries
     for entry in entries:
         assert entry["store_results_in_dvc_experiment"] == [False]
+
+
+def test_microbenchmarks_keep_local_artifacts_only_on_failure():
+    """Successful microbenchmark runs leave no build output / tmp zip in the local artifact dir."""
+    for dut_cls in MICROBENCH_DUTS.values():
+        assert dut_cls.sample_defaults()["save_local_artifacts"] == "on_failure"

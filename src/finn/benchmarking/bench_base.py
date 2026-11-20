@@ -62,6 +62,10 @@ class bench:
             debug (bool, optional): Enable debug mode for additional artifact collection.
                                   Defaults to True.
 
+        The run parameter ``save_local_artifacts`` decides whether the local (debug) artifacts
+        are written at all: ``"always"`` (default), ``"on_failure"`` (only for runs that
+        failed) or ``"never"``. The pipeline artifacts on the exchange are not affected.
+
         The constructor performs several initialization tasks:
         - Sets up default board and timing configurations
         - Configures shell flow type based on board selection
@@ -77,6 +81,12 @@ class bench:
         self._artifacts_dir = artifacts_dir
         self._save_dir = save_dir
         self._debug = debug
+        self._save_local_artifacts = str(params.get("save_local_artifacts", "always"))
+        if self._save_local_artifacts not in ("always", "on_failure", "never"):
+            raise ValueError(
+                "save_local_artifacts must be 'always', 'on_failure' or 'never', got "
+                f"'{self._save_local_artifacts}'"
+            )
 
         # Setup some basic global default configuration
         # TODO: clean up or remove these attributes
@@ -182,8 +192,7 @@ class bench:
         # Collect tuples of (name, source path, archive?) to save as local artifacts
         self._local_artifacts_collection = []
         if self._debug:
-            # Save entire FINN_BUILD_DIR
-            # TODO: add option to only save upon error/exception
+            # Save entire FINN_BUILD_DIR (subject to the save_local_artifacts policy)
             self._local_artifacts_collection.append(
                 ("debug_finn_tmp", get_settings().finn_build_dir, True)
             )
@@ -251,17 +260,29 @@ class bench:
             target_path = Path(self._artifacts_dir) / "runs_output" / f"run_{self._run_id}" / name
             self._save_artifact(str(target_path), str(source_path), archive)
 
-    def save_local_artifacts_collection(self) -> None:
+    def save_local_artifacts_collection(self, failed: bool = False) -> None:
         """Save all collected local artifacts for debugging.
 
         This method should be called upon successful or failed completion of a run.
         It processes all artifacts in the local_artifacts_collection list and saves
-        them to the local save directory.
+        them to the local save directory, unless the ``save_local_artifacts`` run
+        parameter is ``"never"``, or ``"on_failure"`` and the run did not fail.
+
+        Args:
+            failed (bool): Whether the run failed (bench or builder reported a failure)
 
         Local artifacts typically include:
         - Complete build output directories
         - FINN build directory contents (when debug=True)
         """
+        if self._save_local_artifacts == "never" or (
+            self._save_local_artifacts == "on_failure" and not failed
+        ):
+            print(
+                "Skipping local artifacts (save_local_artifacts=%s, failed=%s)"
+                % (self._save_local_artifacts, failed)
+            )
+            return
         for name, source_path, archive in self._local_artifacts_collection:
             target_path = Path(self._save_dir) / name / f"run_{self._run_id}"
             self._save_artifact(str(target_path), str(source_path), archive)
