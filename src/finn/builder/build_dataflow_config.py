@@ -144,11 +144,22 @@ class DataflowOutputType(str, Enum):
     STITCHED_IP = "stitched_ip"
     ESTIMATE_REPORTS = "estimate_reports"
     OOC_SYNTH = "out_of_context_synth"
+    NODE_OOC_ESTIMATES = "node_ooc_estimates"
     RTLSIM_PERFORMANCE = "rtlsim_performance"
     BITFILE = "bitfile"
     PYNQ_DRIVER = "pynq_driver"
     CPP_DRIVER = "cpp_driver"
     DEPLOYMENT_PACKAGE = "deployment_package"
+
+
+class NodeOOCFlow(str, Enum):
+    """Vivado flow for the per-node out-of-context resource estimates
+    (step_node_ooc_estimates)."""
+
+    #: Out-of-context synthesis followed by opt_design
+    SYNTH_OPT = "synth_opt"
+    #: Out-of-context synthesis, opt_design, place_design and route_design
+    PLACE_AND_ROUTE = "place_and_route"
 
 
 class VitisOptStrategy(Enum):
@@ -313,6 +324,11 @@ class PartitioningConfiguration:
         default_factory=lambda: ["LUT", "FF", "DSP", "BRAM_18K"]
     )
 
+    # Use the per-node out-of-context results (res_ooc node attributes, written by
+    # step_node_ooc_estimates) instead of the merged FINN + HLS estimates where they exist.
+    # Nodes without them (e.g. nodes inserted later) keep the merged estimates.
+    use_node_ooc_estimates: bool = False
+
     # Number of seconds before the solver doing the partitioning
     # times out.
     partition_solver_timeout: int = 100
@@ -360,6 +376,7 @@ default_build_dataflow_steps = [
     "step_generate_estimate_reports",
     "step_assign_ddr_weight_offsets",
     "step_generate_hardware",
+    "step_node_ooc_estimates",
     "step_create_stitched_ip",
     "step_measure_rtlsim_performance",
     "step_out_of_context_synthesis",
@@ -653,6 +670,17 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: This can make it easier to treat it as a standalone artifact without requiring
     #: the full list of layer IP build directories. By default, synthesis will not run.
     stitched_ip_gen_dcp: bool = False
+
+    #: Vivado flow for the per-node out-of-context resource estimates of
+    #: step_node_ooc_estimates (DataflowOutputType.NODE_OOC_ESTIMATES). Must be set if
+    #: that output is requested. Every node is implemented on its own, so both flows
+    #: take one Vivado run per node.
+    #: SYNTH_OPT stops after opt_design. It is several times faster, but potentially less
+    #  accurate.
+    #: PLACE_AND_ROUTE additionally places and routes every node, which captures the
+    #: placement effects at the cost of a full implementation per node. It also writes
+    #: the opt_design report, so it produces both result files.
+    node_ooc_flow: NodeOOCFlow | None = None
 
     #: (Optional) Insert a signature node to the stitched-IP to read/write information
     #: to the design: e.g. Customer signature, application signature, version

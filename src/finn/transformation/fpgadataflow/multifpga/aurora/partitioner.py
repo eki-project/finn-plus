@@ -170,6 +170,7 @@ class AuroraPartitioner(Partitioner):
             self.cfg._resolve_fpga_part(),  # noqa
             self.pcfg.considered_resources,
             True,
+            self.pcfg.use_node_ooc_estimates,
         )
 
         # What are the resources available per device?

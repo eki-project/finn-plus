@@ -72,6 +72,7 @@ from finn.analysis.fpgadataflow.empirical_qor_estimation import (
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.folding_violations import folding_violations
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
+from finn.analysis.fpgadataflow.node_ooc_res_estimation import node_ooc_res_estimation
 from finn.analysis.fpgadataflow.op_and_param_counts import aggregate_dict_keys, op_and_param_counts
 from finn.analysis.fpgadataflow.post_synth_res import post_synth_res
 from finn.analysis.fpgadataflow.res_estimation import res_estimation, res_estimation_complete
@@ -81,6 +82,7 @@ from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     DataflowOutputType,
     LargeFIFOMemStyle,
+    NodeOOCFlow,
     ShellFlowType,
     VerificationStepType,
 )
@@ -158,6 +160,7 @@ from finn.transformation.fpgadataflow.multifpga.partition_model import (
     ApplyPartitioning,
     PartitionForMultiFPGA,
 )
+from finn.transformation.fpgadataflow.node_ooc import AnnotateNodeOOCResources, BuildNodeOOC
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
@@ -213,6 +216,7 @@ from finn.util.basic import (
 )
 from finn.util.config import extract_model_config_to_json
 from finn.util.exception import (
+    FINNConfigurationError,
     FINNFoldingError,
     FINNInternalError,
     FINNMultiFPGAUserError,
@@ -1003,6 +1007,49 @@ def step_generate_hardware(
     model = step_set_fifo_depths(model, cfg, parent_node=parent_node)
     log.info("FIFO sizing for the current model done.")
 
+    return model
+
+
+@register_build_dataflow_step()
+def step_node_ooc_estimates(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Implement every node on its own, out-of-context in Vivado, and report its resource
+    utilization (node attribute res_ooc and estimate_layer_resources_ooc_*.json). Reuses
+    the IPs from step_generate_hardware, so it has to run after that step.
+    Depends on the DataflowOutputType.NODE_OOC_ESTIMATES output product."""
+    if DataflowOutputType.NODE_OOC_ESTIMATES not in cfg.generate_outputs:
+        log.warning(
+            "DataflowOutputType.NODE_OOC_ESTIMATES not in requested outputs, "
+            "skipping step_node_ooc_estimates."
+        )
+        return model
+    if cfg.node_ooc_flow is None:
+        raise FINNConfigurationError(
+            "DataflowOutputType.NODE_OOC_ESTIMATES is requested, but node_ooc_flow is not "
+            "set. Set node_ooc_flow in the build config to 'synth_opt' or 'place_and_route' "
+            "(see the documentation of DataflowBuildConfig.node_ooc_flow for the tradeoff)."
+        )
+    place_and_route = cfg.node_ooc_flow == NodeOOCFlow.PLACE_AND_ROUTE
+    model = model.transform(
+        BuildNodeOOC(
+            cfg._resolve_fpga_part(), cfg.synth_clk_period_ns, place_and_route=place_and_route
+        )
+    )
+    model = model.transform(AnnotateNodeOOCResources(place_and_route=place_and_route))
+
+    # Both flows report the utilization after opt_design. Place & route additionally
+    # reports the utilization after routing. Write one JSON file per report.
+    reports = [("opt", False)]
+    if place_and_route:
+        reports.append(("route", True))
+
+    report_dir = cfg.get_report_directory()
+    for suffix, routed in reports:
+        resources = model.analysis(partial(node_ooc_res_estimation, place_and_route=routed))
+        # Add the sum over all nodes, like the other resource reports do
+        report = {**resources, "total": aggregate_dict_keys(resources)}
+        report_file = report_dir / f"estimate_layer_resources_ooc_{suffix}.json"
+        with report_file.open("w") as f:
+            json.dump(report, f, indent=2)
     return model
 
 

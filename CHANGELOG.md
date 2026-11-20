@@ -9,6 +9,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 
 ### Added
+- Per-node out-of-context resource estimates: `step_node_ooc_estimates` (output `node_ooc_estimates`, flow chosen by `node_ooc_flow`: `synth_opt` or `place_and_route`) implements every node on its own in Vivado and writes `estimate_layer_resources_ooc_{opt,route}.json`; the Multi-FPGA partitioner uses these numbers with `use_node_ooc_estimates` (eki-project#PR)
 - Typed errors for models that FINN+ cannot build, so that tools can tell why and where a model was rejected: `FINNUnsupportedOpError` (a node without hardware mapping or implementation, raised by `SpecializeLayers` and by `step_create_dataflow_partition` for unmapped nodes in between hardware layers) and `FINNFoldingError` (an illegal or unachievable folding) are `FINNUserError`s that carry the `node_name` and `op_type` of the offending node. The new analysis passes `unmapped_layer_report` (every unmapped node with its position relative to the hardware layers) and `folding_violations` (every node with an illegal folding, based on the new `HWCustomOp.check_folding`) report the same without building. `SetFolding` records the op types it cannot fold and the achieved cycles per frame (`unhandled_op_types`, `achieved_cycles_per_frame`) and raises a `FINNFoldingError` for them with `strict=True` (eki-project#310)
 
 ### Changed
