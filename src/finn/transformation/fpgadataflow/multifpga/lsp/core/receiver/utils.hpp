@@ -146,6 +146,34 @@ namespace lsp {
             }
         };
 
+        /** CTRL status collected by a connection and sent to the controller_tx as one status. A call of
+        the connection can produce several statuses, but its CTRL status stream takes only one write per
+        cycle, so the statuses are merged here (see takeNewer) and sent together. */
+        template<int Streams>
+        struct pending_ctrl_status_t {
+            ctrl_status_t<Streams> status;
+            bool pending = false;
+
+            /** Merge a status into the collected one. */
+            void add(const ctrl_status_t<Streams>& newer) {
+                #pragma HLS inline
+                status.takeNewer(newer);
+                pending = true;
+            }
+
+            /** Send the collected status, if any. If the stream is full, it stays for the next try. */
+            void trySend(hls::stream<ctrl_status_t<Streams>>& stream) {
+                #pragma HLS inline
+                if (pending && stream.write_nb(status)) {
+                    // The events are sent; expectedFSN and the limits are states and stay
+                    status.nackImmediately = false;
+                    status.ackImmediately = false;
+                    status.changed = 0;
+                    pending = false;
+                }
+            }
+        };
+
         // Effectively a dict that maps the MAC addresses of the peers (Peers, an mac_index_lookup_t) to AXI
         // Streams. These streams are connected to the connecting kernels which read the beats.
         // Frames are forwarded unchanged; the connection parses the L2 header itself.

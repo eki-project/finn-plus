@@ -48,7 +48,7 @@ namespace lsp {
             ctrl_status_t<sizeof...(Ws)>& creditUpdate,
             ring_buffer::stream_ring_buffers_t<ring_buffer::lsp_ring_depths_t<Ds...>, Ws...> &buffers,
             ap_uint<header_t::PAYLOAD_WIDTH>& frameChunksLeft,
-            hls::stream<ctrl_status_t<sizeof...(Ws)>>& controlStream
+            pending_ctrl_status_t<sizeof...(Ws)>& ctrlStatus
         ) {
             #pragma HLS inline
             data_segment_t<constants::MAX_SEGMENT_PAYLOAD_WIDTH> segment;
@@ -103,10 +103,10 @@ namespace lsp {
                         return _dropFrame(data, buffers);
                     }
 
-                    // Frame complete: send the BLOCKED answers collected in it, then reset them
+                    // Frame complete: report the BLOCKED answers collected in it, then reset them
                     if (frameDone) {
                         if (creditUpdate.ackImmediately) {
-                            controlStream.write_nb(creditUpdate);
+                            ctrlStatus.add(creditUpdate);
                         }
                         creditUpdate.changed = 0;
                         creditUpdate.ackImmediately = false;
@@ -135,7 +135,6 @@ namespace lsp {
         }
 
         // TODO: Set NACK interval timeout
-        // TODO: write_nb drops the status if controlStream is full; keep one pending status, merge with takeNewer, retry every call
         // TODO: Send the gap NACK and duplicate ACK only after a good FCS at tlast, since a corrupt header may hold a false FSN
         // TODO: Make the L2 header offset a build-time constant instead of reading it from every frame
 
@@ -159,8 +158,11 @@ namespace lsp {
             static ap_uint<header_t::PAYLOAD_WIDTH> frameChunksLeft;
             static header_t header;
 
-            // BLOCKED answers collected over the current frame, sent at once when it ends
+            // BLOCKED answers collected over the current frame, added to ctrlStatus when it ends
             static ctrl_status_t creditUpdate;
+
+            // Everything to report to the controller_tx, sent as one status while no frame is in progress
+            static pending_ctrl_status_t<sizeof...(Ws)> ctrlStatus;
 
             // Try to empty streams
             ring_buffer::tryReadIntoStream(buffers, outStreams...);
@@ -168,93 +170,102 @@ namespace lsp {
             // Credit check on every call, beat or not: report the limits of all streams whose credit update is due
             auto currentCreditStatus = ctrl_status_t::template makeACK<false>(expectedFSN, buffers);
             if (currentCreditStatus.changed != 0) {
-                controlStream.write_nb(currentCreditStatus);
+                ctrlStatus.add(currentCreditStatus);
             }
 
-            // Non-blocking, so the credit check above also runs while no frame arrives
-            beat_t data;
-            if (!macStream.read_nb(data)) {
-                return;
-            }
-            creditUpdate.expectedFSN = expectedFSN;
+            // Handle at most one beat. A lambda, so that its early returns still reach the send below
+            const auto handleBeat = [&]() {
+                // Non-blocking, so the credit check above also runs while no frame arrives
+                beat_t data;
+                if (!macStream.read_nb(data)) {
+                    return;
+                }
+                creditUpdate.expectedFSN = expectedFSN;
 
-            // Discard the remaining beats of a dropped frame
-            if (state == connection_state::DISCARDING_INVALID_FRAME) {
-                state = data.last ? connection_state::EXPECT_FRAME_START : state;
-                return;
-            }
-
-            // Bad FCS, flagged in tuser on the last beat: roll back the frame without parsing this beat
-            if (data.last && data.user == 1) {
-                ring_buffer::rollbackAll(buffers);
-                state = connection_state::EXPECT_FRAME_START;
-                controlStream.write_nb(ctrl_status_t::makeNACKImmediately(expectedFSN));
-                return;
-            }
-
-            // Beat 0: find and check the LSP header
-            ap_uint<clog2(1 + constants::BEAT_WIDTH)> offset = 0;
-            if (state == connection_state::EXPECT_FRAME_START || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME) {
-                offset = _getOffsetFromEthertype(data);
-
-                // Read header
-                header = header_t::unpack(data.data >> offset);
-                frameChunksLeft = header.payloadChunks;
-                offset += header_t::WIDTH;
-
-                // Neither DATA nor PROBE: discard. An unknown frame type is NACKed at once, since the frame will be
-                // replayed anyway
-                if (header.frameType != constants::FRAME_DATA && header.frameType != FRAME_PROBE) {
-                    state = !data.last ? connection_state::DISCARDING_INVALID_FRAME : state;
-                    if (header.frameType != FRAME_CREDIT_ACK && header.frameType != FRAME_NACK) {
-                        controlStream.write_nb(ctrl_status_t::makeNACKImmediately(expectedFSN));
-                    }
+                // Discard the remaining beats of a dropped frame
+                if (state == connection_state::DISCARDING_INVALID_FRAME) {
+                    state = data.last ? connection_state::EXPECT_FRAME_START : state;
                     return;
                 }
 
-                // FSN after the expected one: gap, NACK. Before it: duplicate, ACK
-                if (helpers::serialBefore(expectedFSN, header.frameSequenceNumber)) {
-                    state = data.last ? connection_state::EXPECT_FRAME_START : connection_state::DISCARDING_INVALID_FRAME;
-                    controlStream.write_nb(ctrl_status_t::makeNACKImmediately(expectedFSN));
+                // Bad FCS, flagged in tuser on the last beat: roll back the frame without parsing this beat
+                if (data.last && data.user == 1) {
+                    ring_buffer::rollbackAll(buffers);
+                    state = connection_state::EXPECT_FRAME_START;
+                    ctrlStatus.add(ctrl_status_t::makeNACKImmediately(expectedFSN));
                     return;
-                } else if (helpers::serialBefore(header.frameSequenceNumber, expectedFSN)) {
-                    // On a PROBE, a too small FSN is okay - we send the response regardless
-                    if (header.frameType != FRAME_PROBE) {
+                }
+
+                // Beat 0: find and check the LSP header
+                ap_uint<clog2(1 + constants::BEAT_WIDTH)> offset = 0;
+                if (state == connection_state::EXPECT_FRAME_START || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME) {
+                    offset = _getOffsetFromEthertype(data);
+
+                    // Read header
+                    header = header_t::unpack(data.data >> offset);
+                    frameChunksLeft = header.payloadChunks;
+                    offset += header_t::WIDTH;
+
+                    // Neither DATA nor PROBE: discard. An unknown frame type is NACKed at once, since the frame will be
+                    // replayed anyway
+                    if (header.frameType != constants::FRAME_DATA && header.frameType != FRAME_PROBE) {
                         state = !data.last ? connection_state::DISCARDING_INVALID_FRAME : state;
-                        controlStream.write_nb(ctrl_status_t::makeACKImmediately(expectedFSN));
+                        if (header.frameType != FRAME_CREDIT_ACK && header.frameType != FRAME_NACK) {
+                            ctrlStatus.add(ctrl_status_t::makeNACKImmediately(expectedFSN));
+                        }
                         return;
                     }
+
+                    // FSN after the expected one: gap, NACK. Before it: duplicate, ACK
+                    if (helpers::serialBefore(expectedFSN, header.frameSequenceNumber)) {
+                        state = data.last ? connection_state::EXPECT_FRAME_START : connection_state::DISCARDING_INVALID_FRAME;
+                        ctrlStatus.add(ctrl_status_t::makeNACKImmediately(expectedFSN));
+                        return;
+                    } else if (helpers::serialBefore(header.frameSequenceNumber, expectedFSN)) {
+                        // On a PROBE, a too small FSN is okay - we send the response regardless
+                        if (header.frameType != FRAME_PROBE) {
+                            state = !data.last ? connection_state::DISCARDING_INVALID_FRAME : state;
+                            ctrlStatus.add(ctrl_status_t::makeACKImmediately(expectedFSN));
+                            return;
+                        }
+                    }
                 }
-            }
 
-            // A zero entry PROBE gets answered immedaitely
-            if (header.frameType == FRAME_PROBE && header.payloadChunks == 0) {
-                controlStream.write_nb(ctrl_status_t::makeACKImmediately(expectedFSN));
-            }
-
-            // Parse the segments in the rest of the beat
-            if (
-                state == connection_state::EXPECT_BEAT
-                || state == connection_state::EXPECT_FRAME_START
-                || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME
-            ) {
-                const bool isProbe = header.frameType == FRAME_PROBE;
-                state = _readDataSegments(
-                    widths, depths, offset, data, isProbe, creditUpdate, buffers, frameChunksLeft, controlStream
-                );
-                const bool dropped = state == connection_state::DISCARDING_INVALID_FRAME
-                    || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME;
-                if (dropped && !isProbe) {
-                    // A malformed DATA frame will be replayed anyway: NACK it at once instead of waiting for the
-                    // next frame to show the gap. A dropped PROBE gets no answer, the sender repeats it
-                    controlStream.write_nb(ctrl_status_t::makeNACKImmediately(expectedFSN));
-                } else if (state == connection_state::EXPECT_FRAME_START && !isProbe) {
-                    expectedFSN++;
-                    controlStream.write_nb(ctrl_status_t::makeFSNUpdate(expectedFSN));
-                    ring_buffer::commitAll(buffers);
+                // A zero entry PROBE gets answered immedaitely
+                if (header.frameType == FRAME_PROBE && header.payloadChunks == 0) {
+                    ctrlStatus.add(ctrl_status_t::makeACKImmediately(expectedFSN));
                 }
-            }
 
+                // Parse the segments in the rest of the beat
+                if (
+                    state == connection_state::EXPECT_BEAT
+                    || state == connection_state::EXPECT_FRAME_START
+                    || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME
+                ) {
+                    const bool isProbe = header.frameType == FRAME_PROBE;
+                    state = _readDataSegments(
+                        widths, depths, offset, data, isProbe, creditUpdate, buffers, frameChunksLeft, ctrlStatus
+                    );
+                    const bool dropped = state == connection_state::DISCARDING_INVALID_FRAME
+                        || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME;
+                    if (dropped && !isProbe) {
+                        // A malformed DATA frame will be replayed anyway: NACK it at once instead of waiting for the
+                        // next frame to show the gap. A dropped PROBE gets no answer, the sender repeats it
+                        ctrlStatus.add(ctrl_status_t::makeNACKImmediately(expectedFSN));
+                    } else if (state == connection_state::EXPECT_FRAME_START && !isProbe) {
+                        expectedFSN++;
+                        ctrlStatus.add(ctrl_status_t::makeFSNUpdate(expectedFSN));
+                        ring_buffer::commitAll(buffers);
+                    }
+                }
+            };
+            handleBeat();
+
+            // No frame in progress: send everything collected so far as one status. The only write to
+            // controlStream, since a stream takes one write per cycle
+            if (state == connection_state::EXPECT_FRAME_START || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME) {
+                ctrlStatus.trySend(controlStream);
+            }
         }
     } // namespace receiver
 } // namespace lsp
