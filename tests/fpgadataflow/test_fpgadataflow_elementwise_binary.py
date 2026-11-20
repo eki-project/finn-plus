@@ -28,6 +28,8 @@
 
 import pytest
 
+import itertools
+
 import numpy as np
 from onnx import TensorProto
 from onnx import helper as oh
@@ -270,41 +272,71 @@ def test_elementwise_binary_operation(
         assert np.all(o_produced == o_expected)
 
 
-# Operator type to be tested
-@pytest.mark.parametrize(
-    "op_type",
-    ["ElementwiseAdd", "ElementwiseMul"],
-)
-# Data type of the left-hand-side and right-hand-side input elements
-@pytest.mark.parametrize(
-    "lhs_dtype_rhs_dtype",
-    [
+# Every stitched-IP case takes about 20 minutes (HLS synthesis, node-by-node and stitched-IP
+# rtlsim). The memory axes (mem_mode, ram_style and the part that supports it) only matter when
+# an input is an initializer, so by default they are swept for INT8 inputs with an initializer
+# only; every other combination of operator, data types and initializers runs with
+# internal_embedded/auto on the default part. The remaining combinations of the full grid are
+# marked xslow, which the CI test variants deselect (finn test ... --variant full_ci), and can
+# be run explicitly with ``pytest -m xslow``.
+def _stitched_ip_cases():
+    """The full grid of test_elementwise_binary_operation_stitched_ip; the memory-axis sweeps
+    of all but the INT8-with-initializer cases are marked xslow."""
+    # Data type of the left-hand-side and right-hand-side input elements
+    dtype_pairs = [
         ("INT8", "INT8"),
         ("INT8", "FLOAT32"),
         ("FLOAT32", "FLOAT32"),
         ("FLOAT16", "FLOAT16"),
         ("FIXED<8,4>", "FIXED<10,5>"),
-    ],
-)
-# Shape of the left-hand-side input
-@pytest.mark.parametrize("lhs_shape", [[3, 1, 7, 1]])
-# Shape of the right-hand-side input
-@pytest.mark.parametrize("rhs_shape", [[3, 32, 1, 16]])
-# Which inputs to set as initializers
-@pytest.mark.parametrize("initializers", [[], ["in_x"], ["in_y"]])
-# Number of elements to process in parallel
-@pytest.mark.parametrize("pe", [2])
-# mem_mode
-@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
-# ram_style and fpga_part combinations
-@pytest.mark.parametrize(
-    "ram_style, part",
-    [
+    ]
+    # ram_style and fpga_part combinations
+    ram_style_parts = [
         ("auto", "xczu7ev-ffvc1156-2-e"),
         ("block", "xczu7ev-ffvc1156-2-e"),
         ("distributed", "xczu7ev-ffvc1156-2-e"),
         ("ultra", "xcvc1902-vsva2197-2MP-e-S"),  # URAM requires Versal
-    ],
+    ]
+    cases = []
+    for (
+        op_type,
+        (dtype_idx, lhs_dtype_rhs_dtype),
+        (init_idx, initializers),  # which inputs to set as initializers
+        mem_mode,
+        (ram_style, part),
+    ) in itertools.product(
+        ["ElementwiseAdd", "ElementwiseMul"],
+        enumerate(dtype_pairs),
+        enumerate([[], ["in_x"], ["in_y"]]),
+        ["internal_embedded", "internal_decoupled"],
+        ram_style_parts,
+    ):
+        default_memory = mem_mode == "internal_embedded" and ram_style == "auto"
+        memory_sweep = bool(initializers) and lhs_dtype_rhs_dtype == ("INT8", "INT8")
+        cases.append(
+            pytest.param(
+                op_type,
+                lhs_dtype_rhs_dtype,
+                [3, 1, 7, 1],  # shape of the left-hand-side input
+                [3, 32, 1, 16],  # shape of the right-hand-side input
+                2,  # number of elements to process in parallel
+                initializers,
+                mem_mode,
+                ram_style,
+                part,
+                marks=[] if default_memory or memory_sweep else [pytest.mark.xslow],
+                # same ids as pytest generated for the stacked parametrize decorators before
+                id=f"{ram_style}-{part}-{mem_mode}-2-initializers{init_idx}-rhs_shape0-"
+                f"lhs_shape0-lhs_dtype_rhs_dtype{dtype_idx}-{op_type}",
+            )
+        )
+    return cases
+
+
+@pytest.mark.parametrize(
+    "op_type, lhs_dtype_rhs_dtype, lhs_shape, rhs_shape, pe, initializers, mem_mode, ram_style, "
+    "part",
+    _stitched_ip_cases(),
 )
 @pytest.mark.fpgadataflow
 @pytest.mark.slow
