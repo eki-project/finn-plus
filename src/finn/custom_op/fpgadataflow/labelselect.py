@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
-from finn.util.exception import FINNInternalError
 
 if TYPE_CHECKING:
     from onnx import GraphProto
@@ -106,12 +105,16 @@ class LabelSelect(HWCustomOp):
         """Return normal input shape."""
         return (*self.num_input_vectors, self.labels)
 
+    def check_folding(self) -> None:
+        """Check the folding: PE must divide Labels."""
+        if self.labels % self.pe != 0:
+            raise self._folding_error(
+                f"PE must divide Labels (PE = {self.pe}, Labels = {self.labels})"
+            )
+
     def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
-        if self.labels % self.pe != 0:
-            raise FINNInternalError(
-                f"{self.onnx_node.name}: PE ({self.pe}) must divide Labels ({self.labels})"
-            )
+        self.check_folding()
         folds = self.labels // self.pe
         return (*self.num_input_vectors, folds, self.pe)
 

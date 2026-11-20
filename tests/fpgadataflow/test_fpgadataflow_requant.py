@@ -14,6 +14,8 @@ instead of comparing against multiple thresholds.
 
 import pytest
 
+import itertools
+
 import numpy as np
 import onnx.parser as oprs
 import os
@@ -177,17 +179,70 @@ def create_signed_requant_model(abits, max_val, ishape, per_channel):
 # =============================================================================
 
 
-@pytest.mark.parametrize("abits", [8, 16])
-@pytest.mark.parametrize("ishape", [(1, 16), (1, 32, 1, 1)])
-@pytest.mark.parametrize("per_channel", [False, True])
+# cppsim and node-by-node rtlsim take seconds per case; stitched-IP rtlsim (FIFO sizing, HLS
+# synthesis of the surrounding graph, IP stitching) takes about 20 minutes each. By default,
+# stitched_ip therefore runs with PE=16 and 8-bit activations for the two scale configurations
+# (per-channel scales with a signed output, a per-tensor scale with an unsigned output) across
+# all parts, memory modes and input shapes, the per-tensor one also for the unsigned input:
+# 36 of its 384 cases. The remaining stitched_ip cases are marked xslow, which the CI test
+# variants deselect (finn test ... --variant full_ci), and can be run explicitly with
+# ``pytest -m xslow``.
+def _requant_rtl_cases():
+    """The full grid of test_requant_rtl with all but the representative stitched_ip cases
+    marked xslow."""
+    cases = []
+    for (
+        input_dtype,
+        signed_out,
+        mem_mode,
+        sim_style,
+        pe,
+        part,
+        per_channel,
+        (ishape_idx, ishape),
+        abits,
+    ) in itertools.product(
+        ["INT8", "UINT8"],
+        [False, True],
+        ["internal_embedded", "internal_decoupled"],
+        ["cppsim", "node_by_node", "stitched_ip"],
+        [1, 16],
+        ["xcvc1902-vsva2197-2MP-e-S", "xczu7ev-ffvc1156-2-e", "xc7z020clg400-1"],
+        [False, True],
+        enumerate([(1, 16), (1, 32, 1, 1)]),
+        [8, 16],
+    ):
+        representative = (
+            abits == 8
+            and pe == 16
+            and (per_channel, signed_out) in [(True, True), (False, False)]
+            and (input_dtype == "INT8" or not signed_out)
+        )
+        xslow = sim_style == "stitched_ip" and not representative
+        cases.append(
+            pytest.param(
+                abits,
+                ishape,
+                per_channel,
+                part,
+                pe,
+                sim_style,
+                mem_mode,
+                signed_out,
+                input_dtype,
+                marks=[pytest.mark.xslow] if xslow else [],
+                # same ids as pytest generated for the stacked parametrize decorators before
+                id=f"{input_dtype}-{signed_out}-{mem_mode}-{sim_style}-{pe}-{part}-"
+                f"{per_channel}-ishape{ishape_idx}-{abits}",
+            )
+        )
+    return cases
+
+
 @pytest.mark.parametrize(
-    "part", ["xcvc1902-vsva2197-2MP-e-S", "xczu7ev-ffvc1156-2-e", "xc7z020clg400-1"]
+    "abits, ishape, per_channel, part, pe, sim_style, mem_mode, signed_out, input_dtype",
+    _requant_rtl_cases(),
 )
-@pytest.mark.parametrize("pe", [1, 16])
-@pytest.mark.parametrize("sim_style", ["cppsim", "node_by_node", "stitched_ip"])
-@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
-@pytest.mark.parametrize("signed_out", [False, True])
-@pytest.mark.parametrize("input_dtype", ["INT8", "UINT8"])
 @pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
@@ -305,29 +360,6 @@ def test_requant_rtl(
         exp_cycles = exp_cycles_dict[node.name]
         assert np.isclose(exp_cycles, cycles_rtlsim, atol=15)
         assert exp_cycles != 0
-
-        # Stitched IP rtlsim - only for one specific config to save time
-        if (
-            abits == 8
-            and ishape == (1, 16)
-            and not per_channel
-            and pe == 16
-            and part == "xczu7ev-ffvc1156-2-e"
-        ):
-            # Convert any remaining Mul nodes to HW for stitched IP
-            model = model.transform(InferElementwiseBinaryOperation())
-            model = model.transform(SpecializeLayers(part))
-            model = model.transform(GiveUniqueNodeNames())
-            model = insert_and_set_fifo_depths(model, part, target_clk_ns)
-            model = model.transform(PrepareIP(part, target_clk_ns))
-            model = model.transform(HLSSynthIP())
-            model = model.transform(CreateStitchedIP(part, target_clk_ns))
-
-            model.set_metadata_prop("exec_mode", "rtlsim")
-            y_stitched = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
-            assert np.allclose(
-                y_golden, y_stitched, atol=quant_step
-            ), f"stitched rtlsim mismatch: max diff = {np.max(np.abs(y_golden - y_stitched))}"
 
 
 # =============================================================================

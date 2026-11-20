@@ -183,14 +183,18 @@ class Pool(HWCustomOp):
         """Return shape of the input tensor (the raw feature map)."""
         return (self.batch_size, *self.ifm_dim, self.channels)
 
+    def check_folding(self) -> None:
+        """Check the folding: PE must divide Channels."""
+        if self.channels % self.pe != 0:
+            raise self._folding_error(
+                f"PE must divide input channels (PE = {self.pe}, Channels = {self.channels})"
+            )
+
     def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return shape of the folded input tensor."""
         normal_ishape = self.get_normal_input_shape()
-        if self.channels % self.pe != 0:
-            raise FINNInternalError(
-                f"{self.onnx_node.name}: PE ({self.pe}) must divide Channels ({self.channels})"
-            )
-        fold = self.channels // self.pe
+        self.check_folding()
+        fold = normal_ishape[-1] // self.pe
         return (*normal_ishape[:-1], fold, self.pe)
 
     def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
@@ -199,10 +203,7 @@ class Pool(HWCustomOp):
 
     def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return shape of the folded output tensor."""
-        if self.channels % self.pe != 0:
-            raise FINNInternalError(
-                f"{self.onnx_node.name}: PE ({self.pe}) must divide Channels ({self.channels})"
-            )
+        self.check_folding()
         fold = self.channels // self.pe
         return (self.batch_size, *self.out_img_dims, fold, self.pe)
 
