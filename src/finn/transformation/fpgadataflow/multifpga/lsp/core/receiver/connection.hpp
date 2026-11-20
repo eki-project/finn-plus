@@ -120,20 +120,6 @@ namespace lsp {
             return connection_state::EXPECT_BEAT;
         }
 
-        /** Bit offset of the LSP header in beat 0, from the TPID or EtherType of the L2 header. */
-        inline ap_uint<clog2(1 + BEAT_WIDTH)> _getOffsetFromEthertype(beat_t &data) {
-            #pragma HLS inline
-            // Read in wire byte order, so the constants are byte swapped: 0x0081 = 0x8100, 0xA888 = 0x88A8, 0x0091 = 0x9100
-            ap_uint<16> ethertypeOrTag = data.data.range(111, 96);
-            if (ethertypeOrTag == 0x0081) {
-                return 192; // 144 padded to 64b multiples
-            } else if (ethertypeOrTag == 0xA888 || ethertypeOrTag == 0x0091) {
-                return 192; // 176 padded to 64b multiples
-            } else {
-                return 128; // 112 padded to 64b multiples
-            }
-        }
-
         // TODO: Set NACK interval timeout
         // TODO: Send the gap NACK and duplicate ACK only after a good FCS at tlast, since a corrupt header may hold a false FSN
         // TODO: Make the L2 header offset a build-time constant instead of reading it from every frame
@@ -199,7 +185,7 @@ namespace lsp {
                 // Beat 0: find and check the LSP header
                 ap_uint<clog2(1 + constants::BEAT_WIDTH)> offset = 0;
                 if (state == connection_state::EXPECT_FRAME_START || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME) {
-                    offset = _getOffsetFromEthertype(data);
+                    offset = getOffsetFromEthertype(data.data);
 
                     // Read header
                     header = header_t::unpack(data.data >> offset);

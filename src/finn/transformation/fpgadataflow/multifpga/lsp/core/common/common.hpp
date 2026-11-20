@@ -17,6 +17,65 @@ namespace lsp {
 
         template <size_t... Ds>
         struct ring_depths_t {};
+
+        enum ethertype_or_tag : unsigned int {
+            LOCAL_ETHTYPE_1 = 0x88B5,
+            LOCAL_ETHTYPE_2 = 0x88B6,
+            IEEE_802_1_Q = 0x8100,
+            IEEE_802_1_AD = 0x88A8,
+            IEEE_802_1_AD_LEGACY = 0x9100
+        };
+
+        /** Return a beat with a prefixed L2 header prepared. */
+        template<ethertype_or_tag Tag, uint64_t SourceMAC, uint64_t TargetMAC>
+        ap_uint<constants::BEAT_WIDTH> ethernetHeader() {
+            static_assert(
+                constants::BEAT_WIDTH >= 192,
+                "BEAT_WIDTH needs to be at least 192 bits wide to fit all L2 header variants"
+            );
+            ap_uint<constants::BEAT_WIDTH> beat = 0;
+
+            // Set ethertype or tag
+            beat.range(111, 96) = helpers::swapBytes(ap_uint<16>(Tag));
+
+            // Set MAC addresses
+            beat.range(95, 48) = helpers::swapBytes(ap_uint<48>(SourceMAC));
+            beat.range(47, 0) = helpers::swapBytes(ap_uint<48>(TargetMAC));
+
+            return beat;
+        }
+
+        /** Bit offset of the LSP header in beat 0, from the TPID or EtherType of the L2 header. */
+        inline ap_uint<clog2(1 + constants::BEAT_WIDTH)> getOffsetFromEthertype(const ap_uint<constants::BEAT_WIDTH>& beat) {
+            #pragma HLS inline
+            // Read in wire byte order, so the constants are byte swapped: 0x0081 = 0x8100, 0xA888 = 0x88A8, 0x0091 = 0x9100
+            ap_uint<16> ethertypeOrTag = beat.range(111, 96);
+            if (ethertypeOrTag == 0x0081) {
+                return 192; // 144 padded to 64b multiples
+            } else if (ethertypeOrTag == 0xA888 || ethertypeOrTag == 0x0091) {
+                return 192; // 176 padded to 64b multiples
+            } else {
+                return 128; // 112 padded to 64b multiples
+            }
+        }
+
+        /** Bit offset of the LSP header in beat 0 for a known EtherType or TPID. Constexpr, so that the
+        result can be used as a template argument. */
+        constexpr int getOffsetFromEthertype(ethertype_or_tag tag) {
+            switch (tag) {
+                case IEEE_802_1_Q:
+                    return 192; // 144 padded to 64b multiples
+                case IEEE_802_1_AD_LEGACY:
+                case IEEE_802_1_AD:
+                    return 192; // 176 padded to 64b multiples
+                case LOCAL_ETHTYPE_1:
+                case LOCAL_ETHTYPE_2:
+                    return 128; // 112 padded to 64b multiples
+            }
+            // Only reached for a value outside the enum. A negative offset fails as a template argument
+            // or bit range
+            return -1;
+        }
     }
 
     namespace messages {
