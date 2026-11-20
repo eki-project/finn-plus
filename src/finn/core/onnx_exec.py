@@ -114,7 +114,14 @@ def execute_onnx(
                         f"Shape of input {inp_name} is None in the execution "
                         f"context, but an input value was provided."
                     )
-                if ex.shape == input_dict[inp_name].shape:
+                provided_shape = input_dict[inp_name].shape
+                # an input may bring its own batch size: same shape apart from the first axis
+                runtime_batch_shape = (
+                    len(ex.shape) > 0
+                    and len(ex.shape) == len(provided_shape)
+                    and ex.shape[1:] == provided_shape[1:]
+                )
+                if ex.shape == provided_shape or runtime_batch_shape:
                     execution_context[inp_name] = input_dict[inp_name]
                 else:
                     raise FINNInternalError(

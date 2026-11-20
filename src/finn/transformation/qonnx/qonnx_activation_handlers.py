@@ -29,6 +29,7 @@
 import numpy as np
 from abc import ABC, abstractmethod
 from onnx import NodeProto, TensorProto, helper
+from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from typing import TYPE_CHECKING, cast
@@ -219,14 +220,21 @@ class QuantActBaseHandler(ABC):
 
         # Derive the MultiThreshold data layout from the channel axis implied by
         # the Quant scale shape. For a per-tensor scale there is no channel axis,
-        # so fall back to any existing layout annotation on the input tensor.
+        # so fall back to any existing layout annotation on the input tensor. The
+        # annotation is only used if its rank matches the tensor: InferDataLayouts
+        # propagates layouts through rank-changing ops such as Reshape unchanged
+        # (e.g. a 4D NWHC annotation on a 3D tensor), which MultiThreshold cannot
+        # execute; without a layout it falls back to the rank-based default.
         channel_axis = self._get_channel_axis(n.input[0])
+        ndim = len(self._get_tensor_shape(n.input[0]))
         if channel_axis is not None:
-            ndim = len(self._get_tensor_shape(n.input[0]))
             data_layout = self._channel_axis_to_data_layout(channel_axis, ndim)
         else:
             annotated = model.get_tensor_layout(n.input[0])
-            data_layout = "".join(annotated) if annotated is not None else None
+            if annotated is not None and len(annotated) == ndim:
+                data_layout = "".join(annotated)
+            else:
+                data_layout = None
 
         # Insert MultiThreshold node
         outp_trans_node = helper.make_node(
@@ -289,6 +297,13 @@ class QuantActBaseHandler(ABC):
                 add_shape = adder_bias.shape
 
             if not zero_bias:
+                # The MultiThreshold now yields the bare step count in
+                # [0, num_steps]; out_dtype describes the biased output of the
+                # Add, so annotating the count with it would be wrong (e.g. INT2
+                # for counts 0..3).
+                mt_inst.set_nodeattr(
+                    "out_dtype", DataType.get_smallest_possible(thresholds.shape[-1]).name
+                )
                 # Insert Add node
                 add_tensor = helper.make_tensor_value_info(
                     model.make_new_valueinfo_name(),

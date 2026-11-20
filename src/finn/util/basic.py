@@ -93,6 +93,7 @@ pynq_part_map["RFSoC2x2"] = "xczu28dr-ffvg1517-2-e"
 pynq_part_map["RFSoC4x2"] = "xczu48dr-ffvg1517-2-e"
 pynq_part_map["KV260_SOM"] = "xck26-sfvc784-2LV-c"
 pynq_part_map["AUP-ZU3_8GB"] = "xczu3eg-sfvc784-2-e"
+pynq_part_map["VCK190"] = "xcvc1902-vsva2197-2MP-e-S"
 
 
 # native AXI HP port width (in bits) for PYNQ boards
@@ -108,6 +109,8 @@ pynq_native_port_width["RFSoC2x2"] = 128
 pynq_native_port_width["RFSoC4x2"] = 128
 pynq_native_port_width["KV260_SOM"] = 128
 pynq_native_port_width["AUP-ZU3_8GB"] = 128
+# native AXI port width (in bits) for the PL NoC slave ports on Versal
+pynq_native_port_width["VCK190"] = 512
 
 # Alveo device and platform mappings
 alveo_part_map: dict[str, str] = {}
@@ -127,7 +130,6 @@ alveo_default_platform["U55C"] = "xilinx_u55c_gen3x16_xdma_3_202210_1"
 # Create a joint part map, encompassing other boards too
 part_map: dict[str, str] = {**pynq_part_map, **alveo_part_map}
 part_map["VEK280"] = "xcve2802-vsvh1760-2MP-e-S"
-part_map["VCK190"] = "xcvc1902-vsva2197-2MP-e-S"
 part_map["V80"] = "xcv80-lsva4737-2MHP-e-s"
 
 # Boards that expose HBM. Note that U50 has only HBM (no DDR), while the other
@@ -255,6 +257,15 @@ def get_rtlsim_trace_depth() -> int:
         return int(os.environ["RTLSIM_TRACE_DEPTH"])
     except KeyError:
         return 1
+
+
+# Golden reference design files the Versal PYNQ shell is built against
+pynq_golden_files = ["golden_ref.tcl", "golden_noc.ncr", "golden_routed.dcp"]
+
+
+def get_pynq_golden_dir(board: str) -> Path:
+    """Return the directory holding the golden reference design for a Versal PYNQ board."""
+    return get_settings().finn_deps / "pynq_golden" / board.lower()
 
 
 def get_vivado_root() -> str:
@@ -598,6 +609,19 @@ def is_versal(fpgapart: str) -> bool:
         "xqrvc",
         "xcv80",
     ]
+
+
+def least_divisor_at_most(n: int, max_quotient: int) -> int:
+    """Return the smallest divisor d of n such that n/d <= max_quotient.
+
+    Equivalently, the smallest d that divides n and is >= ceil(n/max_quotient).
+    Always terminates: n divides itself, giving quotient 1.
+    """
+    target = (n + max_quotient - 1) // max_quotient
+    for d in range(target, n + 1):
+        if n % d == 0:
+            return d
+    return n  # n always divides itself
 
 
 def get_dsp_block(fpgapart: str) -> str:

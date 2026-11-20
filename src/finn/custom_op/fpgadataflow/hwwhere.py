@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.exception import FINNInternalError, FINNUserError
+from finn.util.input_gen import input_gen_buffer_depth
 from finn.util.logging import log
 
 if TYPE_CHECKING:
@@ -246,7 +247,8 @@ class HWWhere(HWCustomOp):
     def _input_gen_buffer_specs(self) -> list[tuple[int, int]]:
         """Return the (width, depth) of each RTL input_gen buffer.
 
-        The depth here must match the buffer size that ``input_gen.sv`` derives
+        The depth here must match the buffer size that
+        ``finn-rtllib/input_gen/hdl/input_gen.sv`` derives
         at elaboration from its FM_SIZE/DIMS/COEFS parameters (see where.sv's
         INIT_FM_SIZE/INIT_COEFS, which feed those parameters). Resource
         estimation has no access to the elaborated RTL, so this recomputes the
@@ -282,35 +284,8 @@ class HWWhere(HWCustomOp):
                 else:
                     coefs.append(int(np.prod(word_dims[axis + 1 :])))
 
-            # Mirror the occupancy recurrence input_gen.sv evaluates at
-            # elaboration to size its circular replay buffer.
-            weights = [fm_size, *coefs]
-            free_flags = [True]
-            for axis, coef in enumerate(coefs):
-                free_flags.append(
-                    free_flags[-1] and coef > 0 and coef * out_dims[axis] <= weights[axis]
-                )
-
-            max_occupancy = 0
-            read_rewind = 0
-            free_rewind = 0
-            for axis in range(len(out_shape) - 1, -1, -1):
-                inner_read_rewind = read_rewind
-                inner_free_rewind = free_rewind
-                read_rewind = (out_dims[axis] - 1) * coefs[axis] + read_rewind
-                free_rewind = (
-                    (out_dims[axis] - 1) * coefs[axis] + free_rewind if free_flags[axis + 1] else 0
-                )
-                max_occupancy = max(max_occupancy, read_rewind - free_rewind)
-                if free_flags[axis]:
-                    burst = max(weights[axis] - free_rewind, 0)
-                    required = inner_read_rewind - inner_free_rewind + burst
-                    max_occupancy = max(max_occupancy, required)
-
-            # input_gen adds one write-pointer delay and two safety entries,
-            # then rounds the buffer depth up to a power of two.
-            required_depth = max_occupancy + 3
-            buffer_depth = 1 << (required_depth - 1).bit_length()
+            # Mirror the buffer sizing input_gen.sv evaluates at elaboration.
+            buffer_depth = input_gen_buffer_depth(fm_size, out_dims, coefs)
             specs.append((self.get_instream_width(ind), buffer_depth))
 
         return specs

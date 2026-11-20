@@ -58,15 +58,6 @@ class bench_mvau_multi_dnn(bench):
         mw = weights.shape[0]
         mh = weights.shape[1]
 
-        if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
-            export_wdt = DataType["BINARY"]
-            export_idt = DataType["BINARY"]
-            binary_xnor_mode = 1
-        else:
-            export_wdt = wdt
-            export_idt = idt
-            binary_xnor_mode = 0
-
         inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [*num_input_vectors, mw])
         outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [*num_input_vectors, mh])
         if thresholds is not None:
@@ -101,11 +92,10 @@ class bench_mvau_multi_dnn(bench):
             PE=pe,
             M=m,
             numInputVectors=num_input_vectors,
-            inputDataType=export_idt.name,
-            weightDataType=export_wdt.name,
+            inputDataType=idt.name,
+            weightDataType=wdt.name,
             outputDataType=odt.name,
             ActVal=actval,
-            binaryXnorMode=binary_xnor_mode,
             noActivation=no_act,
             resType=res_type,
             mem_mode=mem_mode,
@@ -123,11 +113,7 @@ class bench_mvau_multi_dnn(bench):
         model.set_tensor_datatype("inp", idt)
         model.set_tensor_datatype("outp", odt)
         model.set_tensor_datatype("weights", wdt)
-        if binary_xnor_mode:
-            # convert bipolar to binary
-            model.set_initializer("weights", (weights + 1) / 2)
-        else:
-            model.set_initializer("weights", weights)
+        model.set_initializer("weights", weights)
         if thresholds is not None:
             model.set_tensor_datatype("thresh", tdt)
             model.set_initializer("thresh", thresholds)

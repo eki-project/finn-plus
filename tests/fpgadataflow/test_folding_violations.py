@@ -147,18 +147,20 @@ def make_input_dilation(**attrs: int) -> ModelWrapper:
 
 
 def make_pool(**attrs: int) -> ModelWrapper:
-    """2x2 max pooling with 8 channels."""
+    """2x2 max pooling with 8 channels on a 4x4 image (the Pool generates its own windows)."""
     node_attrs = {
         "Channels": 8,
         "PE": 4,
         "KernelSize": [2, 2],
         "Function": "MaxPool",
+        "IFMDim": [4, 4],
         "OutImgDims": [2, 2],
+        "Stride": [2, 2],
         "InputDataType": "UINT4",
         "OutputDataType": "UINT4",
     }
     node_attrs.update(attrs)
-    return make_single_node_model("Pool_hls", node_attrs, [1, 2, 2, 32], [[1, 2, 2, 8]])
+    return make_single_node_model("Pool_hls", node_attrs, [1, 4, 4, 8], [[1, 2, 2, 8]])
 
 
 def make_globalaccpool(**attrs: int) -> ModelWrapper:

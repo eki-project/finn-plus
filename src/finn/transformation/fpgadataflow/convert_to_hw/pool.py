@@ -26,7 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Replace Pool layers with Im2col + Pool HW layer combinations when kernel_shape > strides."""
+"""Replace pooling layers with the consolidated Pool HW layer."""
 
 from onnx import AttributeProto, NodeProto, TensorProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
@@ -45,15 +45,15 @@ if TYPE_CHECKING:
 
 
 class InferPool(Transformation):
-    """If kernel_shape > strides, replace Pool layer with Im2col + pool combination.
+    """Replace MaxPool / QuantAvgPool2d / MaxPoolNHWC nodes with the consolidated Pool HW op.
 
-    When kernel_shape > strides, replaces Pool layer with Im2col followed by
-    pool (with kernel_shape == strides), plus Transpose layers to keep the
-    original data layout.
+    The Pool HW custom op internally fuses pad<> + input_gen<> + pool<F>(), so no
+    separate Im2Col is created. Transpose nodes are inserted around the Pool node
+    when the original data layout is NCHW.
     """
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        """Apply transformation to convert Pool operations with kernel_shape > strides."""
+        """Apply transformation to convert pooling operations to Pool HW layers."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -76,6 +76,7 @@ class InferPool(Transformation):
                 # extract pool parameters
                 kh = kw = sh = sw = 0
                 dlayout = "None"
+                ceil_mode = 0
                 if node.op_type == "MaxPool":
                     kh, kw = list(
                         cast("AttributeProto", get_by_name(node.attribute, "kernel_shape")).ints
@@ -83,6 +84,8 @@ class InferPool(Transformation):
                     sh, sw = list(
                         cast("AttributeProto", get_by_name(node.attribute, "strides")).ints
                     )
+                    ceil_mode_attr = get_by_name(node.attribute, "ceil_mode")
+                    ceil_mode = ceil_mode_attr.i if ceil_mode_attr is not None else 0
                     dlayout = "NCHW"
                 elif node.op_type == "QuantAvgPool2d":
                     inst = getCustomOp(node)
@@ -95,6 +98,7 @@ class InferPool(Transformation):
                     inst = getCustomOp(node)
                     kh, kw = cast("np.ndarray", inst.get_nodeattr("kernel_shape"))
                     sh, sw = cast("np.ndarray", inst.get_nodeattr("strides"))
+                    ceil_mode = cast("int", inst.get_nodeattr("ceil_mode"))
                     dlayout = "NHWC"
                 try:
                     pad = list(cast("AttributeProto", get_by_name(node.attribute, "pads")).ints)
@@ -105,7 +109,8 @@ class InferPool(Transformation):
                     continue
 
                 if (kh < sh) or (kw < sw):
-                    # TODO check/implement swg support
+                    # kernel < stride skips input no window reads, which input_gen
+                    # would have to buffer regardless; not supported (yet)
                     continue
 
                 odt = model.get_tensor_datatype(node_output)
@@ -119,10 +124,40 @@ class InferPool(Transformation):
                 else:
                     raise FINNInternalError("Unknown dlayout: " + str(dlayout))
 
+                # ceil_mode=1: absorb ceil extension into extra trailing padding
+                if ceil_mode and node.op_type in ["MaxPool", "MaxPoolNHWC"]:
+                    pad[2] += max(0, (ofm_h - 1) * sh + kh - ifm_h - (pad[0] + pad[2]))
+                    pad[3] += max(0, (ofm_w - 1) * sw + kw - ifm_w - (pad[1] + pad[3]))
+
+                # Determine pool function and parameters
+                accum_bits = 0
+                pool_size_param = 0  # will be overridden if needed
+                pad_value = 0
+                if node.op_type in ["MaxPool", "MaxPoolNHWC"]:
+                    pool_fxn = "MaxPool"
+                    odt = idt
+                    pad_value = idt.min()
+                elif node.op_type == "QuantAvgPool2d":
+                    if not odt.is_integer():
+                        raise FINNUserError(
+                            f"{node.name}: Output data type for QuantAvgPool2d needs to be integer."
+                        )
+                    if any(x != 0 for x in pad):
+                        raise FINNUserError(
+                            f"{node.name}: Padding is not supported for QuantAvgPool2d."
+                        )
+                    inst = cast("QuantAvgPool2d", getCustomOp(node))
+                    pool_fxn = "QuantAvgPool"
+                    pool_size_param = inst.get_shifts()
+                    accum_bits = inst.get_accum_size()
+                else:
+                    raise FINNInternalError(
+                        f"{node.name}: pad_value and pool_fxn not configured for {node.op_type}"
+                    )
+
                 # if data layout NCHW, we need transpose nodes surrounding
                 # the hw layer
-                inp_trans_out = None
-                pool_output = ""
+                inp_trans_node = None
                 if dlayout == "NCHW":
                     # create new intermediate values
                     inp_trans_out = helper.make_tensor_value_info(
@@ -142,75 +177,19 @@ class InferPool(Transformation):
                     graph.value_info.append(pool_output)
                     pool_output = pool_output.name
 
-                im2col_out = helper.make_tensor_value_info(
-                    model.make_new_valueinfo_name(),
-                    TensorProto.FLOAT,
-                    (1, ofm_h, ofm_w, ifm_ch * kh * kw),
-                )
-                graph.value_info.append(im2col_out)
-                im2col_out = im2col_out.name
-                model.set_tensor_datatype(im2col_out, idt)
-
-                # create new nodes
-                inp_trans_node = None
-                if dlayout == "NCHW":
                     # NCHW -> NHWC
                     inp_trans_node = helper.make_node(
-                        "Transpose", [node_input], [cast("str", inp_trans_out)], perm=[0, 2, 3, 1]
+                        "Transpose", [node_input], [inp_trans_out], perm=[0, 2, 3, 1]
                     )
-                    im2col_in = cast("str", inp_trans_out)
+                    pool_input = inp_trans_out
                 else:
-                    im2col_in = node_input
+                    pool_input = node_input
                     pool_output = node_output
 
-                accum_bits = 0
-                pool_size_param = 0  # will be overridden if neededs
-                pad_value = 0
-                if node.op_type in ["MaxPool", "MaxPoolNHWC"]:
-                    pool_fxn = "MaxPool"
-                    odt = idt
-                    pad_value = idt.min()
-                elif node.op_type == "QuantAvgPool2d":
-                    if not odt.is_integer():
-                        raise FINNUserError(
-                            f"{node.name}: Output data type for QuantAvgPool2d needs to be integer."
-                        )
-                    if any(x != 0 for x in pad):
-                        raise FINNUserError(
-                            f"{node.name}: Padding is not supported for QuantAvgPool2d."
-                        )
-                    inst = cast("QuantAvgPool2d", getCustomOp(node))
-                    pool_fxn = "QuantAvgPool"
-                    pool_size_param = inst.get_shifts()
-                    accum_bits = inst.get_accum_size()
-
-                else:
-                    raise FINNInternalError(
-                        f"{node.name}: pad_value and pool_fxn not configured for {node.op_type}"
-                    )
-
-                # format input tensor
-                im2col_node = helper.make_node(
-                    "Im2Col",
-                    [im2col_in],
-                    [im2col_out],
-                    domain="qonnx.custom_op.general",
-                    stride=[sh, sw],
-                    kernel_size=[kh, kw],
-                    pad_amount=pad,
-                    pad_value=pad_value,
-                    depthwise=1,
-                    input_shape=f"(1,{ifm_h},{ifm_w},{ifm_ch})",
-                    name="Im2Col_" + node.name,
-                )
-
-                # Warning PE has to be equal to ifm_ch until Im2Col is replaced by
-                # ConvolutionInputGenerator with depthwise=1.
-                # For other settings the output will be incorrect due to incorrect input
-                # data layout
+                # Consolidated Pool node: the input is the raw (unpadded) feature map
                 pool_node = helper.make_node(
                     "Pool",
-                    [im2col_out],
+                    [pool_input],
                     [pool_output],
                     domain="finn.custom_op.fpgadataflow",
                     backend="fpgadataflow",
@@ -219,31 +198,29 @@ class InferPool(Transformation):
                     Channels=ifm_ch,
                     PE=ifm_ch,
                     KernelSize=[kh, kw],
+                    Stride=[sh, sw],
+                    IFMDim=[ifm_h, ifm_w],
                     Function=pool_fxn,
                     OutImgDims=[ofm_h, ofm_w],
+                    Padding=pad,
+                    PadValue=pad_value,
                     AccumBits=accum_bits,
                     Size=pool_size_param,
                     BatchSize=1,
-                    cpp_interface="hls_vector",
                     name="Pool_" + node.name,
                 )
 
-                out_trans_node = None
+                # insert nodes where the pool is to preserve topological ordering
                 if dlayout == "NCHW":
                     # NHWC -> NCHW
                     out_trans_node = helper.make_node(
                         "Transpose", [pool_output], [node_output], perm=[0, 3, 1, 2]
                     )
-
-                # insert nodes where the conv is to preserve topological ordering
-                if dlayout == "NCHW":
                     graph.node.insert(node_ind, cast("NodeProto", inp_trans_node))
-                    graph.node.insert(node_ind + 1, im2col_node)
-                    graph.node.insert(node_ind + 2, pool_node)
-                    graph.node.insert(node_ind + 3, cast("NodeProto", out_trans_node))
-                else:
-                    graph.node.insert(node_ind, im2col_node)
                     graph.node.insert(node_ind + 1, pool_node)
+                    graph.node.insert(node_ind + 2, out_trans_node)
+                else:
+                    graph.node.insert(node_ind, pool_node)
                 # remove old node
                 graph.node.remove(node)
                 graph_modified = True

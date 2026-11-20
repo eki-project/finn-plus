@@ -129,9 +129,6 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         topname = self.get_verilog_top_module_name()
         self.set_nodeattr("gen_top_module", topname)
 
-        # make instream width a multiple of 8 for axi interface
-        in_width = self.get_instream_width_padded()
-
         depth = int(self.depth)
         # fifo.sv will not elaborate below DEPTH 2; catch it here rather than in a
         # Vivado elaboration log
@@ -143,14 +140,15 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         ram_style = self.ram_style
         code_gen_dict = {
             "$TOP_MODULE_NAME$": topname,
-            "$IN_RANGE$": f"[{in_width - 1}:0]",
-            "$OUT_RANGE$": f"[{in_width - 1}:0]",
-            "$WIDTH$": str(in_width),
+            # the payload width; the template pads its AXI-Stream ports to whole bytes
+            "$WIDTH$": str(self.get_instream_width()),
             "$DEPTH$": str(depth),
             # fifo.sv's RAM_STYLE_EFF ladder still uses the legacy "shift" token for the
             # SRL backing; map the FINN-facing "srl" onto it at the RTL boundary
             "$RAM_STYLE$": "shift" if ram_style == "srl" else ram_style,
             "$DATA_LOGFILE$": cast("str", self.get_nodeattr("debug_log_path")),
+            "$LOG_VERBOSE$": str(int(cast("int", self.get_nodeattr("fifo_log_verbose")))),
+            "$LOG_FLUSH_CYCLES$": str(int(cast("int", self.get_nodeattr("fifo_log_flush_cycles")))),
         }
         # apply code generation to templates
         template = template_path.read_text()

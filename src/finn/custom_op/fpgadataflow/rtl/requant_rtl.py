@@ -28,6 +28,18 @@ if TYPE_CHECKING:
 # finn-rtllib/requant/hdl sources of the two parameter memory modes
 _RTL_SOURCES_EMBEDDED = ["requant.sv", "requant_axi.sv"]
 _RTL_SOURCES_DECOUPLED = ["requant_decoupled.sv", "requant_axi_decoupled.sv"]
+# finn-rtllib/requantf/hdl sources of the FLOAT32 input (requantf) datapath
+_RTL_SOURCES_FLOAT_EMBEDDED = ["nonlin/requantf.sv", "nonlin/requantf_axi.sv", "arith/fmaf.sv"]
+_RTL_SOURCES_FLOAT_DECOUPLED = [
+    "nonlin/requantf_decoupled.sv",
+    "nonlin/requantf_axi_decoupled.sv",
+    "arith/fmaf.sv",
+]
+
+
+def _requantf_rtllib_dir() -> Path:
+    """Return the directory of the finn-rtllib requantf (FLOAT32 input) HDL sources."""
+    return Path(get_settings().finn_rtllib) / "requantf" / "hdl"
 
 
 def _twos(value: int, width: int) -> int:
@@ -161,11 +173,20 @@ class Requant_rtl(Requant, RTLBackend, MemStreamOp):
             case _:
                 return 1
 
+    def _is_float_input(self) -> bool:
+        """Return whether the input is FLOAT32, i.e. the requantf datapath is used."""
+        return self.get_input_datatype(0) == DataType["FLOAT32"]
+
     def _derive_decoupled_widths(self, model: "ModelWrapper", fpgapart: str) -> dict[str, Any]:
         """Derive the fixed-point stream layout for decoupled mode.
 
         All widths are consistent with the localparam derivation in
         ``requant_axi_decoupled.sv``.
+
+        For FLOAT32 input the layout is trivial: one FP32 SCALE/BIAS pair per
+        lane (64 bits), matching ``requantf_axi_decoupled.sv``
+        (PARAMS_STREAM_WIDTH = PE*64, INPUT_STREAM_WIDTH = PE*32). No fixed-point
+        decomposition/shift window is involved.
 
         Args:
             model: The model holding the scale/bias initializers of this node.
@@ -176,6 +197,9 @@ class Requant_rtl(Requant, RTLBackend, MemStreamOp):
             stream widths for the parameter stream and the input/output data
             streams.
         """
+        if self._is_float_input():
+            return self._derive_decoupled_widths_float(model)
+
         version = self._resolve_dsp_version(fpgapart)
         params = self.decompose_params(model, version)
         s_width = params["s_width"]
@@ -219,6 +243,43 @@ class Requant_rtl(Requant, RTLBackend, MemStreamOp):
         )
         return info
 
+    def _derive_decoupled_widths_float(self, model: "ModelWrapper") -> dict[str, Any]:
+        """Derive the decoupled stream layout for the FLOAT32 (requantf) datapath.
+
+        Carries the [PE][CF] scale/bias so ``_pack_param_words`` can emit the raw
+        FP32 pairs. Widths mirror ``requantf_axi_decoupled.sv``: one FP32
+        SCALE/BIAS pair per lane (64 bits), FP32 data input (PE*32).
+
+        Args:
+            model: The model holding the scale/bias initializers of this node.
+
+        Returns:
+            A dict with the [PE][CF] scale/bias and the stream widths.
+        """
+        pe = self.pe
+        num_channels = self.num_channels
+        cf = num_channels // pe
+        n = self.get_output_datatype().bitwidth()
+
+        scale = self.get_scale(model)
+        bias = self.get_bias(model)
+        if scale.size == 1:
+            scale = np.full(num_channels, scale.item(), dtype=np.float32)
+        if bias.size == 1:
+            bias = np.full(num_channels, bias.item(), dtype=np.float32)
+        scale_reshaped = scale.reshape(cf, pe).T  # [PE][CF]
+        bias_reshaped = bias.reshape(cf, pe).T  # [PE][CF]
+
+        return {
+            "float": True,
+            "scale": scale_reshaped,
+            "bias": bias_reshaped,
+            "params_lane_width": 64,
+            "in_stream_width": pe * 32,
+            "out_stream_width": roundup_to_integer_multiple(pe * n, 8),
+            "params_stream_width": pe * 64,
+        }
+
     def _pack_param_words(self, info: dict[str, Any]) -> list[int]:
         """Pack the decomposed params into per-fold stream words.
 
@@ -236,6 +297,9 @@ class Requant_rtl(Requant, RTLBackend, MemStreamOp):
         Returns:
             A list of ``CF`` Python integers, one stream word per channel fold.
         """
+        if info.get("float"):
+            return self._pack_param_words_float(info)
+
         pe = self.pe
         cf = self.num_channels // pe
 
@@ -260,6 +324,50 @@ class Requant_rtl(Requant, RTLBackend, MemStreamOp):
                     | _twos(scale[p][c], s_width)
                 )
                 p_word |= lane << (p * params_lane_width)
+            params_words.append(p_word)
+        return params_words
+
+    def _pack_param_words_float(self, info: dict[str, Any]) -> list[int]:
+        """Pack raw FP32 scale/bias pairs into per-fold stream words.
+
+        Per-lane layout (LSB to MSB), matching ``requantf_decoupled.sv``
+        ``pdat[pe][0]=SCALE``, ``pdat[pe][1]=BIAS``:
+            [31 : 0]  = SCALE (FP32 bits)
+            [63 : 32] = BIAS  (FP32 bits, pre-adjusted)
+        Lane 0 (pe=0) occupies the least significant 64 bits.
+
+        Unlike the embedded requantf core, ``requantf_decoupled.sv`` does NOT add
+        BIAS_ADJ internally; its header requires the feeder to pre-adjust the
+        bias, so the round/sign offset is applied here:
+            unsigned: bias' = bias + 0.5
+            signed:   bias' = bias + 2^(N-1) + 0.5
+
+        Args:
+            info: Stream layout as returned by ``_derive_decoupled_widths_float``.
+
+        Returns:
+            A list of ``CF`` Python integers, one stream word per channel fold.
+        """
+        pe = self.pe
+        cf = self.num_channels // pe
+        odt = self.get_output_datatype()
+        n = odt.bitwidth()
+
+        scale = info["scale"]
+        bias = info["bias"]
+        bias_adj = (2.0 ** (n - 1) + 0.5) if odt.signed() else 0.5
+
+        def fp32_bits(v: float) -> int:
+            """Return the IEEE-754 single-precision bit pattern of ``v``."""
+            return int(np.float32(v).view(np.uint32))
+
+        params_words = []
+        for c in range(cf):
+            p_word = 0
+            for p in range(pe):
+                bias_p = float(bias[p][c]) + bias_adj
+                lane = (fp32_bits(bias_p) << 32) | fp32_bits(scale[p][c])
+                p_word |= lane << (p * 64)
             params_words.append(p_word)
         return params_words
 
@@ -330,7 +438,10 @@ class Requant_rtl(Requant, RTLBackend, MemStreamOp):
 
         mem_mode = self.mem_mode
         if mem_mode == "internal_embedded":
-            self._generate_hdl_embedded(model, fpgapart, Path(code_gen_dir))
+            if self._is_float_input():
+                self._generate_hdl_embedded_float(model, Path(code_gen_dir))
+            else:
+                self._generate_hdl_embedded(model, fpgapart, Path(code_gen_dir))
         elif mem_mode == "internal_decoupled":
             self._generate_hdl_decoupled(model, fpgapart, Path(code_gen_dir))
         else:
@@ -407,6 +518,7 @@ class Requant_rtl(Requant, RTLBackend, MemStreamOp):
             "$SCALES$": scales_sv,
             "$BIASES$": biases_sv,
             "$SIGNED_OUT$": str(int(odt.signed())),
+            "$SIGNED_IN$": str(int(idt.signed())),
             "$IN_STREAM_WIDTH$": str(in_stream_width),
             "$OUT_STREAM_WIDTH$": str(out_stream_width),
         }.items():
@@ -425,16 +537,100 @@ class Requant_rtl(Requant, RTLBackend, MemStreamOp):
 
         self.set_nodeattr("gen_top_module", top_module_name)
 
+    def _generate_hdl_embedded_float(self, model: "ModelWrapper", code_gen_path: Path) -> None:
+        """Embedded mode, FLOAT32 input: constant-fold scale/bias into requantf.
+
+        Mirrors ``_generate_hdl_embedded`` but targets the requantf core: FP32
+        input (in_stream_width = PE*32), no VERSION/K, and the raw scale/bias are
+        passed straight through (requantf_axi applies the round/sign BIAS_ADJ
+        internally, same as the compile-time requantf.sv path).
+
+        Args:
+            model: The model holding the scale/bias initializers of this node.
+            code_gen_path: Directory in which the generated HDL is written.
+        """
+        pe = self.pe
+        num_channels = self.num_channels
+        cf = num_channels // pe  # Channel fold
+
+        odt = self.get_output_datatype()
+        n = odt.bitwidth()  # Output precision
+
+        # Get scale and bias from model
+        scale = self.get_scale(model)
+        bias = self.get_bias(model)
+
+        # Broadcast scalar scale/bias to all channels if needed
+        if scale.size == 1:
+            scale = np.full(num_channels, scale.item(), dtype=np.float32)
+        if bias.size == 1:
+            bias = np.full(num_channels, bias.item(), dtype=np.float32)
+
+        # Reshape for PE interleaving: [PE][CF]
+        scale_reshaped = scale.reshape(cf, pe).T  # [PE][CF]
+        bias_reshaped = bias.reshape(cf, pe).T  # [PE][CF]
+
+        def format_sv_array(arr: np.ndarray) -> str:
+            """Format a 2D numpy array as a SystemVerilog array literal."""
+            lines = []
+            for pe_idx in range(arr.shape[0]):
+                # shortreal is a 32-bit float; fixed-point notation, 6 decimals
+                row = ", ".join(f"{float(v):.6f}" for v in arr[pe_idx])
+                lines.append("'{" + row + "}")
+            return "'{" + ", ".join(lines) + "}"
+
+        scales_sv = format_sv_array(scale_reshaped)
+        biases_sv = format_sv_array(bias_reshaped)
+
+        # Calculate stream widths (byte-aligned); FP32 input -> PE*32
+        in_stream_width = ((pe * 32 + 7) // 8) * 8
+        out_stream_width = ((pe * n + 7) // 8) * 8
+
+        top_module_name = self.get_verilog_top_module_name()
+        rtllib_dir = _requantf_rtllib_dir() / "nonlin"
+
+        # Generate SystemVerilog implementation module (with _impl suffix)
+        sv_code = (rtllib_dir / "requantf_wrapper_template.sv").read_text()
+        for placeholder, value in {
+            "$TOP_MODULE_NAME$": top_module_name,
+            "$N$": str(n),
+            "$C$": str(num_channels),
+            "$PE$": str(pe),
+            "$SCALES$": scales_sv,
+            "$BIASES$": biases_sv,
+            "$SIGNED_OUT$": str(int(odt.signed())),
+            "$IN_STREAM_WIDTH$": str(in_stream_width),
+            "$OUT_STREAM_WIDTH$": str(out_stream_width),
+        }.items():
+            sv_code = sv_code.replace(placeholder, value)
+        (code_gen_path / f"{top_module_name}_impl.sv").write_text(sv_code)
+
+        # Generate Verilog stub wrapper (for IP packaging - must be .v)
+        v_code = (rtllib_dir / "requantf_wrapper_template.v").read_text()
+        for placeholder, value in {
+            "$TOP_MODULE_NAME$": top_module_name,
+            "$IN_STREAM_WIDTH$": str(in_stream_width),
+            "$OUT_STREAM_WIDTH$": str(out_stream_width),
+        }.items():
+            v_code = v_code.replace(placeholder, value)
+        (code_gen_path / f"{top_module_name}.v").write_text(v_code)
+
+        self.set_nodeattr("gen_top_module", top_module_name)
+
     def _generate_hdl_decoupled(
         self, model: "ModelWrapper", fpgapart: str, code_gen_path: Path
     ) -> None:
-        """Decoupled mode: stream scale/shift/bias from a unified param memstream.
+        """Decoupled mode: stream params from a unified param memstream.
 
-        The float->fixed-point decomposition is done in Python
-        (``decompose_params``); the resulting per-channel words are packed into
-        a single struct-based stream and emitted as one memstream init file, and
-        the compute core is elaborated with the worst-case SHIFT_MIN/SHIFT_MAX
-        window instead of embedded params.
+        Integer input: the float->fixed-point decomposition is done in Python
+        (``decompose_params``); the per-channel words are packed into a single
+        struct-based stream and the core is elaborated with the worst-case
+        SHIFT_MIN/SHIFT_MAX window instead of embedded params.
+
+        FLOAT32 input (requantf): the stream carries one raw FP32 SCALE/BIAS pair
+        per lane (PE*64). Only the template substitution + rtllib_dir fork here;
+        the memstream generation, param packing and IPI wiring are the same
+        shared, port-name-driven code path as the integer decoupled variant.
 
         Args:
             model: The model holding the scale/bias initializers of this node.
@@ -445,27 +641,40 @@ class Requant_rtl(Requant, RTLBackend, MemStreamOp):
 
         pe = self.pe
         num_channels = self.num_channels
-        k = self.get_input_datatype(0).bitwidth()
         n = self.get_output_datatype().bitwidth()
 
         top_module_name = self.get_verilog_top_module_name()
-        rtllib_dir = Path(get_settings().finn_rtllib) / "requant" / "hdl"
-
         odt = self.get_output_datatype()
-        subst = {
-            "$TOP_MODULE_NAME$": top_module_name,
-            "$VERSION$": str(info["version"]),
-            "$K$": str(k),
-            "$N$": str(n),
-            "$C$": str(num_channels),
-            "$PE$": str(pe),
-            "$SHIFT_MIN$": str(info["shift_min"]),
-            "$SHIFT_MAX$": str(info["shift_max"]),
-            "$SIGNED_OUT$": str(int(odt.signed())),
-        }
+
+        if self._is_float_input():
+            rtllib_dir = _requantf_rtllib_dir() / "nonlin"
+            template_name = "requantf_wrapper_decoupled_template.v"
+            subst = {
+                "$TOP_MODULE_NAME$": top_module_name,
+                "$N$": str(n),
+                "$C$": str(num_channels),
+                "$PE$": str(pe),
+                "$SIGNED_OUT$": str(int(odt.signed())),
+            }
+        else:
+            idt = self.get_input_datatype(0)
+            rtllib_dir = Path(get_settings().finn_rtllib) / "requant" / "hdl"
+            template_name = "requant_wrapper_decoupled_template.v"
+            subst = {
+                "$TOP_MODULE_NAME$": top_module_name,
+                "$VERSION$": str(info["version"]),
+                "$K$": str(idt.bitwidth()),
+                "$N$": str(n),
+                "$C$": str(num_channels),
+                "$PE$": str(pe),
+                "$SHIFT_MIN$": str(info["shift_min"]),
+                "$SHIFT_MAX$": str(info["shift_max"]),
+                "$SIGNED_OUT$": str(int(odt.signed())),
+                "$SIGNED_IN$": str(int(idt.signed())),
+            }
 
         # Verilog wrapper (.v) for IP packaging
-        v_code = (rtllib_dir / "requant_wrapper_decoupled_template.v").read_text()
+        v_code = (rtllib_dir / template_name).read_text()
         for key, val in subst.items():
             v_code = v_code.replace(key, val)
         (code_gen_path / f"{top_module_name}.v").write_text(v_code)
@@ -503,17 +712,19 @@ class Requant_rtl(Requant, RTLBackend, MemStreamOp):
         if top_module == "":
             top_module = self.get_verilog_top_module_name()
 
-        if self.mem_mode == "internal_decoupled":
-            rtl_files = [rtllib_dir + f for f in _RTL_SOURCES_DECOUPLED] + [
-                # generated Verilog wrapper (directly instantiates the SV core)
-                str(code_gen_dir / f"{top_module}.v"),
-            ]
+        decoupled = self.mem_mode == "internal_decoupled"
+        if self._is_float_input():
+            # requantf core (DSPFP32 via fmaf); Versal only.
+            rtllib_dir = str(_requantf_rtllib_dir()) + "/"
+            sources = _RTL_SOURCES_FLOAT_DECOUPLED if decoupled else _RTL_SOURCES_FLOAT_EMBEDDED
         else:
-            rtl_files = [rtllib_dir + f for f in _RTL_SOURCES_EMBEDDED] + [
-                # generated SystemVerilog impl + Verilog stub wrapper
-                str(code_gen_dir / f"{top_module}_impl.sv"),
-                str(code_gen_dir / f"{top_module}.v"),
-            ]
+            sources = _RTL_SOURCES_DECOUPLED if decoupled else _RTL_SOURCES_EMBEDDED
+        rtl_files = [rtllib_dir + f for f in sources]
+        if not decoupled:
+            # generated SystemVerilog impl (the decoupled wrapper instantiates the SV core)
+            rtl_files.append(str(code_gen_dir / f"{top_module}_impl.sv"))
+        # generated Verilog (stub) wrapper
+        rtl_files.append(str(code_gen_dir / f"{top_module}.v"))
         rtl_files += fifo_rtl_files()
 
         if abspath:

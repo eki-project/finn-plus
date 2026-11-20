@@ -15,6 +15,7 @@ from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.layernorm import LayerNorm
+from finn.util.data_packing import hls_datatype_str
 
 if TYPE_CHECKING:
     from onnx import GraphProto, NodeProto
@@ -36,18 +37,11 @@ class LayerNorm_hls(LayerNorm, HLSBackend):
         my_attrs: NodeAttrTypes = {}
         my_attrs.update(LayerNorm.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
-        my_attrs.update(
-            {
-                "cpp_interface": ("s", False, "hls_vector"),
-                "hls_style": ("s", False, "freerunning"),
-            }
-        )
         return my_attrs
 
     def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = [
-            "#include <hls_vector.h>",
             '#include "layernorm.hpp"',
         ]
 
@@ -59,7 +53,7 @@ class LayerNorm_hls(LayerNorm, HLSBackend):
             f"""
             constexpr unsigned  SIMD = {self.simd};
             constexpr unsigned  N = {n};
-            using  TI = {idtype.get_hls_datatype_str()};
+            using  TI = {hls_datatype_str(idtype)};
             using  TO = float;
            """
         ]
@@ -73,8 +67,8 @@ class LayerNorm_hls(LayerNorm, HLSBackend):
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             f"""
             void {self.onnx_node.name}(
-                hls::stream<hls::vector<TI,SIMD>> &in0_V,
-                hls::stream<hls::vector<TO,SIMD>> &out0_V
+                hls::stream<tensor<TI,SIMD>> &in0_V,
+                hls::stream<tensor<TO,SIMD>> &out0_V
                 )
             """
         ]

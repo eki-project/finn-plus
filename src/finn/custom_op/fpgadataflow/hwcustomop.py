@@ -48,6 +48,7 @@ from finn.util.exception import FINNFoldingError, FINNInternalError
 
 if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
+    from finn.transformation.fpgadataflow.fifo_sizing.tav import CharacteristicNode
     from finn.transformation.fpgadataflow.loop_rolling import LoopBodyInputType
     from finn.xsi import SimEngine
 
@@ -122,6 +123,15 @@ class HWCustomOp(CustomOp):
             "outFIFODepths": ("ints", False, [2]),
             "output_hook": ("s", False, ""),
             "bodies": ("i", False, 0),
+            # Token access vectors (TAVs) for analytical FIFO sizing: cumulative token
+            # counts per cycle over two periods, shape (n_streams, 2*period). The arrays
+            # live in sidecar .npy.gz files (see fifo_sizing.tav.save_tav_npy), since
+            # large periods would push the ModelProto past protobuf's 2 GB limit. These
+            # attributes hold the sidecar paths.
+            "io_chrc_in": ("s", False, ""),
+            "io_chrc_out": ("s", False, ""),
+            # period (in cycles) the token access vectors were derived for
+            "io_chrc_period": ("i", False, 0),
             "mlo_max_iter": ("i", False, 0),
             # DDR byte offset of this node's (streamed) weights, see AssignMemoryOffset
             "address_offset": ("i", False, 0),
@@ -303,10 +313,26 @@ class HWCustomOp(CustomOp):
         finnxsi.reset_rtlsim(sim)
 
     def rtlsim_multi_io(
-        self, sim: "SimEngine", io_dict: dict[str, dict[str, list[int]]], sname: str = "_V"
+        self,
+        sim: "SimEngine",
+        io_dict: dict[str, dict[str, list[int]]],
+        sname: str = "_V",
+        batch_size: int = 1,
     ) -> None:
-        """Run rtlsim for this node, supports multiple i/o streams."""
+        """Run rtlsim for this node, supports multiple i/o streams.
+
+        Args:
+            sim: Simulation engine of this node.
+            io_dict: Input stimulus and output collection lists per stream.
+            sname: Stream name suffix.
+            batch_size: Number of frames the stimulus in ``io_dict`` holds.
+        """
         num_out_values = self.get_number_output_values()
+        # multi-output nodes report a per-stream dict; single-output an int
+        if isinstance(num_out_values, dict):
+            num_out_values = {k: v * batch_size for k, v in num_out_values.items()}
+        else:
+            num_out_values = num_out_values * batch_size
         # LIVENESS_THRESHOLD can only increase the expected cycle count.
         exp_cycles = self.get_exp_cycles()
         effective_threshold = get_watchdog_timeout_cycles(exp_cycles)
@@ -490,6 +516,59 @@ class HWCustomOp(CustomOp):
             f"{self.onnx_node.name}: expected one *{file_suffix} file in {code_gen_dir}, "
             f"found {[p.name for p in matches]}"
         )
+
+    def derive_token_access_vectors(self, strategy: str = "tree_model") -> bool:
+        """Derive the token access vectors (TAVs) of this node from its tree model.
+
+        The TAVs are stored in sidecar files referenced by ``io_chrc_in`` /
+        ``io_chrc_out``. FINN+ only supports the analytical derivation: a node
+        without a tree model (see ``fifo_sizing.tree_models``) is left without
+        TAVs and treated as transparent by ``DeriveFIFOSizes``. Upstream FINN
+        additionally characterizes such nodes by rtlsim; that path is not part
+        of FINN+ (a test-only reference lives in ``tests/testing_util``).
+
+        Args:
+            strategy: Source of the TAVs, only ``"tree_model"`` is supported.
+
+        Returns:
+            True if TAVs were stored, False if the node has no tree model.
+
+        Raises:
+            FINNInternalError: If a strategy other than ``"tree_model"`` is requested.
+        """
+        from finn.transformation.fpgadataflow.fifo_sizing.tree_models.base import get_tree_model
+
+        if strategy != "tree_model":
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: token access vectors can only be derived from tree "
+                f"models, got strategy '{strategy}'"
+            )
+        tree = get_tree_model(self)
+        if tree is None:
+            return False
+        self.derive_token_access_vectors_using_tree_model(tree)
+        return True
+
+    def derive_token_access_vectors_using_tree_model(self, chr_node: "CharacteristicNode") -> None:
+        """Store the token access vectors of the schedule tree ``chr_node``.
+
+        The tree is taken as-is, with no shift applied on top of it: each tree model
+        expresses its own operator's wind-up, a correction here would count it twice.
+
+        Args:
+            chr_node: Schedule tree of one period of this node (see ``get_tree_model``).
+        """
+        from finn.transformation.fpgadataflow.fifo_sizing.tav import save_tav_npy
+
+        # the schedule is run-length encoded: both periods come from one np.repeat plus
+        # one cumsum instead of a Python loop per cycle
+        cum = chr_node.cumulative(periods=2)
+        period = cum.shape[0] // 2
+        self.set_nodeattr("io_chrc_period", period)
+        for name, col in (("io_chrc_in", 0), ("io_chrc_out", 1)):
+            arr = np.empty((1, cum.shape[0]), dtype=np.int32)
+            arr[0, :] = cum[:, col]
+            self.set_nodeattr(name, save_tav_npy(self, name, arr))
 
     def adapt_for_loop_body(self, input_types: "list[LoopBodyInputType]") -> None:
         """Called by LoopRolling transformation to allow operators to adapt their

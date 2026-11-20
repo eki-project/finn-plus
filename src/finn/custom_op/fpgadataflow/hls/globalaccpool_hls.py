@@ -35,6 +35,7 @@ from finn.custom_op.fpgadataflow.globalaccpool import GlobalAccPool
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.util.data_packing import hls_datatype_str
 from finn.util.exception import FINNInternalError
 
 if TYPE_CHECKING:
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
 
 @register_custom_op
 class GlobalAccPool_hls(GlobalAccPool, HLSBackend):
-    """Class that corresponds to finn-hlslib AccPool_Batch function."""
+    """Class that corresponds to finn-hlslib pool_global function."""
 
     def __init__(self, onnx_node: "NodeProto", **kwargs: int) -> None:
         """Initialize instance."""
@@ -75,12 +76,12 @@ class GlobalAccPool_hls(GlobalAccPool, HLSBackend):
             self.get_nodeattr("inputDataType")
             info_messages.append("All necessary attributes exist")
         except Exception:
-            info_messages.append("The required GlobalAccPool_Batch attributes do not exist.")
+            info_messages.append("The required GlobalAccPool attributes do not exist.")
 
         # verify that input data is 2D
         if len(self.num_input_vectors) != 3:
             raise FINNInternalError(
-                f"{self.onnx_node.name}: GlobalAccPool_Batch requires 2D data input "
+                f"{self.onnx_node.name}: GlobalAccPool requires 2D data input "
                 f"(numInputVectors of length 3), got {self.num_input_vectors}"
             )
 
@@ -92,27 +93,51 @@ class GlobalAccPool_hls(GlobalAccPool, HLSBackend):
 
     def global_includes(self) -> None:
         """Return global includes."""
-        self.code_gen_dict["$GLOBALS$"] = ['#include "maxpool.h"']
+        self.code_gen_dict["$GLOBALS$"] = ['#include "pool.hpp"']
 
     def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        self.code_gen_dict["$DEFINES$"] = []
+        pe = self.pe
+        cf = self.num_channels // pe
+        ishape = self.get_normal_input_shape()
+        pixels = ishape[1] * ishape[2]
+        self.code_gen_dict["$DEFINES$"] = [
+            f"static constexpr unsigned PE = {pe};",
+            f"static constexpr unsigned CF = {cf};",
+            f"static constexpr unsigned PIXELS = {pixels};",
+        ]
 
     def docompute(self) -> None:
         """Return docompute."""
-        img_dim = self.get_normal_input_shape()[1]
-        in_hls_type = self.get_input_datatype().get_hls_datatype_str()
-        out_hls_type = self.get_output_datatype().get_hls_datatype_str()
+        o_tensor_dt = f"tensor<{hls_datatype_str(self.get_output_datatype())}, {self.pe}>"
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            (
-                f"AccPool_Batch<{img_dim}, {self.num_channels}, {in_hls_type}, "
-                f"{self.pe}, {out_hls_type}> (in0_V, out0_V, 1);"
-            )
+            f"pool_global<SumPool<{o_tensor_dt}>, CF, PIXELS>(in0_V, out0_V);"
         ]
+
+    def timeout_value(self) -> None:
+        """Set the number of consecutive calls without output after which cppsim stops.
+
+        pool_global is function-pipelined and processes one input per call.
+        It needs CF * PIXELS calls before the first output, so the
+        default timeout of 1000 is insufficient for large configurations.
+        """
+        ishape = self.get_normal_input_shape()
+        pixels = ishape[1] * ishape[2]
+        total_inputs = (self.num_channels // self.pe) * pixels
+        self.code_gen_dict["$TIMEOUT_VALUE$"] = [str(total_inputs + 1000)]
+
+    def ipgen_extra_directives(self) -> list[str]:
+        """Return a list of extra tcl directives for HLS synthesis."""
+        return ["config_compile -pipeline_style flp"]
 
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
+        pe = self.pe
+        idt = hls_datatype_str(self.get_input_datatype())
+        odt = hls_datatype_str(self.get_output_datatype())
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            f"""void {self.onnx_node.name}(hls::stream<ap_uint<{self.get_instream_width()}>> &in0_V,
-                hls::stream<ap_uint<{self.get_outstream_width()}>> &out0_V)"""
+            (
+                f"void {self.onnx_node.name}(hls::stream<tensor<{idt}, {pe}>> &in0_V, "
+                f"hls::stream<tensor<{odt}, {pe}>> &out0_V)"
+            )
         ]

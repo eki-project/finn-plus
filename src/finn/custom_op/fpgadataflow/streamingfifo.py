@@ -83,6 +83,8 @@ class StreamingFIFO(HWCustomOp):
                 "inFIFODepths": ("ints", False, [0]),
                 "outFIFODepths": ("ints", False, [0]),
                 "debug_log_path": ("s", False, ""),
+                "fifo_log_verbose": ("i", False, 0),
+                "fifo_log_flush_cycles": ("i", False, 10000),
             }
         )
         return my_attrs
@@ -131,7 +133,9 @@ class StreamingFIFO(HWCustomOp):
         """
         requested = self.ram_style
         depth = self.depth
-        width = self.get_instream_width_padded()
+        # fifo.sv stores the payload only (the AXI-Stream byte padding is not buffered), so
+        # its RAM_STYLE_EFF ladder sees the unpadded width
+        width = self.get_instream_width()
         style = cast("str", _resolve(depth, width, requested))
         # fifo.sv checks depth<=33 before it checks RAM_STYLE!=auto (fifo.sv:85-86), so
         # at this depth any explicit memory request is forced to a shift register
@@ -225,9 +229,10 @@ class StreamingFIFO(HWCustomOp):
         Returns:
             FifoCost: The estimated (bram, uram, lut) cost.
         """
+        # fifo.sv buffers the unpadded payload only
         return _fifo_cost(
             self.depth,
-            self.get_instream_width_padded(),
+            self.get_instream_width(),
             self.get_ram_style(),
             is_versal(fpgapart),
         )
@@ -249,7 +254,7 @@ class StreamingFIFO(HWCustomOp):
         bram_est = self.bram_estimation(fpgapart)
         if bram_est == 0:
             return 1
-        wbits = self.get_instream_width_padded() * self.depth
+        wbits = self.get_instream_width() * self.depth
         return wbits / (bram_est * 18 * 1024)
 
     def uram_efficiency_estimation(self, fpgapart: str) -> float:
@@ -259,5 +264,5 @@ class StreamingFIFO(HWCustomOp):
         uram_est = self.uram_estimation(fpgapart)
         if uram_est == 0:
             return 1
-        wbits = self.get_instream_width_padded() * self.depth
+        wbits = self.get_instream_width() * self.depth
         return wbits / (uram_est * 72 * 4096)

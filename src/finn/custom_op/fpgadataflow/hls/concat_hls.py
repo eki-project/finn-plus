@@ -35,6 +35,7 @@ from finn.custom_op.fpgadataflow.concat import StreamingConcat
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.util.data_packing import hls_datatype_str
 
 if TYPE_CHECKING:
     from onnx import GraphProto, NodeProto
@@ -56,7 +57,6 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
         my_attrs: NodeAttrTypes = {}
         my_attrs.update(StreamingConcat.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
-        my_attrs.update({"cpp_interface": ("s", False, "hls_vector", {"packed", "hls_vector"})})
         return my_attrs
 
     def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
@@ -69,45 +69,44 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
 
     def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        self.code_gen_dict["$DEFINES$"] = [f"#define SIMD {self.simd}"]
+        self.code_gen_dict["$DEFINES$"] = []
 
     def docompute(self) -> None:
         """Return docompute."""
-        self.code_gen_dict["$DOCOMPUTE$"] = []
         n_inputs = self.get_n_inputs()
         input_folds = [str(self.get_folded_input_shape(i)[-2]) for i in range(n_inputs)]
-        in_streams = [f"in{i}_V" for i in range(n_inputs)]
-        in_stream_names = ", ".join(in_streams)
+        in_stream_names = ", ".join(f"in{i}_V" for i in range(n_inputs))
         in_stream_folds = ", ".join(input_folds)
-        comp_call = f"StreamingConcat<{in_stream_folds}>(out0_V, {in_stream_names});"
-        self.code_gen_dict["$DOCOMPUTE$"] = [comp_call]
+        self.code_gen_dict["$DOCOMPUTE$"] = [
+            f"StreamingConcat<{in_stream_folds}>(out0_V, {in_stream_names});"
+        ]
 
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
         n_inputs = self.get_n_inputs()
         in_streams = []
         for i in range(n_inputs):
-            input_elem_hls_type = self.get_input_datatype(i).get_hls_datatype_str()
-            in_streams.append(f"hls::stream<hls::vector<{input_elem_hls_type}, SIMD>> &in{i}_V")
+            elem = hls_datatype_str(self.get_input_datatype(i))
+            n_elems = self.get_folded_input_shape(i)[-1]
+            in_streams.append(f"hls::stream<tensor<{elem},{n_elems}>> &in{i}_V")
         in_streams_str = ", ".join(in_streams)
-        out_elem_hls_type = self.get_output_datatype().get_hls_datatype_str()
-        out_stream = f"hls::stream<hls::vector<{out_elem_hls_type}, SIMD>> &out0_V"
-        blackbox_hls = f"void {self.onnx_node.name}({in_streams_str}, {out_stream})"
-        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [blackbox_hls]
+        o_elem = hls_datatype_str(self.get_output_datatype())
+        o_n_elems = self.get_folded_output_shape()[-1]
+        out_stream = f"hls::stream<tensor<{o_elem},{o_n_elems}>> &out0_V"
+        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
+            f"void {self.onnx_node.name}({in_streams_str}, {out_stream})"
+        ]
 
     def pragmas(self) -> None:
         """Return pragmas."""
         n_inputs = self.get_n_inputs()
+        pragmas = [f"#pragma HLS INTERFACE axis port=in{i}_V" for i in range(n_inputs)]
+        pragmas.append("#pragma HLS INTERFACE axis port=out0_V")
+        pragmas += [f"#pragma HLS aggregate variable=in{i}_V compact=bit" for i in range(n_inputs)]
+        pragmas.append("#pragma HLS aggregate variable=out0_V compact=bit")
+        pragmas.append("#pragma HLS INTERFACE ap_ctrl_none port=return")
         # StreamingConcat is a pipelined hlslib function (II=1) called once per token; the
         # dataflow region lets it run free at one token per cycle instead of one token per
         # top-function latency (5 cycles), like StreamingDup (see duplicatestreams_hls.py).
-        pragmas = ["#pragma HLS dataflow disable_start_propagation"]
-        pragmas += [
-            f"#pragma HLS INTERFACE axis port=in{i}_{self.hls_sname()}" for i in range(n_inputs)
-        ]
+        pragmas.append("#pragma HLS DATAFLOW disable_start_propagation")
         self.code_gen_dict["$PRAGMAS$"] = pragmas
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
-        for i in range(n_inputs):
-            pragmas.append(f"#pragma HLS aggregate variable=in{i}_V compact=bit")
-        pragmas.append("#pragma HLS aggregate variable=out0_V compact=bit")
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")

@@ -109,6 +109,10 @@ class LayerNorm(HWCustomOp):
         """Return folded output shape."""
         return self.get_folded_input_shape()
 
+    def get_exp_cycles(self) -> int:
+        """One beat per cycle, so a frame costs its number of beats."""
+        return int(np.prod(self.get_folded_input_shape()[:-1]))
+
     def get_input_datatype(self, ind: int = 0) -> BaseDataType:
         """Return FINN DataType of input."""
         if ind == 0:

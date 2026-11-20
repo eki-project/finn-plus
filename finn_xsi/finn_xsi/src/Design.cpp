@@ -19,16 +19,23 @@ namespace {
     // are set, so that the struct stays well defined when a Vivado version adds a new
     // field. Value-initialization does exactly that and, unlike a designated initializer,
     // does not need to name fields that only exist in some Vivado versions (e.g. xsimDir,
-    // which was added after 2022.2).
-    s_xsi_setup_info make_setup_info(const char* const log_file, const char* const wdb_file) {
-        s_xsi_setup_info setup_info{};
+    // which was added in 2023.1 and is only assigned where the struct has it).
+    template<typename Info = s_xsi_setup_info>
+    Info make_setup_info(const char* const log_file, const char* const wdb_file, const char* const xsim_dir) {
+        Info setup_info{};
         setup_info.logFileName = const_cast<char*>(log_file);
         setup_info.wdbFileName = const_cast<char*>(wdb_file);
+        if constexpr (xsi::has_xsim_dir_field<Info>::value) {
+            setup_info.xsimDir = const_cast<char*>(xsim_dir);
+        } else if (xsim_dir) {
+            throw std::invalid_argument("xsimDir is not supported by this XSI version (requires >= 2023.1).");
+        }
         return setup_info;
     }
 }  // namespace
 
-Design::Design(xsi::Kernel& kernel, const std::string& design_lib, const char* const log_file, const char* const wdb_file) : Design(kernel, design_lib, make_setup_info(log_file, wdb_file)) {}
+Design::Design(xsi::Kernel& kernel, const std::string& design_lib, const char* const log_file, const char* const wdb_file, const char* const xsim_dir)
+    : Design(kernel, design_lib, make_setup_info(log_file, wdb_file, xsim_dir)) {}
 
 // Destructor
 Design::~Design() { _kernel.close(); }

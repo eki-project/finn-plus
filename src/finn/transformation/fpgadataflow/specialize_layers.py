@@ -190,8 +190,9 @@ def _determine_impl_style(
             if _requant_rtl_possible(node, fpgapart):
                 return "rtl"
             warn_str = f"""There is no RTL variant for {node.name}. The node will automatically be
-                        set to HLS variant. The RTL Requant layers currently only supports
-                        integer inputs and non-narrow quantization."""
+                        set to HLS variant. The RTL Requant layers require non-narrow
+                        quantization and either integer inputs or FLOAT32 inputs on a Versal
+                        device (the float requantf core uses DSPFP32)."""
             log.warning(warn_str)
             return "hls"
 
@@ -217,18 +218,16 @@ def _mvu_rtl_possible(n: NodeProto, fpgapart: str, model: ModelWrapper) -> bool:
     """Check whether the RTL-based MVU implementation is supported for given node.
 
     RTL-MVU constraints:
-    - No embedded thresholding and no binary XNOR mode
+    - No embedded thresholding
     - Signed weights of at least 2 bit; DSP48E1 additionally requires narrow-range weights
     - Activations of at least 2 bit
     - Activation, weight and accumulator widths must fit the DSP datapath of the
       target FPGA part (see get_dsp_datapath_limits), otherwise the HLS MVU is used
     """
     node_inst = cast("HWCustomOp", getCustomOp(n))
-    # first check if no Activation or binary xnor mode and return False
-    # immediately if one of them is True
+    # first check if no Activation and return False immediately if True
     no_activation = node_inst.get_nodeattr("noActivation") == 0
-    not_binaryxnor_mode = node_inst.get_nodeattr("binaryXnorMode") == 1
-    if no_activation or not_binaryxnor_mode:
+    if no_activation:
         return False
 
     # check if weights are signed, if not return False
@@ -369,16 +368,21 @@ def _softmax_rtl_possible(_n: NodeProto, fpgapart: str) -> bool:
     return is_versal(fpgapart)
 
 
-def _requant_rtl_possible(n: NodeProto, _fpgapart: str) -> bool:
+def _requant_rtl_possible(n: NodeProto, fpgapart: str) -> bool:
     """Check whether RTL-based Requant is supported
-    RTL Requant requires:
-    - Integer input (not float)
-    - Full range (narrow=0)."""
+    RTL Requant requires full range (narrow=0) and either:
+    - Integer input -> integer requant.sv path, or
+    - FLOAT32 input -> requantf.sv path (DSPFP32, Versal only)."""
     node_inst = cast("HWCustomOp", getCustomOp(n))
     idt = node_inst.get_input_datatype(0)
     narrow = node_inst.get_nodeattr("narrow")
-    # RTL backend works with integer inputs and full range
-    return idt.is_integer() and narrow == 0
+    if narrow != 0:
+        return False
+    if idt.is_integer():
+        return True  # existing integer requant.sv path
+    if idt == "FLOAT32":
+        return is_versal(fpgapart)  # requantf.sv path (DSPFP32 -> Versal only)
+    return False
 
 
 class SpecializeLayers(Transformation):

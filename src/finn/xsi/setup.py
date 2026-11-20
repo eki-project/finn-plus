@@ -109,6 +109,27 @@ def check_prerequisites() -> List[str]:
     return errors
 
 
+# C++ sources of the xsi extension module, relative to the finn_xsi directory
+SOURCE_FILES = [
+    "xsi_bind.cpp",
+    "src/Port.cpp",
+    "src/Design.cpp",
+    "src/Kernel.cpp",
+    "src/SharedLibrary.cpp",
+]
+
+
+def sources_newer_than_build(xsi_path: Path) -> bool:
+    """Return True if xsi.so exists but is older than one of its C++ sources or headers."""
+    xsi_so = xsi_path / "xsi.so"
+    if not xsi_so.exists():
+        return False
+    so_mtime = xsi_so.stat().st_mtime
+    deps = [xsi_path / f for f in SOURCE_FILES]
+    deps += list((xsi_path / "include").glob("*.h")) + list((xsi_path / "include").glob("*.hpp"))
+    return any(f.exists() and f.stat().st_mtime > so_mtime for f in deps)
+
+
 def build_xsi(force: bool = False, verbose: bool = True) -> bool:
     """Build the finn_xsi extension module using direct g++ compilation.
 
@@ -139,7 +160,11 @@ def build_xsi(force: bool = False, verbose: bool = True) -> bool:
     # Check if already built
     if not force:
         xsi_so = xsi_path / "xsi.so"
-        if xsi_so.exists() and version_file.exists():
+        if xsi_so.exists() and sources_newer_than_build(xsi_path):
+            # Rebuild if any C++ source or header is newer than xsi.so
+            if verbose:
+                print("xsi.so is older than its sources, rebuilding...")
+        elif xsi_so.exists() and version_file.exists():
             with version_file.open() as f:
                 version_info = f.read().strip()
             if version_info == f"Vivado {year}.{minor}":
@@ -167,14 +192,7 @@ def build_xsi(force: bool = False, verbose: bool = True) -> bool:
     # Get build configuration
     include_dirs, compiler, compile_args = get_build_paths()
 
-    # Source files
-    source_files = [
-        "xsi_bind.cpp",
-        "src/Port.cpp",
-        "src/Design.cpp",
-        "src/Kernel.cpp",
-        "src/SharedLibrary.cpp",
-    ]
+    source_files = SOURCE_FILES
 
     # Build command
     cmd = [compiler] + compile_args

@@ -3,7 +3,20 @@
 
 #include <Kernel.h>
 
+#include <type_traits>
+#include <utility>
+
 namespace xsi {
+
+    //-----------------------------------------------------------------------
+    // XSI Feature Detection
+
+    // s_xsi_setup_info::xsimDir (runtime xsim.dir remapping) exists in XSI >= 2023.1.
+    template<typename T, typename = void>
+    struct has_xsim_dir_field : std::false_type {};
+    template<typename T>
+    struct has_xsim_dir_field<T, std::void_t<decltype(std::declval<T&>().xsimDir)>> : std::true_type {};
+    inline constexpr bool has_xsim_dir = has_xsim_dir_field<s_xsi_setup_info>::value;
 
     //	- non-copyable handle for exposing simulation control.
     class Design {
@@ -11,7 +24,12 @@ namespace xsi {
 
          public:
         Design(xsi::Kernel& kernel, const std::string& design_lib, const s_xsi_setup_info& setup_info);
-        Design(xsi::Kernel& kernel, const std::string& design_lib, const char* const log_file = nullptr, const char* const wdb_file = nullptr);
+        // xsim_dir: absolute path of the snapshot's xsim.dir (XSI >= 2023.1 only, see has_xsim_dir).
+        // Lets the kernel resolve lazily opened snapshot files (e.g. xsim.svtype, read on the first
+        // $readmemh) independently of the process CWD. Throws std::invalid_argument if given on an
+        // XSI version without support for it.
+        Design(xsi::Kernel& kernel, const std::string& design_lib, const char* const log_file = nullptr, const char* const wdb_file = nullptr,
+               const char* const xsim_dir = nullptr);
         ~Design();
 
          private:

@@ -39,7 +39,9 @@ if TYPE_CHECKING:
     from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 
-def dataflow_performance(model: "ModelWrapper") -> dict[str, int | str]:
+def dataflow_performance(
+    model: "ModelWrapper", use_characterized: bool = False
+) -> dict[str, int | str]:
     """Extract key performance indicators from given model with dataflow nodes.
     Note that the latency (critical path) analysis is very pessimistic, it
     assumes no overlap between executions and simply sums the expected cycles
@@ -51,10 +53,19 @@ def dataflow_performance(model: "ModelWrapper") -> dict[str, int | str]:
     - model has cycle estimates annotated (see AnnotateCycles transformation)
     - nodes have unique names (see GiveUniqueNodeNames)
 
+    Args:
+        model: Model to analyze.
+        use_characterized: Take each node's cycle count from the period of its token
+            access vectors (``io_chrc_period``, see DeriveTokenAccessVectors) instead of
+            the cycles_estimate annotation. Nodes that carry no token access vectors
+            (forks, joins, FIFOs and nodes without a tree model) count as zero cycles,
+            so max_cycles is the slowest *characterized* node and critical_path_cycles
+            a partial sum. The characterized mode exists to report max_cycles.
+
     Returns:
-    - max_cycles : number of cycles for slowest node
-    - max_cycles_node_name : name of slowest node
-    - critical_path_cycles : pessimistic expected latency from input to output
+        Dictionary with max_cycles (number of cycles for slowest node),
+        max_cycles_node_name (name of slowest node) and critical_path_cycles
+        (pessimistic expected latency from input to output).
     """
     latency_at_node_output = {}
     max_cycles = 0
@@ -63,7 +74,12 @@ def dataflow_performance(model: "ModelWrapper") -> dict[str, int | str]:
     for node in model.graph.node:
         if is_hls_node(node) or is_rtl_node(node) or node.op_type == "Shuffle":
             inst = cast("HWCustomOp", getCustomOp(node))
-            node_cycles = int(cast("int", inst.get_nodeattr("cycles_estimate")))
+            if use_characterized:
+                # the period DeriveTokenAccessVectors stored with the TAVs; 0
+                # for a node that has not been characterized
+                node_cycles = int(cast("int", inst.get_nodeattr("io_chrc_period")))
+            else:
+                node_cycles = int(cast("int", inst.get_nodeattr("cycles_estimate")))
             if node_cycles > max_cycles:
                 max_cycles = node_cycles
                 max_node_name = node.name

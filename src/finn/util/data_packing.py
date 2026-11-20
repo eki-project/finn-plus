@@ -48,6 +48,21 @@ from typing import Any, cast
 from finn.util.exception import FINNInternalError
 
 
+def hls_datatype_str(dtype: BaseDataType) -> str:
+    """Return the finn-hlslib element type name for FINN DataType dtype.
+    BIPOLAR maps to the hlslib Bipolar class, which implements the XNOR
+    multiply; all other types use the qonnx HLS datatype name.
+
+    Use this instead of calling dtype.get_hls_datatype_str() directly: qonnx
+    returns "ap_int<1>" for BIPOLAR, which breaks XNOR-popcount layers. The
+    mapping lives in FINN because Bipolar is a finn-hlslib type and other
+    qonnx users may rely on the current return value. If qonnx is ever
+    changed to return "Bipolar" itself, this helper can be dropped."""
+    if dtype == DataType["BIPOLAR"]:
+        return "Bipolar"
+    return dtype.get_hls_datatype_str()
+
+
 def array2hexstring(
     array: npt.NDArray[Any],
     dtype: BaseDataType,
@@ -267,7 +282,7 @@ def numpy_to_hls_code(
     set to True, no variable name and type will be generated as part of the
     emitted string.
     """
-    hls_dtype = dtype.get_hls_datatype_str()
+    hls_dtype = hls_datatype_str(dtype)
     if type(ndarray) is not np.ndarray or ndarray.dtype != np.float32:
         # try to convert to a float numpy array (container dtype is float)
         ndarray = np.asarray(ndarray, dtype=np.float32)

@@ -745,8 +745,11 @@ class CreateStitchedIP(Transformation):
         library_repos = self.library_repos()
         model.set_metadata_prop(STITCH_LIBRARY_REPOS_PROP, json.dumps(library_repos))
         ip_dirs = ["list", *library_repos]
+        # DMA partitions may start with the DWC attached to an output IODMA
+        has_iodma = any(n.op_type == "IODMA_hls" for n in model.graph.node)
         if (
-            model.graph.node[0].op_type not in ["StreamingFIFO_rtl", "IODMA_hls"]
+            model.graph.node[0].op_type != "StreamingFIFO_rtl"
+            and not has_iodma
             and self.functional_simulation is False
         ):
             log.warning(

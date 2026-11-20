@@ -10,17 +10,23 @@
  *  of N elements. Each N-element vector is transported independently
  *  (no cross-vector packing) using ceil(N/PI) input beats and ceil(N/PO)
  *  output beats. Elements are packed in little-endian order; excess lanes
- *  on the last beat are padded with zeros.
+ *  on the last beat are padded with zeros (unless PAD_ZEROS=0).
  *
  *  Internally, parameters are normalized using gcd(PI,PO) to reduce
- *  buffer depth and counter widths.
+ *  buffer depth and counter widths. Let PI0=PI/GCD, PO0=PO/GCD.
  *
- *  Internal buffering ensures full-rate operation of the narrower
- *  interface without a combinatorial path from ordy to irdy. For
- *  parallelism ratios that are not integer, this takes buffer space for
- *  min(PI,PO)-gcd(PI,PO) elements beyond the PI+PO elements needed for
- *  correct operation. RELAX_THROUGHPUT saves it at the expense of
- *  recovery cycles.
+ *  RELAX_THROUGHPUT=0 (default): the bottleneck (higher-beat-count)
+ *  interface sustains 1.0 cyc/beat in steady state. No combinatorial
+ *  path from ordy to irdy. When both PI0>1 and PO0>1 and N is not
+ *  an exact multiple of lcm(PI0,PO0), individual vectors are framed
+ *  by a per-vector reset (genTrn). V+1's first input beat is accepted
+ *  as soon as V's final output beat is pending, eliminating fill
+ *  latency overhead.
+ *
+ *  RELAX_THROUGHPUT=1: compact implementation with a smaller buffer
+ *  (PI0+PO0 vs PI0+PO0+min-1). Allows idle recovery cycles between
+ *  load and emit phases, yielding simpler control at the cost of
+ *  reduced throughput at non-integer width ratios.
  ***************************************************************************/
 
 module vpc #(
@@ -28,7 +34,7 @@ module vpc #(
 	int unsigned  N,	// total elements per vector
 	int unsigned  PI,	// input elements per beat
 	int unsigned  PO,	// output elements per beat
-	bit  PAD_ZEROS = 1,			// zero-pad excess output lanes on last beat
+	bit  PAD_ZEROS        = 1,	// zero-pad excess output lanes on last beat
 	bit  RELAX_THROUGHPUT = 0	// allow recovery cycles
 )(
 	input	logic  clk,
@@ -56,7 +62,7 @@ module vpc #(
 	// Extract GCD from in- and output parallelism and map to data path width
 	function int unsigned gcd(input int unsigned  a, input int unsigned  b);
 		return (b == 0)? a : gcd(b, a % b);
-	endfunction
+	endfunction : gcd
 	localparam int unsigned  GCD = gcd(PI, PO);
 	localparam int unsigned  W0  = GCD * W; 	// normalized element width
 	localparam int unsigned  PI0 = PI / GCD;	// normalized input parallelism
@@ -264,35 +270,18 @@ module vpc #(
 	end : genDes
 	else begin : genGeneric
 		//===============================================================
-		// Full buffered implementation: sustained full-rate operation.
-		// Single capacity counter with deposit mask and IRot barrel.
-		//
-		// With F elements in the buffer, an input beat is accepted while
-		// it fits without relying on a concurrent output, F <= CAP-PI0,
-		// and an output beat is offered once it is complete, F >= PO0.
-		// CAP = PI0+PO0 is all it takes for correct operation. However,
-		// F then only has a single value, PO0, in which both interfaces
-		// can transact concurrently. Unless PI0 or PO0 is 1, the fill
-		// levels of the steady state do not all coincide with it and the
-		// narrower interface stalls periodically, e.g. in 2 out of 6
-		// cycles for 3:4 and 4:3. A SLACK of min(PI0,PO0)-1 positions
-		// widens this window to all fill levels of the steady state:
-		//  - PI0 < PO0: F never exceeds PI0+PO0-1 as an output beat is
-		//    taken whenever F >= PO0. Inputs can always be accepted.
-		//  - PI0 > PO0: An input beat is accepted whenever F < 2*PO0 so
-		//    that the buffer still holds a complete output beat after
-		//    the current one was taken.
+		// Buffered generic implementation with deposit mask and
+		// IRot barrel. RELAX_THROUGHPUT selects between a compact
+		// single-counter variant allowing idle recovery cycles
+		// and a full-rate dual-counter variant with enlarged buffer.
 
-		localparam int unsigned  PMIN  = (PI0 < PO0)? PI0 : PO0;
-		localparam int unsigned  PMAX  = (PI0 > PO0)? PI0 : PO0;
-		localparam int unsigned  SLACK = RELAX_THROUGHPUT? 0 : PMIN - 1;
-		localparam int unsigned  CAP   = PI0 + PO0 + SLACK;
-
+		//---------------------------------------------------------------
 		// Transaction counters only needed for sync when padding differs.
 		uwire  nxt;
 		uwire  idone;
 		uwire  odone;
 		uwire  olast;
+		uwire  ipre;	// V+1's first beat parked while V's final beat drains
 		if(TRNI * PI0 == TRNO * PO0) begin : genSimple
 			assign  nxt   = 0;
 			assign  idone = 0;
@@ -326,73 +315,19 @@ module vpc #(
 					OTrn <= 1-TRNO;
 				end
 				else begin
-					ITrn <= ITrn + (nxt? -TRNI : 0) + itrn;
+					ITrn <= ITrn + (nxt? (itrn? 1-TRNI : -TRNI) : int'(itrn && !idone)) + (nxt && ipre);
 					OTrn <= OTrn + (nxt? -TRNO : 0) + otrn;
 				end
 			end
 		end : genTrn
 
 		//---------------------------------------------------------------
-		// Single capacity counter (signed, count up from negative):
-		// ICap = CAP-PI0 - F, the room left after accepting an input beat.
-		//  - irdy: ICap >= 0
-		//  - ovld: ICap <= SLACK, i.e. F >= PO0
-		// It ranges from -PI0 (full) up to 2*PO0+SLACK-1 while flushing
-		// the padded last output beat of a vector.
-		localparam int unsigned  ICAP_INIT = PO0 + SLACK;
-		typedef logic signed [$clog2(2*PMAX+SLACK+1):0]  cap_t;
-		cap_t  ICap = ICAP_INIT;
-
-		always_ff @(posedge clk) begin
-			if(rst)  ICap <= ICAP_INIT;
-			else     ICap <= (nxt? 0 : ICap) + cap_t'(nxt? ICAP_INIT : otrn? (itrn? PO0-PI0 : PO0) : itrn? -PI0 : 0);
-		end
-
-		// Incomplete output beat: ICap > SLACK.
-		// This is an OR-reduction without full comparator if SLACK is zero.
-		uwire  oincomplete = !ICap[$left(ICap)] && ((SLACK == 0)? |ICap[$left(ICap)-1:0] : (ICap > cap_t'(SLACK)));
-		assign	irdy = !idone && !ICap[$left(ICap)];
-		assign	ovld = !odone && !(oincomplete && !idone);
-
-		//---------------------------------------------------------------
-		// Deposit mask: CAP-bit register tracking the write window.
-		// DepMask tracks the deposit window for the itrn-only case.
-		// On concurrent otrn, the effective mask is shifted right by
-		// PO0 — the deposit window sits at positions >= PO0 when
-		// enough data is available for output, so no wrap occurs.
-		// The window moves up by PI0 on itrn and down by PO0 on otrn,
-		// which is implemented as left rotations modulo CAP.
-		localparam bit [CAP-1:0]  DEPMASK_INIT = {(PI0){1'b1}};
-		logic [CAP-1:0]  DepMask = DEPMASK_INIT;
-		always_ff @(posedge clk) begin
-			localparam int unsigned  MSTEP_ITRN = PI0;
-			localparam int unsigned  MSTEP_OTRN = CAP - PO0;
-			localparam int unsigned  MSTEP_BOTH = (CAP + PI0 - PO0) % CAP;	// non-zero as PI0 != PO0
-
-			if(rst || nxt)  DepMask <= DEPMASK_INIT;
-			else begin
-				DepMask <=
-					itrn && otrn? {DepMask[CAP-1-MSTEP_BOTH:0], DepMask[CAP-1:CAP-MSTEP_BOTH]} :
-					itrn?         {DepMask[CAP-1-MSTEP_ITRN:0], DepMask[CAP-1:CAP-MSTEP_ITRN]} :
-					otrn?         {DepMask[CAP-1-MSTEP_OTRN:0], DepMask[CAP-1:CAP-MSTEP_OTRN]} :
-					/* else */    DepMask;
-			end
-		end
-
-		uwire [CAP-1:0]  dep_eff = otrn? (DepMask >> PO0) : DepMask;
-
-		//---------------------------------------------------------------
 		// Rotation logic for input placement.
-		// The deposit mask selects which buffer positions receive input
-		// but not which input lane maps to which position. When PO0 is
-		// not a multiple of PI0, successive output drains rotate the
-		// deposit window relative to the input lanes. IRot tracks this
-		// rotation as a mod-PI0 counter, advancing by PO0 mod PI0 on
-		// each otrn. The barrel shifter permutes idat by IRot so that
-		// rot[j % PI0] aligns with the otrn deposit target at Buf[j].
-		// When otrn is absent, a static offset of NO_OTR_OFS into rot
-		// compensates for the missing buffer shift; this selection is
-		// fused into the Buf loading mux.
+		// Successive output drains rotate the deposit window relative
+		// to the input lanes by PO0 mod PI0 each. SIRot tracks this
+		// rotation so that rot[j%PI0] aligns with the otrn deposit
+		// target at Buf[j]. Without otrn, a static NO_OTR_OFS into
+		// rot compensates for the missing buffer shift.
 		localparam int unsigned  NO_OTR_OFS = (PI0 >= 2)? (PI0 - PO0 % PI0) % PI0 : 0;
 		uwire [W0-1:0]  rot[PI0];
 		if(PI0 == 1)  assign  rot[0] = idat;
@@ -400,13 +335,13 @@ module vpc #(
 			localparam int unsigned  PO0_MOD = PO0 % PI0;
 			localparam int unsigned  IROT_W = $clog2(PI0);
 
-			// Signed rotation counter: SIRot = IRot - NO_OTR_OFS.
-			// Range [-NO_OTR_OFS, PO0_MOD-1]; sign bit replaces the
+			// SIRot = IRot - NO_OTR_OFS: sign bit replaces the
 			// comparator IRot >= NO_OTR_OFS in the modular wrap.
 			localparam int  SIROT_INIT = PO0_MOD - NO_OTR_OFS;
 			logic signed [IROT_W:0]  SIRot = SIROT_INIT;
 			if(PO0_MOD) begin : genIRotDyn
-				// At nxt, SIRot is at one of two known values depending on concurrent otrn.
+				// At nxt, SIRot jumps to one of two known values
+				// depending on whether otrn fires concurrently.
 				localparam int  NXT_INC_A = SIROT_INIT - ((TRNO + 1) * PO0_MOD) % PI0 + NO_OTR_OFS;
 				localparam int  NXT_INC_B = SIROT_INIT - ( TRNO      * PO0_MOD) % PI0 + NO_OTR_OFS;
 				always_ff @(posedge clk) begin
@@ -417,8 +352,14 @@ module vpc #(
 				end
 			end : genIRotDyn
 
-			// Per-position LUT indexed by SIRot.
-			// NO_OTR_OFS is absorbed into the static input wiring.
+			// V+1's first deposit uses V+1's initial rotation, not the
+			// stale end-of-V value. Parked ahead of V's final drain, it
+			// lands PO0 positions higher, i.e. one drain step earlier.
+			localparam int  SIROT_PRE = -int'(NO_OTR_OFS);
+			uwire signed [IROT_W:0]  sirot_eff =
+				nxt?   signed'(SIROT_INIT) :
+				idone? signed'(SIROT_PRE) : SIRot;
+
 			for(genvar  i = 0; i < PI0; i++) begin : genRot
 				localparam int  LUT_LO = -(1 << IROT_W);
 				localparam int  LUT_HI =  (1 << IROT_W) - 1;
@@ -426,28 +367,181 @@ module vpc #(
 				for(genvar  k = LUT_LO; k <= LUT_HI; k++) begin : genLut
 					assign	lut[k] = (-int'(NO_OTR_OFS) <= k && k < int'(PI0 - NO_OTR_OFS))? idat[((i + k + NO_OTR_OFS) % PI0) * GCD +: GCD] : 'x;
 				end : genLut
-				assign	rot[i] = lut[SIRot];
+				assign	rot[i] = lut[sirot_eff];
 			end : genRot
 
 		end : genRotBarrel
 
-		//---------------------------------------------------------------
-		// Structural per-position buffer with genvar.
-		logic [W0-1:0]  Buf[CAP];
-		// Positions j<CAP-PO0 can shift (on otrn) or deposit; all others deposit only.
-		for(genvar  j = 0; j < CAP; j++) begin : genPos
-			uwire           deposit = itrn && dep_eff[j];
-			uwire           we  = deposit || (otrn && (j < CAP-PO0));
-			uwire [W0-1:0]  dat = deposit? (otrn? rot[j % PI0] : rot[(j + NO_OTR_OFS) % PI0]) : Buf[(j + PO0) % CAP];
+		//===============================================================
+		// Capacity counter, deposit mask, and buffer.
+		// RELAX_THROUGHPUT selects the compact single-counter variant;
+		// otherwise the enlarged buffer with dual counters provides
+		// sustained full-rate operation at non-integer width ratios.
+		if(RELAX_THROUGHPUT) begin : genRelax
+			//-----------------------------------------------------------
+			// Single capacity counter (signed, count up from negative).
+			localparam int unsigned  CAP  = PI0 + PO0;
+			localparam int unsigned  PMAX = (PI0 > PO0)? PI0 : PO0;
+			typedef logic signed [$clog2(PMAX+1):0]  cap_t;
+			cap_t  ICap = PO0;
+
 			always_ff @(posedge clk) begin
-				if(rst)      Buf[j] <= 'x;
-				else if(we)  Buf[j] <= dat;
+				if(rst)  ICap <= PO0;
+				else     ICap <= (nxt? 0 : ICap) + cap_t'(nxt? PO0 : otrn? (itrn? PO0-PI0 : PO0) : itrn? -PI0 : 0);
 			end
-		end : genPos
+
+			assign	ipre = 0;
+
+			uwire  icap_positive = !ICap[$left(ICap)] && (|ICap[$left(ICap)-1:0]);
+			assign	irdy = !idone && !ICap[$left(ICap)];
+			assign	ovld = !odone && !(icap_positive && !idone);
+
+			//-----------------------------------------------------------
+			// Deposit mask: CAP-bit rotating register, single step.
+			// PI0 ≡ CAP-PO0 (mod CAP), so itrn and otrn share one step.
+			localparam bit [CAP-1:0]  DEPMASK_INIT = {(PI0){1'b1}};
+			logic [CAP-1:0]  DepMask = DEPMASK_INIT;
+			always_ff @(posedge clk) begin
+				localparam int unsigned  MSTEP_SINGLE = PI0 % CAP;
+				localparam int unsigned  MSTEP_DOUBLE = (2*PI0) % CAP;
+
+				if(rst || nxt)  DepMask <= DEPMASK_INIT;
+				else begin
+					DepMask <=
+						itrn && otrn? {DepMask[CAP-1-MSTEP_DOUBLE:0], DepMask[CAP-1:CAP-MSTEP_DOUBLE]} :
+						itrn || otrn? {DepMask[CAP-1-MSTEP_SINGLE:0], DepMask[CAP-1:CAP-MSTEP_SINGLE]} :
+						/* else */    DepMask;
+				end
+			end
+
+			uwire [CAP-1:0]  dep_eff = otrn? (DepMask >> PO0) : DepMask;
+
+			//-----------------------------------------------------------
+			// Structural per-position buffer.
+			logic [W0-1:0]  Buf[CAP];
+			for(genvar  j = 0; j < CAP; j++) begin : genPos
+				uwire           deposit = itrn && dep_eff[j];
+				uwire           we  = deposit || (otrn && (j < PI0));
+				uwire [W0-1:0]  dat = deposit? (otrn? rot[j % PI0] : rot[(j + NO_OTR_OFS) % PI0]) : Buf[(j + PO0) % CAP];
+				always_ff @(posedge clk) begin
+					if(rst)      Buf[j] <= 'x;
+					else if(we)  Buf[j] <= dat;
+				end
+			end : genPos
+
+			assign	odat_raw = Buf[0:PO0-1];
+
+		end : genRelax
+		else begin : genFull
+			//-----------------------------------------------------------
+			// Dual capacity counters (sign bit = control output).
+			//   ICap = fill - ICAP_INIT:  negative ↔ room for input
+			//   OCap = (PO0-1) - fill:    negative ↔ output available
+			// On nxt, the counter resets to the cold-start value.
+			// V+1's first beat, whether concurrent with V's last drain
+			// or parked before it (Pre), is folded into the reset via
+			// icnt. While parked, it does not affect V's counters.
+			localparam int unsigned  P0MIN = (PI0 < PO0)? PI0 : PO0;
+			localparam int unsigned  CAP   = PI0 + PO0 + P0MIN - 1;
+
+			localparam int unsigned  ICAP_INIT = CAP - PI0 + 1;
+			localparam int unsigned  OCAP_INIT = CAP - PO0 + 1;
+			localparam int unsigned  CAP_W = $clog2((ICAP_INIT > OCAP_INIT)? ICAP_INIT : OCAP_INIT);
+			typedef logic signed [CAP_W:0]  icap_t;
+			typedef logic signed [CAP_W:0]  ocap_t;
+
+			icap_t  ICap = -ICAP_INIT;
+			ocap_t  OCap = PO0 - 1;
+
+			// Pre: V+1's first beat was accepted while V's final
+			// output beat was still pending. It is parked at
+			// [PO0+PI0-1:PO0] and shifted into place by V's final drain.
+			logic  Pre = 0;
+			always_ff @(posedge clk) begin
+				if(rst)  Pre <= 0;
+				else     Pre <= !nxt && (Pre || (itrn && idone));
+			end
+			assign	ipre = Pre;
+
+			uwire  oadj = otrn && !nxt;
+			uwire  icnt = nxt? (itrn || Pre) : (itrn && !idone);
+			always_ff @(posedge clk) begin
+				if(rst) begin
+					ICap <= -ICAP_INIT;
+					OCap <= PO0 - 1;
+				end
+				else begin
+					ICap <= (nxt? icap_t'(-ICAP_INIT) : ICap) + icap_t'(oadj? (icnt? PI0-PO0-1 : -PO0) : (icnt? PI0-1 : 0)) + icnt;
+					OCap <= (nxt? ocap_t'( PO0 - 1)   : OCap) + ocap_t'(icnt? (oadj? PO0-PI0-1 : -PI0) : (oadj? PO0-1 : 0)) + oadj;
+				end
+			end
+
+			// Registered state only: no combinatorial path from ivld
+			// or ordy to irdy. Once V's input is complete, V+1's first
+			// beat is accepted as soon as V's final output beat is
+			// pending; its residue fits in [PO0-1:0].
+			assign	irdy = idone? olast && !Pre : ICap[$left(ICap)];
+			assign	ovld = !odone && (OCap[$left(OCap)] || idone);
+
+			//-----------------------------------------------------------
+			// Deposit mask: CAP-bit rotating register, separate steps.
+			// The mask wraps around CAP only at fill levels where
+			// irdy is deasserted, so dep_eff (shift, not rotation)
+			// is correct whenever itrn fires.
+			// On nxt, warm-start: advance by one itrn step if V+1's
+			// first beat fires alongside V's final drain or is parked.
+			localparam bit [CAP-1:0]  DEPMASK_INIT = {(PI0){1'b1}};
+			localparam bit [CAP-1:0]  DEPMASK_WARM = {DEPMASK_INIT[CAP-1-PI0:0], DEPMASK_INIT[CAP-1:CAP-PI0]};
+			localparam bit [CAP-1:0]  DEPMASK_PRE  = DEPMASK_INIT << PO0;
+			logic [CAP-1:0]  DepMask = DEPMASK_INIT;
+
+			uwire [CAP-1:0]  dep_rotl = {DepMask[CAP-1-PI0:0], DepMask[CAP-1:CAP-PI0]};
+			uwire [CAP-1:0]  dep_rotr = {DepMask[PO0-1:0], DepMask[CAP-1:PO0]};
+			localparam int unsigned  MSTEP_B = (PI0 > PO0)? PI0 - PO0 : PO0 - PI0;
+			uwire [CAP-1:0]  dep_both = (PI0 > PO0)?
+				{DepMask[CAP-1-MSTEP_B:0], DepMask[CAP-1:CAP-MSTEP_B]} :
+				{DepMask[MSTEP_B-1:0], DepMask[CAP-1:MSTEP_B]};
+
+			always_ff @(posedge clk) begin
+				if(rst)  DepMask <= DEPMASK_INIT;
+				else begin
+					DepMask <=
+						nxt?          (itrn || Pre? DEPMASK_WARM : DEPMASK_INIT) :
+						itrn && otrn? dep_both :
+						itrn?         dep_rotl :
+						otrn?         dep_rotr :
+						/* else */    DepMask;
+				end
+			end
+
+			// V+1's first deposit targets its initial positions
+			// [PI0-1:0] in the post-shift buffer frame on nxt, or
+			// [PO0+PI0-1:PO0] in the pre-shift frame when parked.
+			uwire [CAP-1:0]  dep_eff =
+				nxt?   DEPMASK_INIT :
+				idone? DEPMASK_PRE  :
+				otrn?  (DepMask >> PO0) : DepMask;
+
+			//-----------------------------------------------------------
+			// Structural per-position buffer.
+			localparam int unsigned  SHIFT_RANGE = CAP - PO0;
+			logic [W0-1:0]  Buf[CAP];
+			for(genvar  j = 0; j < CAP; j++) begin : genPos
+				uwire           deposit = itrn && dep_eff[j];
+				uwire           we  = deposit || (otrn && (j < SHIFT_RANGE));
+				uwire [W0-1:0]  dat = deposit? ((otrn && !nxt)? rot[j % PI0] : rot[(j + NO_OTR_OFS) % PI0]) : Buf[(j + PO0) % CAP];
+				always_ff @(posedge clk) begin
+					if(rst)      Buf[j] <= 'x;
+					else if(we)  Buf[j] <= dat;
+				end
+			end : genPos
+
+			assign	odat_raw = Buf[0:PO0-1];
+
+		end : genFull
 
 		//---------------------------------------------------------------
 		// Output Assignment
-		assign	odat_raw = Buf[0:PO0-1];
 		assign	olast_beat = olast;
 
 	end : genGeneric

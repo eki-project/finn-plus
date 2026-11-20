@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 # Import the elementwise binary operation module to extract names of all
 # specializations (which require PE parallelism to be configured)
 import finn.custom_op.fpgadataflow.hls.elementwise_binary_hls as elementwise_binary_hls
+import finn.custom_op.fpgadataflow.rtl.elementwise_binary_rtl as elementwise_binary_rtl
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.util.basic import MAX_ALLOWED_AP_INT_W
@@ -63,18 +64,20 @@ def divisors(num: int) -> Generator[int, Any, None]:
             yield x
 
 
-def common_divisors(numbers: list[int]) -> np.ndarray:
+def common_divisors(numbers: list[int]) -> list[int]:
     """Return common divisors of the list of numbers."""
     separate_divisors = []
     for num in numbers:
         individual_divisors = list(divisors(num))
         separate_divisors.append(individual_divisors)
 
-    return functools.reduce(np.intersect1d, separate_divisors)
+    # cast back to Python ints: np.intersect1d yields numpy ints, which
+    # set_nodeattr rejects for int attributes
+    return [int(x) for x in functools.reduce(np.intersect1d, separate_divisors)]
 
 
-# Find the op-type names for all HLS specializations of elementwise binary
-# operations
+# Find the op-type names for all HLS and RTL specializations of elementwise
+# binary operations
 # Note: filter on __module__ so module-level type aliases (which pass
 # inspect.isclass as types.GenericAlias) and imported classes are skipped
 ELEMENTWISE_BINARY_OPS = [
@@ -82,6 +85,11 @@ ELEMENTWISE_BINARY_OPS = [
     for op_type, cls in inspect.getmembers(elementwise_binary_hls, inspect.isclass)
     if getattr(cls, "__module__", None) == elementwise_binary_hls.__name__
     and issubclass(cls, elementwise_binary_hls.ElementwiseBinaryOperation_hls)
+] + [
+    op_type
+    for op_type, cls in inspect.getmembers(elementwise_binary_rtl, inspect.isclass)
+    if getattr(cls, "__module__", None) == elementwise_binary_rtl.__name__
+    and issubclass(cls, elementwise_binary_rtl.ElementwiseBinary_rtl)
 ]
 
 
@@ -111,8 +119,7 @@ class SetFolding(Transformation):
       (configurable in the SetFolding initializer, defaults to 36)
     * then increases PE until the target is met or max PE reached
 
-    When folding depthwise convolutions ("VVAU"/VectorVectorActivation)
-    or spatial reduction ops (Pool_Batch):
+    When folding depthwise convolutions ("VVAU"/VectorVectorActivation):
 
     * the producer of the node is expected to be a ConvolutionInputGenerator
       with depthwise=1, whose SIMD value will be set equal to the PE value of
@@ -120,6 +127,9 @@ class SetFolding(Transformation):
     * the VVAU also supports SIMD ("input window") parallelism next to
       PE ("channels"), but current ConvInpGen limitations require PE to be fully
       unfolded before SIMD is increased
+
+    The consolidated Pool node (Pool_hls) fuses input_gen + pooling internally,
+    so it only needs PE folding (like other PE-only ops) — no upstream SWG.
 
     Besides logging warnings, SetFolding records what it could not achieve in attributes of
     the transformation instance. They describe the most recent call of apply() (so with
@@ -198,7 +208,10 @@ class SetFolding(Transformation):
         pe_ops = [
             "DuplicateStreams_hls",
             "GlobalAccPool_hls",
+            "Pool_hls",
             "PWPolyF_rtl",
+            "Requant_hls",
+            "Requant_rtl",
             "Thresholding_hls",
             "Thresholding_rtl",
             *ELEMENTWISE_BINARY_OPS,
@@ -218,6 +231,8 @@ class SetFolding(Transformation):
             "StreamingSplit_hls",
             "StreamingConcat_hls",
             "LayerNorm_rtl",
+            "HWSoftmax_hls",
+            "HWSoftmax_rtl",
             "Shuffle",
         ]
 
@@ -230,9 +245,12 @@ class SetFolding(Transformation):
 
         # these ops are preceded by depthwise SWG and have special behavior,
         # as explained in the SetFolding docstring
-        depthwise_op_exceptions = ["VVAU_hls", "VVAU_rtl", "Pool_hls"]
+        depthwise_op_exceptions = ["VVAU_hls", "VVAU_rtl"]
         for node in graph.node:
-            if not (is_hls_node(node) or is_rtl_node(node)):
+            # Shuffle is still a generic layer here (it is decomposed into
+            # Inner/OuterShuffle stages by step_transpose_decomposition, which
+            # inherit its SIMD), so it has to be folded before specialization
+            if not (is_hls_node(node) or is_rtl_node(node) or node.op_type == "Shuffle"):
                 continue
             op_type = node.op_type
             node_inst = cast("HWCustomOp", getCustomOp(node))
@@ -378,17 +396,8 @@ class SetFolding(Transformation):
                         else:
                             swu_node_inst.set_nodeattr("parallel_window", 0)
                 else:
-                    if op_type in ["VVAU_hls", "VVAU_rtl"]:
-                        ksize = np.prod(cast("NDArray", node_inst.get_nodeattr("Kernel")))
-                    elif op_type == "Pool_hls":
-                        ksize = node_inst.get_nodeattr("KernelSize")
-                    else:
-                        raise FINNFoldingError(
-                            f"{node.name}: Undefined edge case for {op_type}",
-                            node_name=node.name,
-                            op_type=op_type,
-                        )
-                    if ksize != 1:  # pointwise vvau/pool lack a SWU
+                    ksize = np.prod(cast("NDArray", node_inst.get_nodeattr("Kernel")))
+                    if ksize != 1:  # pointwise vvau lacks a SWU
                         raise FINNFoldingError(
                             f"{node.name}: Expected SWU on DW op input, found " + swu_node.op_type,
                             node_name=node.name,
@@ -435,6 +444,22 @@ class SetFolding(Transformation):
                             f"{node_inst.get_exp_cycles()} (cyc/frame), Target: "
                             f"{self.target_cycles_per_frame} (cyc/frame)."
                         )
+                elif op_type == "Shuffle":
+                    # SIMD must divide the innermost dimension of the input (for the
+                    # decomposition) and of the output (InnerShuffle folding);
+                    # values without a valid decomposition estimate 0 cycles
+                    node_inst.set_nodeattr("SIMD", 1)
+                    in_dim = int(node_inst.get_normal_input_shape()[-1])
+                    out_dim = int(node_inst.get_normal_output_shape()[-1])
+                    for simd_val in common_divisors([in_dim, out_dim]):
+                        prev_simd = node_inst.get_nodeattr("SIMD")
+                        node_inst.set_nodeattr("SIMD", simd_val)
+                        cyc = node_inst.get_exp_cycles()
+                        if cyc == 0 and simd_val > 1:
+                            node_inst.set_nodeattr("SIMD", prev_simd)
+                            continue
+                        if cyc < self.target_cycles_per_frame:
+                            break
                 elif op_type == "LayerNorm_rtl":
                     found = False
                     node_inst.set_nodeattr("SIMD", 1)

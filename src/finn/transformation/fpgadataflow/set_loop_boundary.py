@@ -15,6 +15,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from typing import Literal
 
+from finn.transformation.qonnx.convert_qonnx_to_finn import QONNX_QUANT_OP_TYPES
 from finn.util.exception import FINNInternalError
 
 
@@ -60,7 +61,7 @@ class SetLoopBoundary(Transformation):
         # Transformation can only be applied to cleaned up (const-folded) FINN-ONNX model
         # Check if any Quant or Const nodes exist and if yes, throw an error
         count = 0
-        for op_type in ["BinaryQuant", "Quant", "Trunc", "IntQuant", "FloatQuant", "Constant"]:
+        for op_type in [*QONNX_QUANT_OP_TYPES, "Constant"]:
             count += len(model.get_nodes_by_op_type(op_type))
         if count != 0:
             raise FINNInternalError(

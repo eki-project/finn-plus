@@ -29,11 +29,9 @@ def make_mvau_chain() -> ModelWrapper:
     return make_multi_fclayer_model(128, DataType["INT4"], DataType["INT2"], DataType["INT16"], 3)
 
 
-def make_swg_dw_model(
-    consumer: str = "VVAU_hls", with_swg: bool = True, kernel: int = 3
-) -> ModelWrapper:
+def make_swg_dw_model(with_swg: bool = True, kernel: int = 3) -> ModelWrapper:
     """Return a depthwise 3x3 convolution on 8 channels: a sliding window generator (or a
-    FIFO in its place, if with_swg is False) followed by a VVAU or Pool layer."""
+    FIFO in its place, if with_swg is False) followed by a VVAU."""
     ch, dim = 8, 8
     odim = dim - kernel + 1
     window = kernel * kernel
@@ -70,45 +68,28 @@ def make_swg_dw_model(
             normal_shape=[1, odim, odim, window * ch],
             dataType="UINT4",
         )
-    if consumer == "VVAU_hls":
-        consumer_node = helper.make_node(
-            "VVAU_hls",
-            ["mid", "weights"],
-            ["outp"],
-            domain="finn.custom_op.fpgadataflow.hls",
-            backend="fpgadataflow",
-            PE=1,
-            SIMD=1,
-            Dim=[odim, odim],
-            Channels=ch,
-            Kernel=[kernel, kernel],
-            resType="lut",
-            ActVal=0,
-            inputDataType="UINT4",
-            weightDataType="INT4",
-            outputDataType="INT16",
-            noActivation=1,
-        )
-    else:
-        consumer_node = helper.make_node(
-            "Pool_hls",
-            ["mid"],
-            ["outp"],
-            domain="finn.custom_op.fpgadataflow.hls",
-            backend="fpgadataflow",
-            Channels=ch,
-            PE=1,
-            KernelSize=[kernel, kernel],
-            Function="MaxPool",
-            OutImgDims=[odim, odim],
-            InputDataType="UINT4",
-            OutputDataType="UINT4",
-        )
+    consumer_node = helper.make_node(
+        "VVAU_hls",
+        ["mid", "weights"],
+        ["outp"],
+        domain="finn.custom_op.fpgadataflow.hls",
+        backend="fpgadataflow",
+        PE=1,
+        SIMD=1,
+        Dim=[odim, odim],
+        Channels=ch,
+        Kernel=[kernel, kernel],
+        resType="lut",
+        ActVal=0,
+        inputDataType="UINT4",
+        weightDataType="INT4",
+        outputDataType="INT16",
+        noActivation=1,
+    )
     graph = helper.make_graph([producer, consumer_node], "graph", [inp], [outp], value_info=[mid])
     model = ModelWrapper(qonnx_make_model(graph))
-    if consumer == "VVAU_hls":
-        model.set_initializer("weights", np.zeros((ch, 1, kernel, kernel), dtype=np.float32))
-        model.set_tensor_datatype("weights", DataType["INT4"])
+    model.set_initializer("weights", np.zeros((ch, 1, kernel, kernel), dtype=np.float32))
+    model.set_tensor_datatype("weights", DataType["INT4"])
     for tensor in ("inp", "mid"):
         model.set_tensor_datatype(tensor, DataType["UINT4"])
     return model
@@ -221,15 +202,14 @@ def test_set_folding_unhandled_op_types(caplog: pytest.LogCaptureFixture) -> Non
 
 
 @pytest.mark.fpgadataflow
-@pytest.mark.parametrize("consumer", ["VVAU_hls", "Pool_hls"])
-def test_set_folding_depthwise_without_swg(consumer: str) -> None:
+def test_set_folding_depthwise_without_swg() -> None:
     """A depthwise layer without sliding window generator raises a typed error."""
     # a depthwise layer with a kernel larger than 1x1 needs a sliding window generator
-    model = make_swg_dw_model(consumer=consumer, with_swg=False)
+    model = make_swg_dw_model(with_swg=False)
     with pytest.raises(FINNFoldingError) as excinfo:
         model.transform(SetFolding(1000))
     assert isinstance(excinfo.value, FINNUserError)
-    assert excinfo.value.op_type == consumer
+    assert excinfo.value.op_type == "VVAU_hls"
     assert excinfo.value.node_name == model.graph.node[1].name
     assert "Expected SWU on DW op input, found StreamingFIFO_rtl" in str(excinfo.value)
 

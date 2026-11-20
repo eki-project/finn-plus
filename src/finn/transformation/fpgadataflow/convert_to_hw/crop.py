@@ -178,8 +178,6 @@ class InferCrop(Transformation):
                     CropWest=crop_west,
                     CropSouth=crop_south,
                     numInputVectors=num_inp_vec,
-                    cpp_interface="hls_vector",
-                    hls_style="freerunning",
                 )
                 graph.node.insert(node_ind, new_node)
                 graph.node.remove(n)

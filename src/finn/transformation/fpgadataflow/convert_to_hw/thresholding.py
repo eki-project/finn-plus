@@ -28,6 +28,7 @@
 
 """Convert MultiThreshold layers to standalone Thresholding HW layers."""
 
+import numpy as np
 import qonnx.core.data_layout as dl
 from onnx import helper
 from qonnx.core.datatype import DataType
@@ -38,7 +39,6 @@ from qonnx.util.onnx import nchw_to_nhwc
 from typing import cast
 
 from finn.util.exception import FINNUserError
-from finn.util.logging import log
 
 
 class InferThresholdingLayer(Transformation):
@@ -84,50 +84,33 @@ class InferThresholdingLayer(Transformation):
                 # TODO: this should be removed in favor of proper layout handling in the frontend
                 #  this workaround is currently still needed to handle standalone NCHW MTs at the
                 #  input of the graph, e.g., for cnv (bnn-pynq) models
-                node_inst = getCustomOp(node)
-                try:
-                    mt_layout = cast("str", node_inst.get_nodeattr("data_layout"))
-                    string_to_layout_map = {
-                        "NHWC": dl.NHWC,
-                        "NCHW": dl.NCHW,
-                        "NCW": dl.NCW,
-                        "NWC": dl.NWC,
-                        "NC": dl.NC,
-                    }
-                    if mt_layout in string_to_layout_map:
-                        mt_layout = string_to_layout_map[mt_layout]
-                except AttributeError:
-                    log.warning(f"MultiThreshold ({node.name}) is missing a layout annotation.")
-                    mt_layout = "missing"
+                # MultiThreshold is elementwise, so it cannot reorder data: its input and
+                # output layouts must agree. The output annotation often goes stale or unset
+                # (InferDataLayouts does not propagate through MultiThreshold), so the input
+                # layout is the reliable per-node signal. An unset output carries no
+                # information and is ignored, but a fully annotated NCHW<->NHWC disagreement is
+                # a real error rather than a stale default.
                 input_tensor_layout = model.get_tensor_layout(thl_input)
                 output_tensor_layout = model.get_tensor_layout(thl_output)
-
-                if input_tensor_layout != mt_layout:
-                    log.warning(
-                        f"MultiThreshold ({node.name}) layout ({mt_layout}) does not match "
-                        f"input tensor layout ({input_tensor_layout})."
-                    )
-                if output_tensor_layout != mt_layout:
-                    log.warning(
-                        f"MultiThreshold ({node.name}) layout ({mt_layout}) does not match "
-                        f"output tensor layout ({output_tensor_layout})."
-                    )
-
-                if input_tensor_layout == dl.NCHW and output_tensor_layout == dl.NHWC:
+                if (input_tensor_layout == dl.NCHW and output_tensor_layout == dl.NHWC) or (
+                    input_tensor_layout == dl.NHWC and output_tensor_layout == dl.NCHW
+                ):
                     raise FINNUserError(
-                        f"MultiThreshold ({node.name}) input (NCHW) and output (NHWC) "
-                        "layout mismatch."
+                        f"MultiThreshold ({node.name}) input ({input_tensor_layout}) and output "
+                        f"({output_tensor_layout}) layouts disagree; the operation is "
+                        "elementwise and must preserve the data layout."
                     )
-                if input_tensor_layout == dl.NHWC and output_tensor_layout == dl.NCHW:
-                    raise FINNUserError(
-                        f"MultiThreshold ({node.name}) input (NHWC) and output (NCHW) "
-                        "layout mismatch."
-                    )
-
-                # Perform conversion only if both, input & output, are annotated as NCHW
-                convert = False
-                if input_tensor_layout == dl.NCHW and output_tensor_layout == dl.NCHW:
-                    convert = True
+                # Shared (per-tensor) thresholds are channel-invariant and follow the input
+                # layout. Per-channel thresholds follow the declared data_layout when it is
+                # set; when it is unset the input tensor layout is the fallback, so a
+                # channels-first input is still converted. prod(shape[:-1]) == 1 also handles
+                # leading singleton dims.
+                shared_thresholds = int(np.prod(thl_thres_shape[:-1])) == 1
+                mt_layout = cast("str", getCustomOp(node).get_nodeattr("data_layout"))
+                if not shared_thresholds and mt_layout in ("NCHW", "NHWC"):
+                    convert = mt_layout == "NCHW"
+                else:
+                    convert = input_tensor_layout == dl.NCHW
 
                 if convert:
                     thl_input = nchw_to_nhwc(thl_input, model, node_ind)

@@ -70,7 +70,6 @@ import finn.custom_op.fpgadataflow.hls.squeeze_hls
 import finn.custom_op.fpgadataflow.hls.streamingdatawidthconverter_hls
 import finn.custom_op.fpgadataflow.hls.streamingfifo_hls
 import finn.custom_op.fpgadataflow.hls.thresholding_hls
-import finn.custom_op.fpgadataflow.hls.tlastmarker_hls
 import finn.custom_op.fpgadataflow.hls.unsqueeze_hls
 import finn.custom_op.fpgadataflow.hls.upsampler_hls
 import finn.custom_op.fpgadataflow.hls.vectorvectoractivation_hls

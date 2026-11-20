@@ -46,7 +46,7 @@ class RemoveCNVtoFCFlatten(Transformation):
                             graph_modified = True
                             cast("NodeProto", consumer).input[0] = n.input[0]
                             graph.node.remove(n)
-                    elif producer.op_type == "Transpose":
+                    elif producer is not None and producer.op_type == "Transpose":
                         # transpose + flatten, absorb into following node
                         transp_node = producer
                         # check if transpose converts NHWC to NCHW

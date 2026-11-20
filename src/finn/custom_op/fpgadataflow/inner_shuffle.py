@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
-from finn.util.exception import FINNInternalError
+from finn.custom_op.fpgadataflow.shuffle import auto_size_simd
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
@@ -33,6 +34,17 @@ class InnerShuffle(HWCustomOp):
     def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
+
+        # SIMD must divide I, the axis that becomes the output's innermost axis.
+        i_dim = self.transpose_in_shape[-2]
+        if i_dim % self.simd != 0:
+            new_simd = auto_size_simd(i_dim, self.simd)
+            if new_simd is None:
+                raise FINNUserError(
+                    f"{self.onnx_node.name}: unable to determine a SIMD value that divides "
+                    f"the transpose dimension ({i_dim})"
+                )
+            self.set_nodeattr("SIMD", new_simd)
 
     def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""

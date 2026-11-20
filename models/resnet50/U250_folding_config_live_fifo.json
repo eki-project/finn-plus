@@ -1,5 +1,13 @@
 {
-  "Defaults": {"ram_cascade_height": [0, ["MVAU_hls", "MVAU_rtl"]]},
+  "Defaults": {
+    "ram_cascade_height": [
+      0,
+      [
+        "MVAU_hls",
+        "MVAU_rtl"
+      ]
+    ]
+  },
   "FMPadding_rtl_0": {
     "SIMD": 3,
     "inFIFODepths": [
@@ -49,17 +57,6 @@
     ],
     "outFIFODepths": [
       949
-    ]
-  },
-  "ConvolutionInputGenerator_rtl_1": {
-    "SIMD": 4,
-    "parallel_window": 0,
-    "ram_style": "distributed",
-    "inFIFODepths": [
-      949
-    ],
-    "outFIFODepths": [
-      2
     ]
   },
   "Pool_hls_0": {
@@ -150,7 +147,7 @@
       1741
     ]
   },
-  "ConvolutionInputGenerator_rtl_2": {
+  "ConvolutionInputGenerator_rtl_1": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -300,7 +297,7 @@
       1727
     ]
   },
-  "ConvolutionInputGenerator_rtl_3": {
+  "ConvolutionInputGenerator_rtl_2": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -450,7 +447,7 @@
       1727
     ]
   },
-  "ConvolutionInputGenerator_rtl_4": {
+  "ConvolutionInputGenerator_rtl_3": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -627,7 +624,7 @@
       2
     ]
   },
-  "ConvolutionInputGenerator_rtl_5": {
+  "ConvolutionInputGenerator_rtl_4": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -777,7 +774,7 @@
       1699
     ]
   },
-  "ConvolutionInputGenerator_rtl_6": {
+  "ConvolutionInputGenerator_rtl_5": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -927,7 +924,7 @@
       1699
     ]
   },
-  "ConvolutionInputGenerator_rtl_7": {
+  "ConvolutionInputGenerator_rtl_6": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -1077,7 +1074,7 @@
       1699
     ]
   },
-  "ConvolutionInputGenerator_rtl_8": {
+  "ConvolutionInputGenerator_rtl_7": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -1254,7 +1251,7 @@
       2
     ]
   },
-  "ConvolutionInputGenerator_rtl_9": {
+  "ConvolutionInputGenerator_rtl_8": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -1404,7 +1401,7 @@
       1755
     ]
   },
-  "ConvolutionInputGenerator_rtl_10": {
+  "ConvolutionInputGenerator_rtl_9": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -1554,7 +1551,7 @@
       1755
     ]
   },
-  "ConvolutionInputGenerator_rtl_11": {
+  "ConvolutionInputGenerator_rtl_10": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -1704,7 +1701,7 @@
       1755
     ]
   },
-  "ConvolutionInputGenerator_rtl_12": {
+  "ConvolutionInputGenerator_rtl_11": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -1854,7 +1851,7 @@
       1755
     ]
   },
-  "ConvolutionInputGenerator_rtl_13": {
+  "ConvolutionInputGenerator_rtl_12": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -2004,7 +2001,7 @@
       1755
     ]
   },
-  "ConvolutionInputGenerator_rtl_14": {
+  "ConvolutionInputGenerator_rtl_13": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -2191,7 +2188,7 @@
       2
     ]
   },
-  "ConvolutionInputGenerator_rtl_15": {
+  "ConvolutionInputGenerator_rtl_14": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -2341,7 +2338,7 @@
       1802
     ]
   },
-  "ConvolutionInputGenerator_rtl_16": {
+  "ConvolutionInputGenerator_rtl_15": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -2491,7 +2488,7 @@
       1802
     ]
   },
-  "ConvolutionInputGenerator_rtl_17": {
+  "ConvolutionInputGenerator_rtl_16": {
     "SIMD": 4,
     "parallel_window": 0,
     "ram_style": "distributed",
@@ -2581,17 +2578,6 @@
   "StreamingDataWidthConverter_73": {
     "inFIFODepths": [
       2
-    ],
-    "outFIFODepths": [
-      2
-    ]
-  },
-  "ConvolutionInputGenerator_rtl_18": {
-    "SIMD": 4,
-    "parallel_window": 0,
-    "ram_style": "distributed",
-    "inFIFODepths": [
-      207
     ],
     "outFIFODepths": [
       2

@@ -26,7 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Infer Pool HW layers from lowered pooling, i.e., Im2Col+Reduce."""
+"""Infer Pool HW layers from lowered pooling, i.e., Im2Col+Reshape+Reduce."""
 
 from onnx import helper
 from qonnx.core.datatype import DataType
@@ -35,7 +35,6 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
-from qonnx.util.basic import get_by_name
 from typing import TYPE_CHECKING, Literal, cast
 
 from finn.util.exception import FINNInternalError
@@ -148,25 +147,43 @@ class InferPoolFromReduce(Transformation):
                 }[node.op_type]
 
                 # This is indeed a supported pooling operator in its lowered
-                # form: Keep Im2Col but replace Reshape+Reduce by HW operator
-                attr = get_by_name(im2col.attribute, "kernel_size")
-                if attr is None:
-                    raise FINNInternalError(f"{node.name}: kernel_size not known for Im2Col.")
+                # form: Replace Im2Col+Reshape+Reduce by the consolidated HW operator,
+                # which generates the sliding window (and padding) itself and thus
+                # consumes the raw feature map feeding the Im2Col
+                im2col_inst = getCustomOp(im2col)
+                kernel_size = cast("list[int]", im2col_inst.get_nodeattr("kernel_size"))
+                stride = cast("list[int]", im2col_inst.get_nodeattr("stride"))
+                dilations = cast("list[int]", im2col_inst.get_nodeattr("dilations"))
+                pad_amount = cast("list[int]", im2col_inst.get_nodeattr("pad_amount"))
+                pad_value = cast("int", im2col_inst.get_nodeattr("pad_value"))
+                # The pooling hardware has no support for dilated windows
+                if any(d != 1 for d in dilations):
+                    continue
+                # Im2Col operates on NHWC feature maps
+                if (ishape := model.get_tensor_shape(im2col.input[0])) is None:
+                    raise FINNInternalError(f"{node.name}: input shape not known for Im2Col.")
+                if len(ishape) != 4:
+                    continue
                 pool = helper.make_node(
                     # This is the pooling custom hardware operator from the FINN
                     # custom domain
                     op_type="Pool",
                     domain="finn.custom_op.fpgadataflow",
                     backend="fpgadataflow",
-                    # Connect the new operator to make use of the old inputs and
+                    # Connect the new operator to the raw feature map and the old
                     # outputs
-                    inputs=[im2col.output[0]],
+                    inputs=[im2col.input[0]],
                     outputs=[node.output[0]],
-                    # Pooling needs to know the input/output dimensions and the
-                    # size of the pooling window
+                    # Pooling needs to know the input/output dimensions, the
+                    # size of the pooling window, its stride and the padding
                     Channels=shape[-1],
-                    KernelSize=attr.ints,
+                    KernelSize=kernel_size,
+                    Stride=stride,
+                    IFMDim=list(ishape[1:3]),
                     OutImgDims=shape[1:-2],
+                    Padding=pad_amount,
+                    PadValue=pad_value,
+                    BatchSize=ishape[0],
                     # Select the pooling backend implementation
                     Function=pool_fxn,
                     # Set parallelism to cover all input (also output) channels
@@ -178,12 +195,7 @@ class InferPoolFromReduce(Transformation):
                     InputDataType=idt.name,
                     OutputDataType=odt.name,
                     # Pooling backend already uses the new hls::vector interface
-                    cpp_interface="hls_vector",
                 )
-
-                # The input generator needs to be switched into depthwise mode,
-                # as pooling does not reduce/expand along the channels
-                getCustomOp(im2col).set_nodeattr("depthwise", 1)
 
                 # Insert the pooling node into the graph, but do not remove the
                 # old nodes as they might still have other consumers
@@ -197,6 +209,11 @@ class InferPoolFromReduce(Transformation):
                 # from the graph
                 if len(model.find_consumers(reshape.output[0])) <= 1:
                     graph.node.remove(reshape)
+
+                # The same applies to the input generator, which is no longer part
+                # of the pooling: remove it unless something else consumes its output
+                if len(model.find_consumers(im2col.output[0])) == 0:
+                    graph.node.remove(im2col)
 
         # Re-do shape and data type annotations after potential changes to the
         # model graph

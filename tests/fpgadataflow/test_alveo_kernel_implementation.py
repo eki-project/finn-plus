@@ -50,7 +50,6 @@ def make_chain(length: int) -> ModelWrapper:
                 weightDataType="INT2",
                 outputDataType="INT2",
                 ActVal=0,
-                binaryXnorMode=0,
                 noActivation=1,
             )
         )

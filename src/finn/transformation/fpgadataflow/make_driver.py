@@ -626,6 +626,10 @@ class MakePYNQDriver(Transformation):
             multidnn_mode: Multi-DNN generation mode recorded in the driver settings.
         """
         super().__init__()
+        # Upstream renamed "zynq-iodma" to "pynq-iodma"; FINN+ keeps "zynq-iodma" because the
+        # separately published finn-plus-driver package keys on it. Accept the upstream name.
+        if platform == "pynq-iodma":
+            platform = "zynq-iodma"
         self.platform = platform
         self.driver_type = driver_type
         self.clk_period_ns = clk_period_ns
@@ -692,11 +696,18 @@ class MakePYNQDriver(Transformation):
                     dma_target_model = ModelWrapper(
                         cast("str", dma_target_sdp.get_nodeattr("model"))
                     )
-                    iodma_output_tensor = iodma_node.onnx_node.output[0]
-                    dma_consumer = dma_target_model.find_consumer(iodma_output_tensor)
+                    # follow the partition output, as a DWC may sit after the IODMA
+                    partition_output_tensor = df_model.graph.output[0].name
+                    dma_consumer = dma_target_model.find_consumer(partition_output_tensor)
+                    # skip FIFOs/DWCs: the driver repeats the weights once per output
+                    # pixel, so it needs the output shape of the consuming layer
+                    while dma_consumer is not None and dma_consumer.op_type.startswith(
+                        ("StreamingFIFO", "StreamingDataWidthConverter")
+                    ):
+                        dma_consumer = dma_target_model.find_consumer(dma_consumer.output[0])
                     if dma_consumer is None:
                         raise FINNInternalError(
-                            f"Could not find a consumer for {iodma_output_tensor}."
+                            f"Could not find a consumer for {partition_output_tensor}."
                         )
                     ext_weight_shapes_dict[idma_name] = dma_target_model.get_tensor_shape(
                         dma_consumer.output[0]

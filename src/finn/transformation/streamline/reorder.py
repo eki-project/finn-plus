@@ -1,5 +1,5 @@
 # Copyright (C) 2020-2022, Xilinx, Inc.
-# Copyright (C) 2022-2024, Advanced Micro Devices, Inc.
+# Copyright Advanced Micro Devices, Inc.
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -868,7 +868,19 @@ class MakeMaxPoolNHWC(Transformation):
             if n.op_type == "MaxPool":
                 consumer = model.find_consumer(n.output[0])
                 producer = model.find_producer(n.input[0])
-                if consumer is not None and consumer.op_type == "Transpose":
+                # Case A (consumer path) rewires a single consumer transpose above
+                # the pool. If the pool output is a fork, find_consumer only returns
+                # the first consumer, so Case A would strand the pool on one branch
+                # and leave the other branch reading the un-pooled tensor. Skip it in
+                # that case and let the producer path (Case B) handle it: Case B only
+                # rewires the producer transpose + pool and keeps both fork consumers
+                # intact, after which MoveTransposePastFork duplicates the transpose
+                # onto both branches so they cancel symmetrically.
+                if (
+                    consumer is not None
+                    and consumer.op_type == "Transpose"
+                    and not model.is_fork_node(n)
+                ):
                     perm_attr = get_by_name(consumer.attribute, "perm")
                     if perm_attr is None:
                         continue
@@ -2257,11 +2269,12 @@ class MoveTransposePastEltwise(Transformation):
                         node.input[0] = mid
                         # Transpose now produces the original output tensor
                         node.output[0] = out
-                        # Delete the shape annotation of the connecting tensors
-                        # to be re-done later
-                        _clear_tensor_shape(model, inp)
+                        # Only the middle tensor changes shape (it now holds the
+                        # elementwise result in the input's layout), so only its
+                        # annotation is redone. The input may be a graph input,
+                        # whose shape InferShapes cannot recover once cleared, and
+                        # the output keeps its shape.
                         _clear_tensor_shape(model, mid)
-                        _clear_tensor_shape(model, out)
                         # Track whether the graph has been modified, never
                         # resets to False
                         graph_modified = True

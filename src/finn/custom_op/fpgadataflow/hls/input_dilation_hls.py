@@ -35,6 +35,7 @@ from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.input_dilation import InputDilation
+from finn.util.data_packing import hls_datatype_str
 
 if TYPE_CHECKING:
     from onnx import GraphProto, NodeProto
@@ -44,7 +45,7 @@ if TYPE_CHECKING:
 class InputDilation_hls(InputDilation, HLSBackend):
     """HLS backend implementation of input dilation.
 
-    Uses the finn-hlslib ``FMPadding_Pixel_Nonsquare`` streamtools function.
+    Uses the finn-hlslib ``FMPadding_Pixel_Nonsquare`` function (deconv.hpp).
     """
 
     def __init__(self, onnx_node: "NodeProto", **kwargs: int) -> None:
@@ -60,7 +61,7 @@ class InputDilation_hls(InputDilation, HLSBackend):
 
     def global_includes(self) -> None:
         """Return global includes."""
-        self.code_gen_dict["$GLOBALS$"] = ['#include "streamtools.h"']
+        self.code_gen_dict["$GLOBALS$"] = ['#include "deconv.hpp"']
 
     def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
@@ -68,31 +69,43 @@ class InputDilation_hls(InputDilation, HLSBackend):
         stride_h, stride_w = self.stride
         self.code_gen_dict["$DEFINES$"] = [
             f"""
-            #define OutputDim_x {odim_w}\n
-            #define OutputDim_y {odim_h}\n
-            #define Stride_x {stride_w}\n
-            #define Stride_y {stride_h}\n
-            #define NumChannels {self.num_channels}\n
-            #define SIMD {self.simd}\n
+            static constexpr unsigned OutputDim_x = {odim_w};
+            static constexpr unsigned OutputDim_y = {odim_h};
+            static constexpr unsigned Stride_x = {stride_w};
+            static constexpr unsigned Stride_y = {stride_h};
+            static constexpr unsigned NumChannels = {self.num_channels};
+            static constexpr unsigned SIMD = {self.simd};
             """
         ]
 
     def docompute(self) -> None:
         """Return docompute."""
-        in_t = self.get_input_datatype().get_hls_datatype_str()
+        in_t = hls_datatype_str(self.get_input_datatype())
         hls_call = "FMPadding_Pixel_Nonsquare"
         self.code_gen_dict["$DOCOMPUTE$"] = [
             f"""{hls_call}<OutputDim_x, OutputDim_y, Stride_x, Stride_y, NumChannels,
             SIMD, {in_t}> (in0_V, out0_V);"""
         ]
 
+    def pragmas(self) -> None:
+        """Return pragmas."""
+        self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0_V"]
+        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
+        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
+        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS DATAFLOW disable_start_propagation")
+
+    def ipgen_extra_directives(self) -> list[str]:
+        """Return a list of extra tcl directives for HLS synthesis."""
+        return ["config_compile -pipeline_style flp"]
+
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        packed_hls_type = f"ap_uint<{self.get_instream_width()}>"
+        elem_hls_type = hls_datatype_str(self.get_input_datatype())
+        simd = self.simd
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             (
-                f"void {self.onnx_node.name}(hls::stream<{packed_hls_type} > &in0_V, "
-                f"hls::stream<{packed_hls_type} > &out0_V)"
+                f"void {self.onnx_node.name}(hls::stream<tensor<{elem_hls_type},{simd}>> &in0_V, "
+                f"hls::stream<tensor<{elem_hls_type},{simd}>> &out0_V)"
             )
         ]
 

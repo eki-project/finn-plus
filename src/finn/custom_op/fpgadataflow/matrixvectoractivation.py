@@ -54,8 +54,13 @@ from typing import TYPE_CHECKING, cast
 from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.memstream import MemStreamOp
-from finn.util.basic import fifo_rtl_files, is_versal
-from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
+from finn.transformation.fpgadataflow.fifo_sizing.tav import load_tav_npy, save_tav_npy
+from finn.util.basic import fifo_rtl_files, is_versal, least_divisor_at_most
+from finn.util.data_packing import (
+    hls_datatype_str,
+    numpy_to_hls_code,
+    pack_innermost_dim_as_hex_string,
+)
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 from finn.util.settings import get_settings
@@ -109,9 +114,6 @@ class MVAU(MemStreamOp):
             "outputDataType": ("s", True, ""),
             # FINN DataType for accumulator -- auto-computed and updated
             "accDataType": ("s", False, "INT32"),
-            # use xnor-popcount for binary weights/inputs, thus treating them
-            # as bipolar
-            "binaryXnorMode": ("i", False, 0, {0, 1}),
             # no-activation mode (produce accumulators)
             "noActivation": ("i", False, 0, {0, 1}),
             # number of input vectors, examples:
@@ -223,11 +225,6 @@ class MVAU(MemStreamOp):
         return cast("str", self.get_nodeattr("ram_style_thresholds"))
 
     @property
-    def binary_xnor_mode(self) -> int:
-        """Get whether xnor-popcount (bipolar) mode is enabled (0/1)."""
-        return cast("int", self.get_nodeattr("binaryXnorMode"))
-
-    @property
     def no_activation(self) -> int:
         """Get whether the node runs without thresholding (0/1)."""
         return cast("int", self.get_nodeattr("noActivation"))
@@ -275,11 +272,7 @@ class MVAU(MemStreamOp):
         in_act = in_act.reshape(self.get_normal_input_shape())
         mvau_w = context[node.input[1]]
         # Matrix multiplication
-        if self.binary_xnor_mode:
-            # Note: activation/weights are expected to be binary
-            # (by design coming from the transformation inferring this operation mode)
-            result = xp.xnorpopcountmatmul(in_act, mvau_w)
-        elif (
+        if (
             self.get_nodeattr("inputDataType") == "BIPOLAR"
             and self.get_nodeattr("weightDataType") == "BIPOLAR"
         ):
@@ -369,11 +362,15 @@ class MVAU(MemStreamOp):
         """
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
-        if idt != self.get_input_datatype(0):
-            log.warning(
-                f"inputDataType changing for {node.name}: "
-                f"{self.get_input_datatype(0)!s} -> {idt!s}"
-            )
+        cur_idt = self.get_input_datatype(0)
+        # BIPOLAR values {-1,+1} use the same 1-bit encoding as BINARY {0,1}.
+        # When the node expects BIPOLAR (e.g. from XnorPopcountMatMul conversion)
+        # but the tensor annotation says BINARY, keep BIPOLAR — the semantic
+        # difference (XNOR popcount vs AND) is handled by the HLS Bipolar type.
+        if cur_idt == DataType["BIPOLAR"] and idt == DataType["BINARY"]:
+            idt = DataType["BIPOLAR"]
+        if idt != cur_idt:
+            log.warning(f"inputDataType changing for {node.name}: {cur_idt!s} -> {idt.name!s}")
         self.set_nodeattr("inputDataType", idt.name)
         # set output datatype from property
         model.set_tensor_datatype(node.output[0], self.get_output_datatype())
@@ -411,6 +408,25 @@ class MVAU(MemStreamOp):
         """Return FINN DataType of output."""
         return DataType[cast("str", self.get_nodeattr("outputDataType"))]
 
+    def get_weight_stream_simd(self) -> int:
+        """Return the number of weights per cycle on the MVU weight stream (WSIMD).
+
+        PE*SIMD for TH=1. For TH>1, the smallest divisor of PE*SIMD such that a
+        PE x SIMD tile is filled in NW = PE*SIMD/WSIMD <= TH cycles, i.e. within
+        the window in which the tiled MVU reuses it for TH input vectors.
+        """
+        return least_divisor_at_most(self.pe * self.simd, self.th)
+
+    def get_fetch_weights_simd(self) -> int:
+        """Return the number of weights per cycle delivered by fetch_weights (IWSIMD).
+
+        SIMD for TH=1 (local_weight_buffer distributes SIMD groups across PE
+        lanes), WSIMD for TH>1 (the stream feeds the tiled MVU directly).
+        """
+        if self.th > 1:
+            return self.get_weight_stream_simd()
+        return self.simd
+
     def get_instream_width(self, ind: int = 0) -> int:
         """Return the width of input stream ``ind`` in bits.
 
@@ -429,7 +445,7 @@ class MVAU(MemStreamOp):
                 case "dynamic":
                     width = self.pe * wp
                 case "external" | "external_mem" | "internal_decoupled":
-                    width = ((self.pe * self.simd) * wp) // self.th
+                    width = self.get_weight_stream_simd() * wp
                 case _:
                     width = 0
         elif ind == 2:
@@ -474,9 +490,12 @@ class MVAU(MemStreamOp):
         if ind == 1:
             match self.mem_mode:
                 case "dynamic":
-                    return (*vecs[:2], mw, nf, pe)
+                    # one (MW x MH) operand per leading dim except the row dim, e.g.
+                    # per (batch, head) for [batch, heads, rows, MW] inputs and per
+                    # batch for [batch, rows, MW] inputs
+                    return (*vecs[:-1], mw, nf, pe)
                 case "external" | "external_mem" | "internal_decoupled":
-                    return (n_vecs, sf * nf, (simd * pe) // self.th)
+                    return (n_vecs, sf * nf, self.get_weight_stream_simd())
                 case _:
                     raise FINNInternalError(
                         f"{self.onnx_node.name}: undefined folded input shape for input ind 1 "
@@ -508,8 +527,12 @@ class MVAU(MemStreamOp):
         return self.mw * self.mh // (self.pe * self.simd)
 
     def memstream_depth(self) -> int:
-        """Return the weight words of one set: WMEM per tile, times the tiles TH."""
-        return self.calc_wmem() * cast("int", self.get_nodeattr("TH"))
+        """Return the weight words of one set.
+
+        One memory line per WSIMD-wide weight sub-tile, i.e. NW = PE*SIMD/WSIMD lines
+        per WMEM entry (NW < TH if TH does not divide PE*SIMD, NW = 1 for TH = 1).
+        """
+        return self.calc_wmem() * ((self.pe * self.simd) // self.get_weight_stream_simd())
 
     def calc_tmem(self) -> int:
         """Calculate and return TMEM."""
@@ -636,19 +659,62 @@ class MVAU(MemStreamOp):
             )
 
     def get_exp_cycles(self) -> int:
-        """Return the expected cycle count given the folding configuration and tiling factor."""
+        """Return the expected cycle count given the folding configuration.
+
+        With external_mem, the weight fetch can be slower than the compute; fetch
+        and compute overlap, so the slower of the two sets the rate.
+        """
+        return int(max(self.get_exp_compute_cycles(), self.get_exp_weight_fetch_cycles()))
+
+    def get_exp_compute_cycles(self) -> int:
+        """Return the expected cycles per frame of the MVU compute core alone.
+
+        Assumes the weight stream never stalls the core.
+        """
         pe = self.pe
         simd = self.simd
-        th = self.th
         num_inp_vec = self.num_input_vectors
         mh = self.mh
         mw = self.mw
         # since mmv != 1 is not supported yet, we set mmv for now to 1
         mmv = 1
-        # Tiling/systolic reduces throughput
-        # TH>1 (tiling) reduces throughput by factor TH (tinner = PE*SIMD/TH)
-        exp_cycles = (mh / pe) * (mw / simd) * np.prod(num_inp_vec) * th / mmv
+        # TH>1 (tiling) does not change the compute cycles: the tiled MVU still
+        # consumes one PE x SIMD weight tile per cycle, but reuses each tile for TH
+        # input vectors, so the weight stream only needs WSIMD weights per cycle,
+        # the smallest divisor of PE*SIMD with PE*SIMD/WSIMD <= TH
+        exp_cycles = (mh / pe) * (mw / simd) * np.prod(num_inp_vec) / mmv
         return int(exp_cycles)
+
+    def get_exp_weight_fetch_cycles(self) -> int:
+        """Return the expected cycles per frame for fetch_weights to deliver the weights.
+
+        Only applies to mem_mode external_mem, 0 for all other mem_modes.
+
+        The weight matrix is fetched from external memory once per frame for TH=1
+        (local_weight_buffer replays it numInputVectors times) and
+        numInputVectors/TH times per frame for TH>1. Each fetch is limited by the
+        slower of two stages that each move one transfer per cycle:
+          - the AXI bus: ceil(MH*MW / (DATA_BITS // wbits)) bus words
+          - the VPC into the weight buffer: MH*MW / IWSIMD weight groups,
+            with IWSIMD = SIMD for TH=1 and WSIMD for TH>1 (the smallest divisor
+            of PE*SIMD with PE*SIMD/WSIMD <= TH)
+        For TH=1 this is slower than the compute whenever PE > numInputVectors,
+        for TH>1 whenever WSIMD*wbits > DATA_BITS.
+        This is a best case: one AXI beat per cycle, no memory latency.
+        """
+        if self.mem_mode != "external_mem":
+            return 0
+        th = self.th
+        n_vec = int(np.prod(self.num_input_vectors))
+        mh = self.mh
+        mw = self.mw
+        wbits = self.get_input_datatype(1).bitwidth()
+        data_bits = _FETCH_WEIGHTS_DATA_BITS
+        iwsimd = self.get_fetch_weights_simd()
+        fetches_per_frame = n_vec // th if th > 1 else 1
+        bus_words = math.ceil(mh * mw / (data_bits // wbits))
+        weight_groups = (mh * mw) // iwsimd
+        return int(fetches_per_frame * max(bus_words, weight_groups))
 
     def minimize_accumulator_width(
         self, model: ModelWrapper, datatype_only: bool = False
@@ -666,10 +732,16 @@ class MVAU(MemStreamOp):
         """
         weights = model.get_initializer(self.onnx_node.input[1])
         idt = self.get_input_datatype(0)
+        wdt = self.get_input_datatype(1)
 
+        # Bipolar x Bipolar: the HLS Bipolar type implements XNOR popcount,
+        # producing an unsigned accumulator in [0, MW].
+        if idt == DataType["BIPOLAR"] and wdt == DataType["BIPOLAR"]:
+            acc_min = 0
+            acc_max = self.mw
         # if datatype_only, runtime-writeable weights, mem_mode=external, or
-        # weights are absent (MLO), then we use worst-case values from datatypes
-        if (
+        # weights are absent (MLO), then we use worst-case values from datatypes.
+        elif (
             datatype_only
             or self.runtime_writeable_weights
             or self.mem_mode in ["external", "external_mem", "dynamic"]
@@ -677,7 +749,6 @@ class MVAU(MemStreamOp):
         ):
             mw = self.mw
             mh = self.mh
-            wdt = self.get_input_datatype(1)
             lower_worst = wdt.min() * np.ones((mw, mh))
             lower_range = calculate_matvec_accumulator_range(lower_worst, idt)
             upper_worst = wdt.max() * np.ones((mw, mh))
@@ -685,10 +756,6 @@ class MVAU(MemStreamOp):
             acc_min = min(min(lower_range), min(upper_range))
             acc_max = max(max(lower_range), max(upper_range))
         else:
-            # since in the calculation the values of the weight matrix are used,
-            # for the bipolar case they need to be converted to bipolar
-            if self.binary_xnor_mode:
-                weights = 2 * weights - 1
             (acc_min, acc_max) = calculate_matvec_accumulator_range(weights, idt)
 
         # if the acc_range is always greater than 0, then acc_max <= 2^P - 1
@@ -732,6 +799,12 @@ class MVAU(MemStreamOp):
         """
         if datatype_only:
             return DataType[cast("str", self.get_nodeattr("weightDataType"))]
+
+        # BIPOLAR weights (from XNOR-popcount) must not be minimized —
+        # the XNOR hardware expects BIPOLAR {-1,+1}, not INT2.
+        wdt = DataType[self.get_nodeattr("weightDataType")]
+        if wdt == DataType["BIPOLAR"]:
+            return wdt
 
         if not (
             self.runtime_writeable_weights
@@ -777,17 +850,19 @@ class MVAU(MemStreamOp):
         n_thres_steps = orig_thres_matrix.shape[1]
         inp_is_bipolar = self.get_input_datatype(0) == DataType["BIPOLAR"]
         wt_is_bipolar = self.get_input_datatype(1) == DataType["BIPOLAR"]
-        # reinterpret inp/wt as bipolar if bin_xnor_mode is iset
-        inp_is_binary = self.get_input_datatype(0) == DataType["BINARY"]
-        wt_is_binary = self.get_input_datatype(1) == DataType["BINARY"]
-        bin_xnor_mode = self.binary_xnor_mode == 1
-        inp_is_bipolar = inp_is_bipolar or (inp_is_binary and bin_xnor_mode)
-        wt_is_bipolar = wt_is_bipolar or (wt_is_binary and bin_xnor_mode)
         if inp_is_bipolar and wt_is_bipolar:
-            # ensure all thresholds are nonnegative
+            # Bipolar-XNOR nodes accumulate an unsigned popcount, so thresholds
+            # reaching HW codegen must be non-negative (a negative threshold means
+            # "always fire" and should already have been clipped to 0 by
+            # RoundAndClipThresholds). A negative here means the accumulator was
+            # minimized as signed (see minimize_accumulator_width) or
+            # RoundAndClipThresholds did not run.
             if not (orig_thres_matrix >= 0).all():
                 raise FINNUserError(
-                    f"{self.onnx_node.name}: bipolar thresholds must all be nonnegative"
+                    f"{self.onnx_node.name}: negative threshold on a bipolar-XNOR node "
+                    "reaching HW codegen; expected non-negative (unsigned popcount) "
+                    "thresholds. Check that the accumulator was minimized as unsigned and "
+                    "that RoundAndClipThresholds ran."
                 )
             # ensure all thresholds are integer
             if not (orig_thres_matrix.astype(np.int32) == orig_thres_matrix).all():
@@ -870,52 +945,56 @@ class MVAU(MemStreamOp):
         # convert weights into hlslib/rtllib-compatible format
         weight_tensor = self.get_hw_compatible_weight_tensor(weights)
         export_wdt = self.get_input_datatype(1)
-        # we have converted bipolar weights to binary for export,
-        # so use it as such for weight generation
-        if self.get_input_datatype(1) == DataType["BIPOLAR"]:
-            export_wdt = DataType["BINARY"]
+        # get_hw_compatible_weight_tensor encodes bipolar {-1,+1} as {0,1},
+        # which is the BINARY domain — use BINARY for value validation in
+        # hex packing (.dat) and .npy paths
+        pack_wdt = DataType["BINARY"] if export_wdt == DataType["BIPOLAR"] else export_wdt
         if weight_file_mode == "hls_header":
-            weight_hls_code = numpy_to_hls_code(weight_tensor, export_wdt, "weights", True, True)
-            # write weights into C++ header file as dictated by finn-hlslib
-            if export_wdt.bitwidth() != 1:
-                header = (
-                    f"const FixedPointWeights<{self.simd},{export_wdt.get_hls_datatype_str()},"
-                    f"{self.pe},{self.calc_wmem()}> weights = "
-                )
-            else:
-                header = f"const BinaryWeights<{self.simd},{self.pe},{self.calc_wmem()}> weights = "
+            pe = self.pe
+            simd = self.simd
+            wmem = self.calc_wmem()
+            # weight_tensor is (1, PE, WMEM, SIMD) with SIMD flipped (BE convention).
+            # Undo the flip to get natural (LE) order, then transpose to (WMEM, PE, SIMD)
+            # for aggregate initialization of TW weights[WMEM][PE][SIMD].
+            wt = np.flip(weight_tensor, axis=-1)  # undo SIMD flip -> natural order
+            wt = wt.reshape(pe, wmem, simd)
+            wt = np.transpose(wt, (1, 0, 2))  # (WMEM, PE, SIMD)
+            weight_hls_code = numpy_to_hls_code(wt, export_wdt, "weights", False, True)
+            header = f"const {hls_datatype_str(export_wdt)} weights[{wmem}][{pe}][{simd}] = "
             Path(weight_file_name).write_text(header + weight_hls_code)
         elif "decoupled" in weight_file_mode:
             # create a weight stream for various flavors of internal_decoupled mode:
             # transpose weight tensor from (1, PE, WMEM, SIMD) to (1, WMEM, PE, SIMD)
             weight_tensor_unflipped = np.transpose(weight_tensor, (0, 2, 1, 3))
-            # reverse SIMD flip for saving weights in .npy
-            weight_tensor_simd_flipped = np.flip(weight_tensor_unflipped, axis=-1)
+            # undo SIMD flip for cppsim npy — npy2tensorstream reads in natural
+            # LE order, so weights must be in natural SIMD order
+            weight_tensor_npy = np.flip(weight_tensor_unflipped, axis=-1)
             # PE flip for saving weights in .dat
             weight_tensor_pe_flipped = np.flip(weight_tensor_unflipped, axis=-2)
             # reshape weight tensor (simd_flipped and pe_flipped) to desired shape
             pe = self.pe
             simd = self.simd
-            # simd_flipped
-            weight_tensor_simd_flipped = weight_tensor_simd_flipped.reshape(1, -1, pe * simd)
-            weight_tensor_simd_flipped = weight_tensor_simd_flipped.copy()
+            weight_tensor_npy = weight_tensor_npy.reshape(1, -1, pe * simd)
+            weight_tensor_npy = weight_tensor_npy.copy()
             # flipped
             weight_tensor_pe_flipped = weight_tensor_pe_flipped.reshape(1, -1, pe * simd)
             weight_tensor_pe_flipped = weight_tensor_pe_flipped.copy()
             # tiling
             th = self.th
-            tinner = (pe * simd) // th
-            weight_tensor_simd_flipped = weight_tensor_simd_flipped.reshape(1, -1, tinner)
+            tinner = self.get_weight_stream_simd()
+            nw = (pe * simd) // tinner  # number of WSIMD-sized sub-tiles per PE*SIMD block
+            weight_tensor_npy = weight_tensor_npy.reshape(1, -1, tinner)
+            weight_tensor_pe_flipped = weight_tensor_pe_flipped.reshape(1, -1, tinner)
             # The .dat weights are PE-flipped (np.flip axis=-2), which reverses the
-            # PE dimension - the same dimension that TH tiles into sub-tiles. This
-            # reverses the order of the TH sub-tiles within each PE group. Undo that
-            # by flipping the TH tile order back (no-op for th=1).
-            weight_tensor_pe_flipped = weight_tensor_pe_flipped.reshape(1, -1, th, tinner)
+            # PE dimension - the same dimension that tiles into sub-tiles. This
+            # reverses the order of the NW sub-tiles within each PE group. Undo that
+            # by flipping the sub-tile order back (no-op when NW=1).
+            weight_tensor_pe_flipped = weight_tensor_pe_flipped.reshape(1, -1, nw, tinner)
             weight_tensor_pe_flipped = np.flip(weight_tensor_pe_flipped, axis=-2)
             weight_tensor_pe_flipped = weight_tensor_pe_flipped.reshape(1, -1, tinner)
             if weight_file_mode == "decoupled_npy":
                 # save weight stream into npy for cppsim
-                np.save(weight_file_name, weight_tensor_simd_flipped)
+                np.save(weight_file_name, weight_tensor_npy)
             elif weight_file_mode == "decoupled_verilog_dat" and (
                 self.mlo_max_iter or self.mem_mode == "external_mem"
             ):
@@ -928,13 +1007,13 @@ class MVAU(MemStreamOp):
                 # bus-word boundary; when WEIGHT_WIDTH divides DATA_BITS this reduces to
                 # tight packing (byte-identical to the previous per-group image).
                 #
-                # IWSIMD is (PE*SIMD)/TH for TH>1, SIMD otherwise. The element order
-                # within each IWSIMD group and the per-group ordering depend on how
-                # fetch_weights delivers the stream to the MVU:
+                # IWSIMD is get_fetch_weights_simd(): WSIMD for TH>1, SIMD otherwise.
+                # The element order within each IWSIMD group and the per-group
+                # ordering depend on how fetch_weights delivers the stream to the MVU:
                 #   - TH>1 (tiled MVAU): the stream passes straight through to the tiled
-                #     MVU, which expects the PE-flipped, TH-sub-tile-undone ordering.
+                #     MVU, which expects the PE-flipped, sub-tile-undone ordering.
                 #     weight_tensor_pe_flipped is already in IWSIMD-sized chunks
-                #     (tinner == (PE*SIMD)/TH == IWSIMD).
+                #     (tinner == WSIMD == IWSIMD).
                 #   - TH=1 (standard MVAU): the stream goes through local_weight_buffer,
                 #     which distributes consecutive SIMD groups across PE lanes 0..PE-1
                 #     (pe-minor) and pairs weight SIMD lane s with activation SIMD lane s.
@@ -943,7 +1022,7 @@ class MVAU(MemStreamOp):
                 # reverses the IWSIMD elements, so reverse each group here to build the
                 # flat element stream the VPC sees, then pack DMA_PE elements/bus word.
                 data_bits = _FETCH_WEIGHTS_DATA_BITS
-                iwsimd = (pe * simd) // th if th > 1 else simd
+                iwsimd = self.get_fetch_weights_simd()
                 dma_pe = data_bits // export_wdt.bitwidth()  # whole elements per bus word
                 if th > 1:
                     weight_tensor_iwsimd = weight_tensor_pe_flipped
@@ -964,7 +1043,7 @@ class MVAU(MemStreamOp):
                 # (reverse_inner=True), top bits zero-padded to DATA_BITS.
                 word_groups = flat_elems.reshape(1, n_words, dma_pe)
                 word_groups = pack_innermost_dim_as_hex_string(
-                    word_groups, export_wdt, data_bits, reverse_inner=True, prefix=""
+                    word_groups, pack_wdt, data_bits, reverse_inner=True, prefix=""
                 )
                 weight_stream = word_groups.flatten().copy()
                 with Path(weight_file_name).open("w") as f:
@@ -978,7 +1057,7 @@ class MVAU(MemStreamOp):
                 # pad to nearest 4 bits to get hex strings
                 weight_width_padded = roundup_to_integer_multiple(weight_width, 4)
                 weight_tensor_pe_flipped = pack_innermost_dim_as_hex_string(
-                    weight_tensor_pe_flipped, export_wdt, weight_width_padded, prefix=""
+                    weight_tensor_pe_flipped, pack_wdt, weight_width_padded, prefix=""
                 )
                 # add zeroes to pad out file to 1024 entries
                 weight_stream = weight_tensor_pe_flipped.flatten()
@@ -1013,7 +1092,7 @@ class MVAU(MemStreamOp):
                 weight_width_padded = words_per_memwidth * 32
                 # first, pack and ensure padding to 32 bits
                 weight_tensor_pe_flipped = pack_innermost_dim_as_hex_string(
-                    weight_tensor_pe_flipped, export_wdt, weight_width_padded, prefix=""
+                    weight_tensor_pe_flipped, pack_wdt, weight_width_padded, prefix=""
                 )
                 weight_stream = weight_tensor_pe_flipped.flatten()
                 weight_stream = weight_stream.copy()
@@ -1084,12 +1163,12 @@ class MVAU(MemStreamOp):
                     threshold_tensor, tdt, "thresholds", False, True
                 )
                 # write thresholds into thresh.h
-                tdt_hls = tdt.get_hls_datatype_str()
+                tdt_hls = hls_datatype_str(tdt)
                 # use binary to export bipolar activations
                 export_odt = self.get_output_datatype()
                 if self.get_output_datatype() == DataType["BIPOLAR"]:
                     export_odt = DataType["BINARY"]
-                odt_hls = export_odt.get_hls_datatype_str()
+                odt_hls = hls_datatype_str(export_odt)
                 thresh_header = (
                     f"static ThresholdsActivation<{self.calc_tmem()},{self.pe},"
                     f"{threshold_tensor.shape[-1]},{tdt_hls},{odt_hls},{self.act_val},"
@@ -1186,6 +1265,7 @@ class MVAU(MemStreamOp):
             "$WEIGHT_WIDTH$": str(self.get_input_datatype(1).bitwidth()),
             "$N_LAYERS$": str(n_max_layers),
             "$TH$": str(theight),
+            "$WSIMD$": str(self.get_fetch_weights_simd()),
             "$EN_MLO$": "EN_MLO" if self.get_nodeattr("mlo_max_iter") else "NO_MLO",
             "$ADDRESS_OFFSET$": str(self.get_nodeattr("address_offset")),
         }
@@ -1358,7 +1438,7 @@ class MVAU(MemStreamOp):
                     ]
                     # Create Vivado axis_dwidth_converter IP
                     wdt = self.get_input_datatype(1)
-                    iwsimd = (self.pe * self.simd) // self.th if self.th > 1 else self.simd
+                    iwsimd = self.get_fetch_weights_simd()
                     ds_bits_ba = ((iwsimd * wdt.bitwidth() + 7) // 8) * 8
                     dwc_ip_name = node_name + "_dwc"
                     s_bytes = _FETCH_WEIGHTS_DATA_BITS // 8
@@ -1511,6 +1591,45 @@ class MVAU(MemStreamOp):
             )
 
         return cmd
+
+    def derive_token_access_vectors(self, strategy: str = "tree_model") -> bool:
+        """Derive the token access vectors and add the row of the dynamic weight input.
+
+        Args:
+            strategy: Token access vector derivation strategy, see HWCustomOp.
+
+        Returns:
+            True if token access vectors were stored, False if this configuration has
+            no tree model.
+        """
+        derived = super().derive_token_access_vectors(strategy)
+        if derived and self.mem_mode == "dynamic":
+            # Add the TAV row of the streamed second operand. The characterization
+            # describes only in0 and out0. In hardware, in1 feeds
+            # ``dynamic_load``, which buffers one ``MW x MH`` matrix
+            # (``MW * MH / PE`` words) in one of two banks and replays it for
+            # ``numInputVectors[-1]`` input vectors. So in1 is read as one burst of
+            # a matrix, one word per cycle, at the start of the in0 reads of every
+            # ``numInputVectors[-1]`` vectors. The row is placed modulo the period,
+            # like the tree models, and stored after the in0 row, the order
+            # ``stream_curves`` binds rows in.
+            rows = np.atleast_2d(load_tav_npy(cast("str", self.get_nodeattr("io_chrc_in"))))
+            cum0 = rows[0].astype(np.int64)
+            period = cum0.shape[0] // 2
+            n_reps = self.num_input_vectors[-1]
+            n_mats = int(np.prod(self.num_input_vectors)) // n_reps
+            burst = self.mw * self.mh // self.pe
+            sf = self.mw // self.simd
+            # cycle of the first in0 read of each matrix's vectors in the first period
+            first = np.arange(n_mats) * n_reps * sf + 1
+            starts = np.searchsorted(cum0[:period], first, side="left")
+            rd = np.zeros(period, dtype=np.int64)
+            # add rather than set, so the count stays exact even if bursts overlap
+            np.add.at(rd, ((starts[:, None] + np.arange(burst)[None, :]) % period).ravel(), 1)
+            cum1 = np.cumsum(np.tile(rd, 2))
+            save = np.stack([cum0, cum1]).astype(np.int32)
+            self.set_nodeattr("io_chrc_in", save_tav_npy(self, "io_chrc_in", save))
+        return derived
 
     def get_weight_mem_bytes(self) -> tuple[int, int]:
         """Return (size, offs) in bytes for one layer's weight matrix.

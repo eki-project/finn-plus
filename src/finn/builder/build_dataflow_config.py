@@ -98,6 +98,13 @@ class AutoFIFOSizingMethod(str, Enum):
 
     LIVE_FIFO = "live_fifo"
     DISTRIBUTED_SIMULATION = "distributed_sim"
+    #: Analytical sizing from token access vectors (Xilinx/finn#1185): every operator
+    #: that has a tree model (fifo_sizing.tree_models) contributes its read/write
+    #: schedule, the chained-TAV pass (DeriveFIFOSizes) turns them into depths. No
+    #: IP generation, synthesis or simulation. Operators without a tree model are
+    #: treated as transparent; upstream's rtlsim fallback for them (and its
+    #: heuristic_rtlsim / largefifo_rtlsim strategies) is not part of FINN+.
+    HEURISTIC_ANALYTICAL = "heuristic_analytical"
     #: Skip any sizing simulation and keep all inserted FIFOs at their minimal
     #: (default) depth. Useful for designs that are known to work without deeper
     #: FIFOs and avoids having to maintain a fifo_config_file.
@@ -135,6 +142,7 @@ class ShellFlowType(str, Enum):
     """
 
     VIVADO_ZYNQ = "vivado_zynq"
+    VIVADO_VERSAL = "vivado_versal"
     VITIS_ALVEO = "vitis_alveo"
 
 
@@ -149,6 +157,7 @@ class DataflowOutputType(str, Enum):
     PYNQ_DRIVER = "pynq_driver"
     CPP_DRIVER = "cpp_driver"
     DEPLOYMENT_PACKAGE = "deployment_package"
+    PORTABLE_RTL = "portable_rtl"
 
 
 class VitisOptStrategy(Enum):
@@ -617,6 +626,14 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Name of .npy file that will be used as the expected output for verification.
     verify_expected_output_npy: str | Path = "expected_output.npy"
 
+    #: (Only relevant if verify_steps contains stitched_ip_rtlsim)
+    #: Number of frames to verify in a single stitched-IP rtlsim run, so that consecutive
+    #: frames overlap inside the design. All other verification steps, and
+    #: stitched_ip_rtlsim when this is unset, verify one frame at a time.
+    #: A single-frame verification input/output pair is repeated to this many frames.
+    #: This is separate from rtlsim_batch_size, which controls the performance simulation.
+    verify_batch_size: Optional[int] = None
+
     #: (Only relevant if verify_steps is set)
     #: Save full execution context for each of the verify_steps.
     #: By default, only the top-level graph output is saved.
@@ -731,6 +748,15 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: FIFO model, implies verify_rtlsim_behavioral=True) which then writes per-FIFO
     #: transaction logs into <output_dir>/debug/fifo_logs.
     debug_fifo: bool = False
+
+    #: FIFO log format. True: "<data> <dir> <cycle>"; False: "<data_in>".
+    #: Only applicable when debug_fifo=True.
+    fifo_log_verbose: bool = False
+
+    #: FIFO log flush rate (cycles), larger = less simulation slowdown.
+    #: 0 means only write logs at the end of simulation.
+    #: Only applicable when debug_fifo=True.
+    fifo_log_flush_cycles: int = 10000
 
     #: (Only relevant when auto_fifo_strategy == AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION)
     #: Communication backend mode for the distributed simulation. "shm" uses local shared
@@ -956,12 +982,12 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
         Returns:
             str: The driver platform identifier. Returns "zynq-iodma" for Vivado Zynq
-                shell flows and "alveo" for Vitis Alveo shell flows.
+                and Versal shell flows and "alveo" for Vitis Alveo shell flows.
 
         Raises:
             FINNConfigurationError: If the shell flow type is not recognized or supported.
         """
-        if self.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
+        if self.shell_flow_type in (ShellFlowType.VIVADO_ZYNQ, ShellFlowType.VIVADO_VERSAL):
             return "zynq-iodma"
         if self.shell_flow_type == ShellFlowType.VITIS_ALVEO:
             return "alveo"

@@ -105,27 +105,12 @@ class bench_mvau(bench):
             ModelWrapper: Complete ONNX model with optimized MVAU implementation
 
         Note:
-            For BIPOLAR weights and inputs, the method automatically converts to BINARY
-            representation and sets binaryXnorMode=1 for efficient XNOR-based computation.
+            BIPOLAR weights and inputs are passed to the MVAU as such, the operator handles
+            the XNOR-popcount implementation itself.
             The model undergoes bit-width minimization optimizations to reduce resource usage.
         """
         mw = w.shape[0]
         mh = w.shape[1]
-
-        # there are two ways to implement bipolar weights and inputs for
-        # MatrixVectorActivation:
-        # - specify their datatypes as such
-        # - specify their datatypes as BINARY as use binaryXnorMode
-        if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
-            # we'll internally convert weights/inputs to binary and specify the
-            # datatypes as such, and also set the binaryXnorMode attribute to 1
-            export_wdt = DataType["BINARY"]
-            export_idt = DataType["BINARY"]
-            binary_xnor_mode = 1
-        else:
-            export_wdt = wdt
-            export_idt = idt
-            binary_xnor_mode = 0
 
         # num_input_vectors for dense = [N]
         # num_input_vectors for conv  = [N, H, W]
@@ -164,11 +149,10 @@ class bench_mvau(bench):
             PE=pe,
             M=m,
             numInputVectors=num_input_vectors,
-            inputDataType=export_idt.name,
-            weightDataType=export_wdt.name,
+            inputDataType=idt.name,
+            weightDataType=wdt.name,
             outputDataType=odt.name,
             ActVal=actval,
-            binaryXnorMode=binary_xnor_mode,
             noActivation=no_act,
             resType=res_type,
             mem_mode=mem_mode,
@@ -187,11 +171,7 @@ class bench_mvau(bench):
         model.set_tensor_datatype("outp", odt)
         model.set_tensor_datatype("weights", wdt)
         # model.set_tensor_shape("weights", (channels, 1, k_h, k_w)) from VVAU
-        if binary_xnor_mode:
-            # convert bipolar to binary
-            model.set_initializer("weights", (w + 1) / 2)
-        else:
-            model.set_initializer("weights", w)
+        model.set_initializer("weights", w)
         if t is not None:
             model.set_tensor_datatype("thresh", tdt)
             model.set_initializer("thresh", t)

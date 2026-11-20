@@ -145,7 +145,10 @@ markers = [
     "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
     "analysis: mark tests that run analysis tests",
     "multifpga: mark tests that run multifpga tests",
-    "auroraflow: mark tests that check AuroraFlow related functionality"
+    "auroraflow: mark tests that check AuroraFlow related functionality",
+    "finn_examples: mark tests that run finn examples",
+    "fifo_sizing: mark finn-examples FIFO sizing tests",
+    "node_tree_modeling: mark tests for analytical FIFO sizing tree models"
 ]
 norecursedirs = ["dist", "build", ".tox"]
 testpaths = "tests"

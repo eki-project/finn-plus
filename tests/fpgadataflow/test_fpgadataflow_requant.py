@@ -23,6 +23,7 @@ import torch
 from brevitas.core.scaling import ScalingImplType
 from brevitas.export import export_qonnx
 from brevitas.nn import QuantIdentity, QuantReLU
+from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -31,7 +32,7 @@ from qonnx.transformation.general import ConvertDivToMul, ConvertSubToAdd, GiveU
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
-from qonnx.util.basic import gen_finn_dt_tensor
+from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
@@ -62,6 +63,7 @@ from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
 from finn.transformation.streamline.absorb import AbsorbScalarBiasIntoMultiThreshold
 from finn.util.basic import make_build_dir, pynq_part_map
+from tests.testing_util.test import tree_model_test
 
 
 def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
@@ -85,6 +87,9 @@ def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: floa
 test_pynq_board = "ZCU104"
 test_fpga_part = pynq_part_map[test_pynq_board]
 target_clk_ns = 10
+
+tree_model_fpga_part = "xczu7ev-ffvc1156-2-e"
+tree_model_clk_ns = 5.0
 
 
 def create_requant_model(abits, max_val, ishape, per_channel):
@@ -178,14 +183,16 @@ def create_signed_requant_model(abits, max_val, ishape, per_channel):
 # synthesis of the surrounding graph, IP stitching) takes about 20 minutes each. By default,
 # stitched_ip therefore runs with PE=16 and 8-bit activations for the two scale configurations
 # (per-channel scales with a signed output, a per-tensor scale with an unsigned output) across
-# all parts, memory modes and input shapes: 24 of its 192 cases. The remaining stitched_ip
-# cases are marked xslow, which the CI test variants deselect (finn test ... --variant full_ci),
-# and can be run explicitly with ``pytest -m xslow``.
+# all parts, memory modes and input shapes, the per-tensor one also for the unsigned input:
+# 36 of its 384 cases. The remaining stitched_ip cases are marked xslow, which the CI test
+# variants deselect (finn test ... --variant full_ci), and can be run explicitly with
+# ``pytest -m xslow``.
 def _requant_rtl_cases():
     """The full grid of test_requant_rtl with all but the representative stitched_ip cases
     marked xslow."""
     cases = []
     for (
+        input_dtype,
         signed_out,
         mem_mode,
         sim_style,
@@ -195,6 +202,7 @@ def _requant_rtl_cases():
         (ishape_idx, ishape),
         abits,
     ) in itertools.product(
+        ["INT8", "UINT8"],
         [False, True],
         ["internal_embedded", "internal_decoupled"],
         ["cppsim", "node_by_node", "stitched_ip"],
@@ -205,7 +213,10 @@ def _requant_rtl_cases():
         [8, 16],
     ):
         representative = (
-            abits == 8 and pe == 16 and (per_channel, signed_out) in [(True, True), (False, False)]
+            abits == 8
+            and pe == 16
+            and (per_channel, signed_out) in [(True, True), (False, False)]
+            and (input_dtype == "INT8" or not signed_out)
         )
         xslow = sim_style == "stitched_ip" and not representative
         cases.append(
@@ -218,25 +229,30 @@ def _requant_rtl_cases():
                 sim_style,
                 mem_mode,
                 signed_out,
+                input_dtype,
                 marks=[pytest.mark.xslow] if xslow else [],
                 # same ids as pytest generated for the stacked parametrize decorators before
-                id=f"{signed_out}-{mem_mode}-{sim_style}-{pe}-{part}-{per_channel}-"
-                f"ishape{ishape_idx}-{abits}",
+                id=f"{input_dtype}-{signed_out}-{mem_mode}-{sim_style}-{pe}-{part}-"
+                f"{per_channel}-ishape{ishape_idx}-{abits}",
             )
         )
     return cases
 
 
 @pytest.mark.parametrize(
-    "abits, ishape, per_channel, part, pe, sim_style, mem_mode, signed_out", _requant_rtl_cases()
+    "abits, ishape, per_channel, part, pe, sim_style, mem_mode, signed_out, input_dtype",
+    _requant_rtl_cases(),
 )
 @pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
-def test_requant_rtl(abits, ishape, per_channel, part, pe, sim_style, mem_mode, signed_out):
+def test_requant_rtl(
+    abits, ishape, per_channel, part, pe, sim_style, mem_mode, signed_out, input_dtype
+):
     """Test Requant RTL backend with different devices (DSP variants).
 
-    Tests integer input which uses the RTL backend.
+    Tests signed and unsigned integer input which use the RTL backend (unsigned
+    inputs are zero-extended by one bit for the signed core).
     Different FPGA parts test different DSP versions:
     - Versal (xcvc1902): DSP58
     - Ultrascale+ (xczu7ev): DSP48E2
@@ -244,7 +260,6 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, sim_style, mem_mode, 
     """
     num_channels = ishape[1]
     max_val = 1.0
-    input_dtype = "INT8"  # RTL backend is for integer inputs
 
     # Skip if PE doesn't divide evenly into num_channels
     if num_channels % pe != 0:
@@ -256,7 +271,7 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, sim_style, mem_mode, 
     else:
         model = create_requant_model(abits, max_val, ishape, per_channel)
 
-    # Set input datatype to INT8 for RTL backend
+    # Set integer input datatype for RTL backend
     model.set_tensor_datatype(model.graph.input[0].name, DataType[input_dtype])
     model = model.transform(InferDataTypes())
 
@@ -291,7 +306,7 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, sim_style, mem_mode, 
 
     # Verify RTL backend was selected
     requant_rtl_nodes = model.get_nodes_by_op_type("Requant_rtl")
-    assert len(requant_rtl_nodes) == 1, "Expected Requant_rtl for INT8 input"
+    assert len(requant_rtl_nodes) == 1, f"Expected Requant_rtl for {input_dtype} input"
     getCustomOp(requant_rtl_nodes[0]).set_nodeattr("PE", pe)
     getCustomOp(requant_rtl_nodes[0]).set_nodeattr("mem_mode", mem_mode)
 
@@ -318,6 +333,134 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, sim_style, mem_mode, 
         # decompose it into inner/outer shuffles so the whole graph becomes
         # fpgadataflow. _filter=lambda *_: True also converts a leading input
         # transpose (the default filter skips graph.node[0]).
+        if len(model.get_nodes_by_op_type("Transpose")) > 0:
+            model = model.transform(InferShuffle(_filter=lambda *_: True))
+            model = model.transform(SpecializeLayers(part))
+            model = model.transform(ShuffleDecomposition())
+            model = model.transform(InferInnerOuterShuffles())
+        model = model.transform(SpecializeLayers(part))
+        model = model.transform(GiveUniqueNodeNames())
+        model = insert_and_set_fifo_depths(model, part, target_clk_ns)
+        model = model.transform(PrepareIP(part, target_clk_ns))
+        model = model.transform(HLSSynthIP())
+        model = model.transform(CreateStitchedIP(part, target_clk_ns))
+        model.set_metadata_prop("exec_mode", "rtlsim")
+
+    y_sim = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
+    assert np.allclose(
+        y_golden, y_sim, atol=quant_step
+    ), f"{sim_style} mismatch: max diff = {np.max(np.abs(y_golden - y_sim))}"
+
+    # Verify cycle estimation (node-by-node rtlsim only)
+    if sim_style == "node_by_node":
+        node = model.get_nodes_by_op_type("Requant_rtl")[0]
+        inst = getCustomOp(node)
+        cycles_rtlsim = inst.get_nodeattr("cycles_rtlsim")
+        exp_cycles_dict = model.analysis(exp_cycles_per_layer)
+        exp_cycles = exp_cycles_dict[node.name]
+        assert np.isclose(exp_cycles, cycles_rtlsim, atol=15)
+        assert exp_cycles != 0
+
+
+# =============================================================================
+# RTL Backend Test - FLOAT32 input (requantf DSPFP32 core, Versal only)
+# =============================================================================
+
+
+@pytest.mark.parametrize("abits", [8, 16])
+@pytest.mark.parametrize("ishape", [(1, 16), (1, 32, 1, 1)])
+@pytest.mark.parametrize("per_channel", [False, True])
+@pytest.mark.parametrize("pe", [1, 16])
+@pytest.mark.parametrize("sim_style", ["cppsim", "node_by_node", "stitched_ip"])
+@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
+@pytest.mark.parametrize("signed_out", [False, True])
+@pytest.mark.fpgadataflow
+@pytest.mark.slow
+@pytest.mark.vivado
+def test_requant_rtl_float(abits, ishape, per_channel, pe, sim_style, mem_mode, signed_out):
+    """Test Requant RTL backend with FLOAT32 input (requantf core).
+
+    A float-input Requant specializes to Requant_rtl on a Versal part and
+    generates the requantf DSPFP32 core (embedded or decoupled param stream),
+    computing clip(round(x*scale+bias)). The requantf core uses DSPFP32, so a
+    Versal part is pinned; a non-Versal float Requant would fall back to
+    Requant_hls (covered by test_requant_hls).
+    """
+    # requantf needs DSPFP32 -> Versal only
+    part = "xcvc1902-vsva2197-2MP-e-S"
+    num_channels = ishape[1]
+    max_val = 1.0
+    input_dtype = "FLOAT32"
+
+    # Skip if PE doesn't divide evenly into num_channels
+    if num_channels % pe != 0:
+        pytest.skip(f"PE={pe} does not divide num_channels={num_channels}")
+
+    # Use QuantIdentity (signed) or QuantReLU (unsigned) based on signed_out parameter
+    if signed_out:
+        model = create_signed_requant_model(abits, max_val, ishape, per_channel)
+    else:
+        model = create_requant_model(abits, max_val, ishape, per_channel)
+
+    # Set input datatype to FLOAT32 (float2int requantization)
+    model.set_tensor_datatype(model.graph.input[0].name, DataType[input_dtype])
+    model = model.transform(InferDataTypes())
+
+    # Get golden output before conversion
+    inp = gen_finn_dt_tensor(DataType[input_dtype], ishape)
+    input_dict = {model.graph.input[0].name: inp}
+    y_golden = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
+
+    # Absorb Add into MultiThreshold before InferRequantLayer
+    # This is needed for signed outputs where the Add contains the signed offset
+    model = model.transform(AbsorbScalarBiasIntoMultiThreshold())
+
+    # Apply InferRequantLayer
+    model = model.transform(InferRequantLayer())
+    model = model.transform(InferShapes())
+    model = model.transform(InferDataTypes())
+
+    # Verify MultiThreshold was converted to Requant
+    assert len(model.get_nodes_by_op_type("MultiThreshold")) == 0
+    assert len(model.get_nodes_by_op_type("Requant")) == 1
+
+    # Verify functional correctness before specialization
+    quant_step = max_val / (2**abits - 1)
+    y_requant = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
+    assert np.allclose(y_golden, y_requant, atol=quant_step)
+
+    # Specialize layers for the Versal part
+    model = model.transform(SpecializeLayers(part))
+    model = model.transform(GiveUniqueNodeNames())
+
+    # Verify the RTL (requantf) backend was selected, not HLS
+    requant_rtl_nodes = model.get_nodes_by_op_type("Requant_rtl")
+    assert len(requant_rtl_nodes) == 1, "Expected Requant_rtl for FLOAT32 input on Versal"
+    assert (
+        len(model.get_nodes_by_op_type("Requant_hls")) == 0
+    ), "FLOAT32 Requant on Versal must not fall back to HLS"
+    getCustomOp(requant_rtl_nodes[0]).set_nodeattr("PE", pe)
+    getCustomOp(requant_rtl_nodes[0]).set_nodeattr("mem_mode", mem_mode)
+
+    # Prepare and run simulation
+    #  - cppsim / node_by_node feed the packed scale/bias words directly into the
+    #    core, exercising the datapath + FP32 param packing.
+    #  - stitched_ip instantiates the memstream and free-runs it from the
+    #    generated .dat file (decoupled), exercising the memstreamer.
+    if sim_style == "cppsim":
+        model = model.transform(SetExecMode("cppsim"))
+        model = model.transform(PrepareCppSim())
+        model = model.transform(CompileCppSim())
+    elif sim_style == "node_by_node":
+        model = model.transform(SetExecMode("rtlsim"))
+        model = model.transform(PrepareIP(part, target_clk_ns))
+        model = model.transform(HLSSynthIP())
+        model = model.transform(PrepareRTLSim())
+    elif sim_style == "stitched_ip":
+        # Convert any remaining Mul nodes to HW for stitched IP
+        model = model.transform(InferElementwiseBinaryOperation())
+        # 4D inputs carry a layout Transpose (NCHW<->NHWC) with no HW op yet;
+        # convert it to a HW Shuffle and decompose so the graph is fpgadataflow.
         if len(model.get_nodes_by_op_type("Transpose")) > 0:
             model = model.transform(InferShuffle(_filter=lambda *_: True))
             model = model.transform(SpecializeLayers(part))
@@ -662,3 +805,82 @@ def test_infer_requant_from_quant(channelwise, pe, need_extraction_scale, need_e
     model = model.transform(PrepareRTLSim())
     y_rtlsim = oxe.execute_onnx(model, {model.graph.input[0].name: inp})[model.graph.output[0].name]
     assert np.allclose(y_golden, y_rtlsim)
+
+
+# =============================================================================
+# Tree Model Test - the analytical token access vector against rtlsim
+# =============================================================================
+
+
+def make_requant_modelwrapper(ishape, num_channels, pe, idt, odt, impl_style):
+    """A graph holding one Requant node, with scale and bias as initializers."""
+    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, list(ishape))
+    outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, list(ishape))
+    node = helper.make_node(
+        "Requant",
+        ["inp", "scale", "bias"],
+        ["outp"],
+        domain="finn.custom_op.fpgadataflow",
+        backend="fpgadataflow",
+        NumChannels=num_channels,
+        PE=pe,
+        inputDataType=idt.name,
+        outputDataType=odt.name,
+        numInputVectors=list(ishape[:-1]),
+        preferred_impl_style=impl_style,
+    )
+    graph = helper.make_graph(nodes=[node], name="requant_graph", inputs=[inp], outputs=[outp])
+    model = ModelWrapper(qonnx_make_model(graph, producer_name="requant-model"))
+    model.set_tensor_datatype("inp", idt)
+    model.set_tensor_datatype("outp", odt)
+    model.set_initializer("scale", np.full((num_channels,), 0.5, dtype=np.float32))
+    model.set_initializer("bias", np.zeros((num_channels,), dtype=np.float32))
+    return model
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        ((1, 16, 64), 64, 1, "hls"),
+        ((1, 16, 64), 64, 8, "hls"),
+        ((1, 16, 64), 64, 16, "hls"),
+        ((1, 16, 64), 64, 1, "rtl"),
+        ((1, 16, 64), 64, 4, "rtl"),
+    ],
+)
+@pytest.mark.fpgadataflow
+@pytest.mark.slow
+@pytest.mark.vivado
+@pytest.mark.node_tree_modeling
+def test_fpgadataflow_analytical_characterization_requant(config):
+    ishape, num_channels, pe, impl_style = config
+
+    model = make_requant_modelwrapper(
+        ishape, num_channels, pe, DataType["INT8"], DataType["UINT8"], impl_style
+    )
+    model = model.transform(SpecializeLayers(tree_model_fpga_part))
+    model = model.transform(GiveUniqueNodeNames())
+    assert model.graph.node[0].op_type == "Requant_" + impl_style
+
+    node_details = ("Requant", config)
+
+    # Both rows are one solid run at one token per cycle, so nothing can drift
+    # and the volume budget is a floor, not a fraction. The length budget covers
+    # the pipeline fill, which the period deliberately leaves out: it is a fixed
+    # cost the reference's period carries a share of, and folding it into the
+    # period would put a hole in a row that has none.
+    max_allowed_volume_frac = 0.0
+    volume_const = 2
+    max_allowed_length_frac = 0.04
+    length_const = 20
+
+    assert tree_model_test(
+        model,
+        node_details,
+        tree_model_fpga_part,
+        tree_model_clk_ns,
+        max_allowed_volume_frac,
+        max_allowed_length_frac,
+        volume_const,
+        length_const,
+    ), "characterized TAV does not match RTLsim'd one!"

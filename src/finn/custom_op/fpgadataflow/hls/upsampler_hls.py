@@ -35,6 +35,7 @@ from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.upsampler import UpsampleNearestNeighbour
+from finn.util.data_packing import hls_datatype_str
 
 
 @register_custom_op
@@ -64,11 +65,11 @@ class UpsampleNearestNeighbour_hls(UpsampleNearestNeighbour, HLSBackend):
         """Return defines."""
         channel_fold = self.num_channels // self.simd
         self.code_gen_dict["$DEFINES$"] = [
-            f"#define HI {self.hi}",
-            f"#define WI {self.wi}",
-            f"#define HO {self.ho}",
-            f"#define WO {self.wo}",
-            f"#define CF {channel_fold}",
+            f"""static constexpr unsigned HI = {self.hi};
+            static constexpr unsigned WI = {self.wi};
+            static constexpr unsigned HO = {self.ho};
+            static constexpr unsigned WO = {self.wo};
+            static constexpr unsigned CF = {channel_fold};"""
         ]
 
     def docompute(self) -> None:
@@ -77,13 +78,15 @@ class UpsampleNearestNeighbour_hls(UpsampleNearestNeighbour, HLSBackend):
 
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        input_elem_hls_type = self.get_input_datatype().get_hls_datatype_str()
-        output_elem_hls_type = self.get_output_datatype().get_hls_datatype_str()
+        input_elem_hls_type = hls_datatype_str(self.get_input_datatype())
+        output_elem_hls_type = hls_datatype_str(self.get_output_datatype())
+        i_n_elems = self.get_folded_input_shape()[-1]
+        o_n_elems = self.get_folded_output_shape()[-1]
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             (
-                f"void {self.onnx_node.name}(hls::stream<hls::vector<{input_elem_hls_type}, "
-                f"{self.simd}>> &in0_V, hls::stream<hls::vector<{output_elem_hls_type}, "
-                f"{self.simd}>> &out0_V)"
+                f"void {self.onnx_node.name}("
+                f"hls::stream<tensor<{input_elem_hls_type},{i_n_elems}>> &in0_V, "
+                f"hls::stream<tensor<{output_elem_hls_type},{o_n_elems}>> &out0_V)"
             )
         ]
 

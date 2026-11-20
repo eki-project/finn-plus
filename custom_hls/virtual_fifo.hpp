@@ -3,40 +3,14 @@
 
 #include <ap_int.h>
 #include <hls_stream.h>
-#include <ap_axi_sdata.h>
 
-// Utility Functions, taken from instrumentation wrapper
-template<typename  T>
-static void move(
-	hls::stream<T> &src,
-	hls::stream<T> &dst
-) {
-#pragma HLS pipeline II=1 style=flp
-	dst.write(src.read());
-}
+// finn-hlslib: width_v and the streaming copy move()
+#include "utils.hpp"
 
-template<typename  T>
-static void move(
-	hls::stream<hls::axis<T, 0, 0, 0>> &src,
-	hls::stream<T> &dst
-) {
-#pragma HLS pipeline II=1 style=flp
-	dst.write(src.read().data);
-}
-
-template<typename  T>
-class Payload {
-public:
-	using  type = T;
-};
-template<typename  T>
-class Payload<hls::axis<T, 0, 0, 0>> {
-public:
-	using  type = T;
-};
-
-template<unsigned int Width>
-void VirtualFIFO(hls::stream<ap_uint<Width> > &in, hls::stream<ap_uint<Width> > &out,
+// Virtual FIFO for any stream token type T with a raw bit image constructor, i.e. ap_uint<W>
+// or a finn-hlslib tensor<E, N>. Tokens are counted, not stored.
+template<typename T>
+void VirtualFIFO(hls::stream<T> &in, hls::stream<T> &out,
                 ap_uint<32> mode,
                 ap_uint<32> depth,
                 ap_uint<32> &occupancy,
@@ -49,7 +23,7 @@ void VirtualFIFO(hls::stream<ap_uint<Width> > &in, hls::stream<ap_uint<Width> > 
     #pragma HLS reset variable=c_occupancy
     #pragma HLS reset variable=c_max_occupancy
 
-    ap_uint<Width> inElem;
+    T inElem;
 
     bool read = mode == 0 || c_occupancy != depth;
     bool write = c_occupancy != 0;
@@ -67,7 +41,7 @@ void VirtualFIFO(hls::stream<ap_uint<Width> > &in, hls::stream<ap_uint<Width> > 
     // OUTPUT
     if(write)
     {
-        if(out.write_nb(0)) //write dummy output data
+        if(out.write_nb(T(ap_uint<width_v<T>>(0)))) //write dummy output data
         {
             c_occupancy--;
         }

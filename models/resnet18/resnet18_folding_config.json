@@ -1,5 +1,15 @@
 {
-  "Defaults": {"ram_cascade_height": [0, ["ElementwiseAdd_hls", "ElementwiseMul_hls", "MVAU_hls", "MVAU_rtl"]]},
+  "Defaults": {
+    "ram_cascade_height": [
+      0,
+      [
+        "ElementwiseAdd_hls",
+        "ElementwiseMul_hls",
+        "MVAU_hls",
+        "MVAU_rtl"
+      ]
+    ]
+  },
   "Thresholding_rtl_0": {
     "PE": 1,
     "runtime_writeable_weights": 0,
@@ -548,11 +558,6 @@
     "runtime_writeable_weights": 0,
     "depth_trigger_uram": 0,
     "depth_trigger_bram": 0
-  },
-  "ConvolutionInputGenerator_rtl_20": {
-    "SIMD": 1,
-    "parallel_window": 0,
-    "ram_style": "distributed"
   },
   "Pool_hls_0": {
     "PE": 1

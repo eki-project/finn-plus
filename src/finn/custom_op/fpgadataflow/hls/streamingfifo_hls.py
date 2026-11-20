@@ -38,6 +38,7 @@ from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
+from finn.util.data_packing import hls_datatype_str
 from finn.util.exception import FINNInternalError
 
 
@@ -66,69 +67,66 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
         """Add the global include for the virtual FIFO implementation."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "virtual_fifo.hpp"']
 
+    def _token_type(self) -> str:
+        """Return the C++ type of one stream token (input and output are identical)."""
+        elem_hls_type = hls_datatype_str(self.get_input_datatype())
+        return f"tensor<{elem_hls_type},{self.get_folded_input_shape()[-1]}>"
+
     def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        num_reps = 1
-        width = self.get_instream_width()
-        self.code_gen_dict["$DEFINES$"] = [
-            f"#define Width {width} ",
-            f"#define numReps {num_reps}",
-        ]
+        self.code_gen_dict["$DEFINES$"] = [f"using Token = {self._token_type()};"]
 
     def strm_decl(self) -> None:
         """Return strm decl."""
-        sname = self.hls_sname()
-        self.code_gen_dict["$STREAMDECLARATIONS$"] = [
-            f'hls::stream<ap_uint<{self.get_instream_width()}>> in0_{sname} ("in0_{sname}");',
-            f'hls::stream<ap_uint<{self.get_outstream_width()}>> out0_{sname} ("out0_{sname}");',
-        ]
+        super().strm_decl()
+        # stand-ins for the AXI-lite registers of the top function: unbounded mode
+        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+            "ap_uint<32> mode = 0, depth = 0, occupancy = 0, max_occupancy = 0;"
+        )
 
     def docompute(self) -> None:
         """Return docompute."""
-        sname = self.hls_sname()
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            f"""
+            """
             #pragma HLS dataflow disable_start_propagation
 
-            static hls::stream<ap_uint<Width>> in_fifo;
-            static hls::stream<Payload<ap_uint<Width>>::type> out_fifo;
+            static hls::stream<Token> in_fifo;
+            static hls::stream<Token> out_fifo;
             #pragma HLS stream variable=in_fifo depth=2
             #pragma HLS stream variable=out_fifo depth=2
 
             // AXI-Stream -> FIFO
-            move(in0_{sname}, in_fifo);
+            move(in0_V, in_fifo);
 
             // Main
-            VirtualFIFO<Width>(in_fifo, out_fifo, mode, depth, occupancy, max_occupancy);
+            VirtualFIFO(in_fifo, out_fifo, mode, depth, occupancy, max_occupancy);
 
             // FIFO -> AXI-Stream
-            move(out_fifo, out0_{sname});
+            move(out_fifo, out0_V);
             """
         ]
 
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        sname = self.hls_sname()
-        in_packed_hls_type = f"ap_uint<{self.get_instream_width()}>"
-        out_packed_hls_type = f"ap_uint<{self.get_outstream_width()}>"
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             f"""void {self.onnx_node.name}(
-            hls::stream<{in_packed_hls_type} > &in0_{sname},
-            hls::stream<{out_packed_hls_type} > &out0_{sname}, ap_uint<32> mode,
+            hls::stream<Token> &in0_V,
+            hls::stream<Token> &out0_V, ap_uint<32> mode,
             ap_uint<32> depth, ap_uint<32> &occupancy, ap_uint<32> &max_occupancy)"""
         ]
 
     def pragmas(self) -> None:
         """Return pragmas."""
-        sname = self.hls_sname()
         self.code_gen_dict["$PRAGMAS$"] = [
-            f"#pragma HLS INTERFACE axis port=in0_{sname}",
-            f"#pragma HLS INTERFACE axis port=out0_{sname}",
+            "#pragma HLS INTERFACE axis port=in0_V",
+            "#pragma HLS INTERFACE axis port=out0_V",
             "#pragma HLS INTERFACE s_axilite port=mode",
             "#pragma HLS INTERFACE s_axilite port=depth",
             "#pragma HLS INTERFACE s_axilite port=occupancy",
             "#pragma HLS INTERFACE s_axilite port=max_occupancy",
             "#pragma HLS INTERFACE ap_ctrl_none port=return",
+            "#pragma HLS aggregate variable=in0_V compact=bit",
+            "#pragma HLS aggregate variable=out0_V compact=bit",
         ]
 
     def get_verilog_top_module_intf_names(self) -> dict[str, list[tuple[str, int]] | list[str]]:

@@ -41,7 +41,7 @@ from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
 from finn.util.basic import MAX_ALLOWED_AP_INT_W
-from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+from finn.util.data_packing import hls_datatype_str, npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.exception import FINNInternalError, FINNUserError
 
 # ONNX i/o tensor shape assumptions for MatrixVectorActivation_hls:
@@ -159,63 +159,23 @@ class MVAU_hls(MVAU, HLSBackend):
         # generate the weight-infrastructure HDL (shared MVAU helper)
         self.generate_infra_hdl(fpgapart)
 
-    def get_template_param_values(self) -> dict[str, str]:
-        """Return the template parameter values according to input, output and weight
-        data types.
-        """
-        ret: dict[str, str] = {}
-        inp_hls_str = self.get_input_datatype(0).get_hls_datatype_str()
-        out_hls_str = self.get_output_datatype().get_hls_datatype_str()
-        inp_is_binary = self.get_input_datatype(0) == DataType["BINARY"]
-        wt_is_binary = self.get_input_datatype(1) == DataType["BINARY"]
-        bin_xnor_mode = self.binary_xnor_mode == 1
-        if (inp_is_binary or wt_is_binary) and (not bin_xnor_mode):
-            raise FINNUserError(
-                f"{self.onnx_node.name}: true binary (non-bipolar) inputs not yet supported"
-            )
-        inp_is_bipolar = self.get_input_datatype(0) == DataType["BIPOLAR"]
-        wt_is_bipolar = self.get_input_datatype(1) == DataType["BIPOLAR"]
-        # reinterpret inp/wt as bipolar if bin_xnor_mode is iset
-        inp_is_bipolar = inp_is_bipolar or (inp_is_binary and bin_xnor_mode)
-        wt_is_bipolar = wt_is_bipolar or (wt_is_binary and bin_xnor_mode)
-        # fill in TSrcI and TWeightI
-        # TODO check these with Giulio
-        # TODO handle non-bipolar binary inputs
-        if inp_is_bipolar and wt_is_bipolar:
-            ret["TSrcI"] = "Recast<XnorMul>"
-            ret["TWeightI"] = "Identity"
-        elif (not inp_is_bipolar) and wt_is_bipolar:
-            ret["TSrcI"] = f"Slice<{inp_hls_str}>"
-            ret["TWeightI"] = "Recast<Binary>"
-        elif inp_is_bipolar and (not wt_is_bipolar):
-            ret["TSrcI"] = "Recast<Binary>"
-            ret["TWeightI"] = "Identity"
-        elif (not inp_is_bipolar) and (not wt_is_bipolar):
-            ret["TSrcI"] = f"Slice<{inp_hls_str}>"
-            ret["TWeightI"] = "Identity"
-
-        # fill in TDstI
-        ret["TDstI"] = f"Slice<{out_hls_str}>"
-
-        return ret
-
     def global_includes(self) -> None:
         """Populate the C++ includes for the generated HLS code."""
-        self.code_gen_dict["$GLOBALS$"] = ['#include "weights.hpp"']
-        self.code_gen_dict["$GLOBALS$"] += ['#include "activations.hpp"']
+        self.code_gen_dict["$GLOBALS$"] = ['#include "activations.hpp"', '#include "mvau.hpp"']
 
         if self.mem_mode not in _MEM_MODES:
             raise FINNInternalError(
                 f"{self.onnx_node.name}: mem_mode must be one of {_MEM_MODES}, got {self.mem_mode}"
             )
-        self.code_gen_dict["$GLOBALS$"] += ['#include "mvau.hpp"']
+        if self.mem_mode == "internal_embedded":
+            self.code_gen_dict["$GLOBALS$"] += ['#include "params.h"']
         if self.calc_tmem() != 0:
             # TODO find a better way of checking for no pregenerated thresholds
             self.code_gen_dict["$GLOBALS$"] += ['#include "thresh.h"']
 
     def defines(self, var: str) -> None:
-        """Emit C++ macro definitions for matrix dimensions, folding and datatypes."""
-        # Tiling (TH>1) is supported by the RTL backend (mvu_tiled). The HLS
+        """Emit the C++ constants for matrix dimensions and folding."""
+        # Tiling (TH>1) is supported by the RTL backend. The HLS
         # backend implements the untiled MVAU, so TH must be 1 here.
         if self.th != 1:
             raise FINNUserError(
@@ -232,55 +192,59 @@ class MVAU_hls(MVAU, HLSBackend):
                     f"This is not fulfilled with: SIMD={simd} and MW={mw} for node: "
                     f"{self.onnx_node.name}."
                 )
-        num_reps = np.prod(self.num_input_vectors)
         self.code_gen_dict["$DEFINES$"] = [
-            f"""#define MW1 {self.mw}\n #define MH1 {self.mh}\n
-            #define SIMD1 {self.simd}\n #define PE1 {self.pe}\n #define WMEM1 {self.calc_wmem()}\n
-            #define TMEM1 {self.calc_tmem()}\n #define numReps {num_reps}"""
+            f"""static constexpr unsigned MW1 = {self.mw};
+            static constexpr unsigned MH1 = {self.mh};
+            static constexpr unsigned SIMD1 = {self.simd};
+            static constexpr unsigned PE1 = {self.pe};"""
         ]
-        if self._uses_weight_stream():
-            wdt = self.get_input_datatype(1)
-            self.code_gen_dict["$DEFINES$"].append(f"#define WP1 {wdt.bitwidth()}\n")
+
+    def timeout_value(self) -> None:
+        """Set the number of consecutive idle calls after which cppsim stops.
+
+        The free-running top consumes one SIMD-wide input token per call and emits an
+        output only after MW/SIMD of them, so the default of 1000 idle calls is too
+        short for wider or less folded layers (e.g. MW 1152 at SIMD 1): the loop then
+        ends early and the final output read blocks forever.
+        """
+        self.code_gen_dict["$TIMEOUT_VALUE$"] = [str(self.mw // self.simd + 1000)]
 
     def read_npy_data(self) -> None:
         """Emit C++ code that reads the input (and streamed weight) numpy data for cppsim."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
-        dtype = self.get_input_datatype(0)
-        if dtype == DataType["BIPOLAR"]:
-            # use binary for bipolar storage
-            dtype = DataType["BINARY"]
-        packed_hls_type = f"ap_uint<{self.get_instream_width(0)}>"
-        elem_hls_type = dtype.get_hls_datatype_str()
         npy_type = "float"
         npy_in = f"{code_gen_dir}/input_0.npy"
-        # note: the innermost dim is reversed for the input
-        self.code_gen_dict["$READNPYDATA$"] = [
-            (
-                f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, {npy_type}>"
-                f'("{npy_in}", in0_V, false);'
-            )
-        ]
+        # stream type deduced from in0_V declaration
+        self.code_gen_dict["$READNPYDATA$"] = [f'npy2tensorstream<{npy_type}>("{npy_in}", in0_V);']
 
         if self._uses_weight_stream():
-            wdt = self.get_input_datatype(1)
-            w_packed_hls_type = f"ap_uint<{self._weight_stream_width()}>"
-            w_elem_hls_type = wdt.get_hls_datatype_str()
             w_npy_in = f"{code_gen_dir}/input_1.npy"
+            num_reps = int(np.prod(self.num_input_vectors))
+            # stream type deduced from in1_V declaration
             self.code_gen_dict["$READNPYDATA$"].append(
-                f"npy2apintstream<{w_packed_hls_type}, {w_elem_hls_type}, {npy_type}>"
-                f'("{w_npy_in}", in1_V, false, numReps);'
+                f"for(unsigned rep = 0; rep < {num_reps}; rep++) "
+                f'npy2tensorstream<{npy_type}>("{w_npy_in}", in1_V);'
             )
 
     def strm_decl(self) -> None:
         """Emit C++ stream declarations for the input, weight and output streams."""
+        simd = self.simd
+        pe = self.pe
+        i_elem = hls_datatype_str(self.get_input_datatype(0))
+        o_elem = hls_datatype_str(self.get_output_datatype())
         self.code_gen_dict["$STREAMDECLARATIONS$"] = [
-            f'hls::stream<ap_uint<{self.get_instream_width(0)}>> in0_V ("in0_V");',
-            f'hls::stream<ap_uint<{self.get_outstream_width()}>> out0_V ("out0_V");',
+            # 2-D tensor: tensor<TI, MMV=1, SIMD>
+            f'hls::stream<tensor<{i_elem},1,{simd}>> in0_V ("in0_V");',
+            # 2-D tensor: tensor<TO, MMV=1, PE>
+            f'hls::stream<tensor<{o_elem},1,{pe}>> out0_V ("out0_V");',
+            f'hls::stream<tensor<{o_elem},1,{pe}>> strm0 ("strm0");',
         ]
 
         if self._uses_weight_stream():
+            w_elem = hls_datatype_str(self.get_input_datatype(1))
+            # 2-D tensor: tensor<TW, PE, SIMD>
             self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-                f'hls::stream<ap_uint<{self._weight_stream_width()}>> in1_V ("in1_V");'
+                f'hls::stream<tensor<{w_elem},{pe},{simd}>> in1_V ("in1_V");'
             )
 
     def docompute(self) -> None:
@@ -290,10 +254,8 @@ class MVAU_hls(MVAU, HLSBackend):
             "lut": "ap_resource_lut()",
             "dsp": "ap_resource_dsp()",
         }
-        tmpl_args = self.get_template_param_values()
-        tsrci, tdsti, tweighti = tmpl_args["TSrcI"], tmpl_args["TDstI"], tmpl_args["TWeightI"]
         if self.calc_tmem() == 0:
-            odtype_hls_str = self.get_output_datatype().get_hls_datatype_str()
+            odtype_hls_str = hls_datatype_str(self.get_output_datatype())
             threshs = f"PassThroughActivation<{odtype_hls_str}>()"
         else:
             threshs = "threshs"
@@ -301,20 +263,15 @@ class MVAU_hls(MVAU, HLSBackend):
         if self.mem_mode == "internal_embedded":
             self.code_gen_dict["$DOCOMPUTE$"] = [
                 (
-                    "Matrix_Vector_Activate_Batch<MW1, MH1, SIMD1, PE1, 1, "
-                    f"{tsrci}, {tdsti}, {tweighti}>\n"
-                    f"                (in0_V, out0_V, weights, {threshs}, numReps, {mult_style});"
+                    "Matrix_Vector_Activate_Batch<MW1, MH1, SIMD1, PE1>\n"
+                    f"                (in0_V, out0_V, weights, {threshs}, {mult_style});"
                 )
             ]
         elif self._uses_weight_stream():
-            wdt = self.get_input_datatype(1)
-            export_wdt = DataType["BINARY"] if wdt == DataType["BIPOLAR"] else wdt
-            wdtype_hls_str = export_wdt.get_hls_datatype_str()
             self.code_gen_dict["$DOCOMPUTE$"] = [
                 (
-                    "Matrix_Vector_Activate_Stream_Batch<MW1, MH1, SIMD1, PE1, "
-                    f"{tsrci}, {tdsti}, {tweighti}, {wdtype_hls_str} >\n"
-                    f"                (in0_V, out0_V, in1_V, {threshs}, numReps, {mult_style});"
+                    "Matrix_Vector_Activate_Stream_Batch<MW1, MH1, SIMD1, PE1>\n"
+                    f"                (in0_V, out0_V, in1_V, {threshs}, {mult_style});"
                 )
             ]
         else:
@@ -325,22 +282,13 @@ class MVAU_hls(MVAU, HLSBackend):
     def dataoutstrm(self) -> None:
         """Emit C++ code that writes the output stream to a numpy file for cppsim."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
-        dtype = self.get_output_datatype()
-        if dtype == DataType["BIPOLAR"]:
-            # use binary for bipolar storage
-            dtype = DataType["BINARY"]
-        packed_hls_type = f"ap_uint<{self.get_outstream_width()}>"
-        elem_hls_type = dtype.get_hls_datatype_str()
         npy_type = "float"
         npy_out = f"{code_gen_dir}/output_0.npy"
         shape_cpp_str = str(self.get_folded_output_shape()).replace("(", "{").replace(")", "}")
 
-        # note: the innermost dim is not reversed for the output
+        # stream type deduced from strm0 declaration
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
-            (
-                f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {npy_type}>"
-                f'(out0_V, {shape_cpp_str}, "{npy_out}", false);'
-            )
+            f'tensorstream2npy<{npy_type}>(strm0, {shape_cpp_str}, "{npy_out}");'
         ]
 
     def save_as_npy(self) -> None:
@@ -349,24 +297,25 @@ class MVAU_hls(MVAU, HLSBackend):
 
     def blackboxfunction(self) -> None:
         """Emit the top-level HLS function signature for the selected mem_mode."""
+        simd = self.simd
+        pe = self.pe
+        i_elem = hls_datatype_str(self.get_input_datatype(0))
+        o_elem = hls_datatype_str(self.get_output_datatype())
         if self.mem_mode == "internal_embedded":
-            in_width = self.get_instream_width(0)
-            out_width = self.get_outstream_width()
-            indent = " " * 20
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
                 (
-                    f"void {self.onnx_node.name}(hls::stream<ap_uint<{in_width}>> &in0_V,\n"
-                    f"{indent}hls::stream<ap_uint<{out_width}>> &out0_V\n"
-                    f"{indent})"
+                    f"void {self.onnx_node.name}(hls::stream<tensor<{i_elem},1,{simd}>> &in0_V, "
+                    f"hls::stream<tensor<{o_elem},1,{pe}>> &out0_V)"
                 )
             ]
         elif self._uses_weight_stream():
+            w_elem = hls_datatype_str(self.get_input_datatype(1))
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-                f"""void {self.onnx_node.name}(
-                    hls::stream<ap_uint<{self.get_instream_width(0)}>> &in0_V,
-                    hls::stream<ap_uint<{self._weight_stream_width()}>> &in1_V,
-                    hls::stream<ap_uint<{self.get_outstream_width()}>> &out0_V
-                    )"""
+                (
+                    f"void {self.onnx_node.name}(hls::stream<tensor<{i_elem},1,{simd}>> &in0_V, "
+                    f"hls::stream<tensor<{w_elem},{pe},{simd}>> &in1_V, "
+                    f"hls::stream<tensor<{o_elem},1,{pe}>> &out0_V)"
+                )
             ]
         else:
             raise FINNInternalError(
@@ -379,14 +328,17 @@ class MVAU_hls(MVAU, HLSBackend):
             "#pragma HLS INTERFACE axis port=in0_V",
             "#pragma HLS INTERFACE axis port=out0_V",
             "#pragma HLS INTERFACE ap_ctrl_none port=return",
+            "#pragma HLS DATAFLOW disable_start_propagation",
         ]
 
         if self.mem_mode == "internal_embedded":
-            self.code_gen_dict["$PRAGMAS$"].append('#include "params.h"')
-            # the weight tensor is ap_uint<simd*prec> [PE][WMEM]
-            # partition for parallel access along the PE dimension (dim 1)
+            # weights is TW weights[WMEM][PE][SIMD]: one ROM per PE (dim 2),
+            # each WMEM deep with SIMD elements packed per word (dim 3)
             self.code_gen_dict["$PRAGMAS$"].append(
-                "#pragma HLS ARRAY_PARTITION variable=weights.m_weights complete dim=1"
+                "#pragma HLS ARRAY_RESHAPE variable=weights complete dim=3"
+            )
+            self.code_gen_dict["$PRAGMAS$"].append(
+                "#pragma HLS ARRAY_PARTITION variable=weights complete dim=2"
             )
         elif self._uses_weight_stream():
             self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=in1_V")
@@ -480,12 +432,7 @@ class MVAU_hls(MVAU, HLSBackend):
             if in_ind == 0:
                 expected_inp_shape = self.get_folded_input_shape(in_ind)
                 reshaped_input = context[inputs].reshape(expected_inp_shape)
-                if self.get_input_datatype(0) == DataType["BIPOLAR"]:
-                    # store bipolar activations as binary
-                    reshaped_input = (reshaped_input + 1) / 2
-                    export_idt = DataType["BINARY"]
-                else:
-                    export_idt = self.get_input_datatype(0)
+                export_idt = self.get_input_datatype(0)
                 # make copy before saving the array
                 reshaped_input = reshaped_input.copy()
                 np.save(str(Path(code_gen_dir) / "input_0.npy"), reshaped_input)
@@ -517,10 +464,9 @@ class MVAU_hls(MVAU, HLSBackend):
             if self._uses_weight_stream():
                 wnbits = self._weight_stream_width()
                 export_wdt = self.get_input_datatype(1)
-
-                # we have converted bipolar weights to binary for export,
-                # so use it as such for weight generation
-                if self.get_input_datatype(1) == DataType["BIPOLAR"]:
+                # make_weight_file already converts bipolar weights to binary encoding,
+                # so use BINARY as the export dtype for weight packing
+                if export_wdt == DataType["BIPOLAR"]:
                     export_wdt = DataType["BINARY"]
 
                 wei = npy_to_rtlsim_input(f"{code_gen_dir}/input_1.npy", export_wdt, wnbits)

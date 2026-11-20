@@ -151,8 +151,6 @@ class InferUpsample(Transformation):
                     inputDataType=input_data_type,
                     batchSize=batch_size,
                     name="UpsampleNearestNeighbour_" + n.name,
-                    cpp_interface="hls_vector",
-                    hls_style="freerunning",
                 )
 
                 # Remove the old node

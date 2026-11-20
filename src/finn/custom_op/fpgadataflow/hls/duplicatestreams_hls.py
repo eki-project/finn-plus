@@ -35,6 +35,7 @@ from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
+from finn.util.data_packing import hls_datatype_str
 
 if TYPE_CHECKING:
     from onnx import GraphProto, NodeProto
@@ -85,7 +86,7 @@ class DuplicateStreams_hls(DuplicateStreams, HLSBackend):
 
     def global_includes(self) -> None:
         """Return global includes."""
-        self.code_gen_dict["$GLOBALS$"] = ['#include "dup.hpp"']
+        self.code_gen_dict["$GLOBALS$"] = ['#include "tensor.hpp"', '#include "dup.hpp"']
 
     def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
@@ -99,11 +100,11 @@ class DuplicateStreams_hls(DuplicateStreams, HLSBackend):
 
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        input_elem_hls_type = self.get_input_datatype().get_hls_datatype_str()
-        pe = self.pe
-        in_stream = f"hls::stream<hls::vector<{input_elem_hls_type}, {pe}>> &in0_V"
+        input_elem_hls_type = hls_datatype_str(self.get_input_datatype())
+        n_elems = self.get_folded_input_shape()[-1]
+        in_stream = f"hls::stream<tensor<{input_elem_hls_type},{n_elems}>> &in0_V"
         out_streams = ", ".join(
-            f"hls::stream<hls::vector<{input_elem_hls_type}, {pe}>> &out{i}_V"
+            f"hls::stream<tensor<{input_elem_hls_type},{n_elems}>> &out{i}_V"
             for i in range(self.num_output_streams)
         )
         blackbox_hls = f"void {self.onnx_node.name}({in_stream}, {out_streams})"
