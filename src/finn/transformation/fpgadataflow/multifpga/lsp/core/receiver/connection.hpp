@@ -139,7 +139,9 @@ namespace lsp {
         // TODO: Send the gap NACK and duplicate ACK only after a good FCS at tlast, since a corrupt header may hold a false FSN
         // TODO: Make the L2 header offset a build-time constant instead of reading it from every frame
 
-        template <int... Ws, size_t... Ds>
+        /** One call handles at most one beat. ConnId must be unique per connection: the state lives in
+        statics of the instantiation, so two connections with equal widths and depths would share it. */
+        template <size_t ConnId, int... Ws, size_t... Ds>
         inline void connection(
             stream_widths_t<Ws...> widths,
             ring_depths_t<Ds...> depths,

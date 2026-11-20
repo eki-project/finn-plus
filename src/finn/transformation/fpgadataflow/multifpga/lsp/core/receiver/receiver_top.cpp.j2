@@ -1,10 +1,37 @@
 // Generated from {{ config_name }}, do not edit
+#include "helpers.hpp"
 #include "manager.hpp"
 #include "connection.hpp"
 #include "controller_tx.hpp"
+#include "utils.hpp"
+#include "hls_task.h"
 
 using namespace lsp;
 using namespace lsp::receiver;
+
+// Abstract away the non-stream parameters from the connection kernels (required for hls::task)
+{%- for conn in connections %}
+{%- set c = loop.index0 %}
+
+// Connection {{ c }}, peer {{ conn.mac }}
+void connection_{{ c }}(
+    hls::stream<beat_t>& macStream,
+    hls::stream<ctrl_status_t<{{ conn.streams | length }}>>& controlStream
+{%- for stream in conn.streams %},
+    hls::stream<ap_uint<{{ stream.width }}>>& s{{ loop.index0 }}
+{%- endfor %}
+) {
+    connection<{{ c }}>(
+        stream_widths_t<{{ conn.streams | map(attribute="width") | join(", ") }}>{},
+        ring_depths_t<{{ conn.streams | map(attribute="depth") | join(", ") }}>{},
+        macStream,
+        controlStream
+        {%- for stream in conn.streams %},
+        s{{ loop.index0 }}
+        {%- endfor %}
+    );
+}
+{%- endfor %}
 
 void receiver_top(
     hls::stream<beat_t>& fromCMAC,
@@ -16,29 +43,45 @@ void receiver_top(
 {%- endfor %}
 {%- endfor %}
 ) {
+    #pragma HLS dataflow
     using PEERS = mac_index_lookup_t<{{ connections | map(attribute="mac") | join(", ") }}>;
+    constexpr size_t CONNECTIONS = PEERS::N;
 
-    hls::stream<beat_t, CMAC_BEAT_BUFFER> ingress("ingress");
-    hls::stream<beat_t, CMAC_BEAT_BUFFER> egress("egress");
-    hls::stream<beat_t> macStreams[PEERS::N];
+    // Streams that connect to the CMAC
+    hls_thread_local hls::stream<beat_t, CMAC_BEAT_BUFFER> ingress("ingress");
+    hls_thread_local hls::stream<beat_t, CMAC_BEAT_BUFFER> egress("egress");
+    hls_thread_local hls::stream<bool, CMAC_BEAT_BUFFER> egressFrames("egressFrames");
 
-    cmacIngress(fromCMAC, ingress);
-    manager<PEERS>(ingress, egress, macStreams);
+    // Streams between the manager (MAC dispatcher) and the connections
+    hls_thread_local hls::stream<beat_t> macStreams[CONNECTIONS];
 
-    // TODO: CONTROLLER_TX + SELECTOR
+    // Streams between each connection and its controller TX
+{%- for conn in connections %}
+    hls_thread_local hls::stream<ctrl_status_t<{{ conn.streams | length }}>> ctrl{{ loop.index0 }}("ctrl_stream_{{ loop.index0 }}");
+{%- endfor %}
 
+    // Streams between the controller TXs and writeToEgress
+    hls_thread_local hls::stream<beat_t> ctrlTx[CONNECTIONS];
+
+    // Copy whole frames from the CMAC into the ingress buffer, and from the egress buffer to the CMAC
+    hls_thread_local hls::task ingressTask(cmacIngress, fromCMAC, ingress);
+    hls_thread_local hls::task egressTask(cmacEgress, egress, egressFrames, toCMAC);
+
+    // Dispatch the ingress frames by source MAC address to the connections
+    hls_thread_local hls::task dispatchTask(manager<PEERS>, ingress, macStreams);
 {% for conn in connections %}
 {%- set c = loop.index0 %}
     // Connection {{ c }}, peer {{ conn.mac }}
-    hls::stream<ctrl_status_t<{{ conn.streams | length }}>> ctrlStatus{{ c }}("ctrl_status_{{ c }}");
-    connection(
-        stream_widths_t<{{ conn.streams | map(attribute="width") | join(", ") }}>{},
-        ring_depths_t<{{ conn.streams | map(attribute="depth") | join(", ") }}>{},
+    hls_thread_local hls::task connection{{ c }}Task(
+        connection_{{ c }},
         macStreams[{{ c }}],
-        ctrlStatus{{ c }}
+        ctrl{{ c }}
         {%- for stream in conn.streams %},
         c{{ c }}_s{{ loop.index0 }}
         {%- endfor %}
     );
-{% endfor -%}
+    hls_thread_local hls::task controllerTX{{ c }}Task(controllerTX<{{ conn.streams | length }}>, ctrl{{ c }}, ctrlTx[{{ c }}]);
+{% endfor %}
+    // Forward the CTRL frames of all controller TXs round robin to the CMAC
+    hls_thread_local hls::task egressDispatchTask(writeToEgress<CONNECTIONS>, egress, egressFrames, ctrlTx);
 }

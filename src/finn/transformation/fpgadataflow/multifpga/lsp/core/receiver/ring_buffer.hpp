@@ -238,47 +238,6 @@ namespace lsp {
                 std::make_index_sequence<sizeof...(StreamWidths)>, Depths, StreamWidths...
             >::type;
 
-            /** Implementation of visitRing: one call of `f` per ring, only the matching one enabled. */
-            template<typename Rings, typename F, typename R, size_t... Is>
-            R _visitRing(Rings& rings, unsigned index, F& f, R result, std::index_sequence<Is...>) {
-                #pragma HLS inline
-                // C++14 replacement for a fold expression: checks every ring index in order. The cast
-                // to void is needed because ap_int overloads the comma operator as concatenation
-                int expanded[] = {0, (index == Is ? ((void) (result = f(std::get<Is>(rings))), 0) : 0)...};
-                (void) expanded;
-                return result;
-            }
-
-            /** Call `f` with the ring buffer at runtime position `index` of an lsp_stream_ring_buffers_t
-            and return its result, or `fallback` if no ring has that index. Every ring has its own type,
-            so a runtime index cannot return a reference; `f` is a generic lambda instead, and its result
-            type must be the same for every ring, e.g.
-                visitRing(rings, stream, [](auto& ring) { return ring.getAvailableCredits(); }, 0u)
-            In hardware every ring gets its own copy of `f`, only the matching one enabled: no
-            multiplexer in front of the rings, one behind them for the result. */
-            template<typename... Rings, typename F, typename R>
-            R visitRing(std::tuple<Rings...>& rings, unsigned index, F f, R fallback) {
-                #pragma HLS inline
-                return _visitRing(rings, index, f, fallback, std::index_sequence_for<Rings...>{});
-            }
-
-            /** Implementation of forEachRing: one call of `f` per ring. */
-            template<typename Rings, typename F, size_t... Is>
-            void _forEachRing(Rings& rings, F& f, std::index_sequence<Is...>) {
-                #pragma HLS inline
-                // C++14 replacement for a fold expression
-                int expanded[] = {0, ((void) f(std::get<Is>(rings)), 0)...};
-                (void) expanded;
-            }
-
-            /** Call `f` (a generic lambda) on every ring buffer of an lsp_stream_ring_buffers_t. In
-            hardware every ring gets its own copy of `f`, all running in parallel. */
-            template<typename... Rings, typename F>
-            void forEachRing(std::tuple<Rings...>& rings, F f) {
-                #pragma HLS inline
-                _forEachRing(rings, f, std::index_sequence_for<Rings...>{});
-            }
-
             /** Append a segment to the ring buffer of its stream: ring I (of an lsp_stream_ring_buffers_t)
             takes the segments whose stream ID is I, see #75 for the numbering. A stream ID without a ring
             returns UNKNOWN_STREAM. */
@@ -288,7 +247,7 @@ namespace lsp {
                 const data_segment_t<PayloadWidth>& segment
             ) {
                 #pragma HLS inline
-                return visitRing(
+                return helpers::visitTuple(
                     rings,
                     segment.stream,
                     [&segment](auto& ring) { return ring.updateFrom(segment); },
@@ -302,7 +261,7 @@ namespace lsp {
             template<typename... Rings>
             bool commit(std::tuple<Rings...>& rings, unsigned index) {
                 #pragma HLS inline
-                return visitRing(rings, index, [](auto& ring) { ring.commit(); return true; }, false);
+                return helpers::visitTuple(rings, index, [](auto& ring) { ring.commit(); return true; }, false);
             }
 
             /** Discard the writes since the last commit on the ring with the given index. To be called
@@ -311,7 +270,7 @@ namespace lsp {
             template<typename... Rings>
             bool rollback(std::tuple<Rings...>& rings, unsigned index) {
                 #pragma HLS inline
-                return visitRing(rings, index, [](auto& ring) { ring.rollback(); return true; }, false);
+                return helpers::visitTuple(rings, index, [](auto& ring) { ring.rollback(); return true; }, false);
             }
 
             /** Commit the writes on every ring. To be called after the final beat of a frame confirmed via
@@ -320,7 +279,7 @@ namespace lsp {
             template<typename... Rings>
             void commitAll(std::tuple<Rings...>& rings) {
                 #pragma HLS inline
-                forEachRing(rings, [](auto& ring) { ring.commit(); });
+                helpers::forEachInTuple(rings,[](auto& ring) { ring.commit(); });
             }
 
             /** Discard the writes since the last commit on every ring. To be called after the final beat
@@ -328,21 +287,21 @@ namespace lsp {
             template<typename... Rings>
             void rollbackAll(std::tuple<Rings...>& rings) {
                 #pragma HLS inline
-                forEachRing(rings, [](auto& ring) { ring.rollback(); });
+                helpers::forEachInTuple(rings,[](auto& ring) { ring.rollback(); });
             }
 
             /** Return whether a credit update is due for this ring (if the buffer was filled with over N/2 elements, having a max capacity of N). */
             template<typename... Rings>
             bool creditUpdateDue(std::tuple<Rings...>& rings, unsigned index) {
                 #pragma HLS inline
-                return visitRing(rings, index, [](auto& ring) { return ring.creditLimitUpdateDue(); }, false);
+                return helpers::visitTuple(rings, index, [](auto& ring) { return ring.creditLimitUpdateDue(); }, false);
             }
 
             /** Execute a credit update on the given ring */
             template<typename... Rings>
             ap_uint<constants::CREDIT_LIMIT_WIDTH> creditUpdate(std::tuple<Rings...>& rings, unsigned index) {
                 #pragma HLS inline
-                return visitRing(
+                return helpers::visitTuple(
                     rings, index, [](auto& ring) { return ring.creditUpdate(); },
                     ap_uint<constants::CREDIT_LIMIT_WIDTH>(0)
                 );

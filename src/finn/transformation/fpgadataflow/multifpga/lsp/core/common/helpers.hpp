@@ -7,6 +7,8 @@
 #include <ap_int.h>
 #include <cassert>
 #include <hls_stream.h>
+#include <tuple>
+#include <utility>
 
 namespace lsp {
 
@@ -37,24 +39,21 @@ namespace lsp {
         };
 
         /** Round robin selector/priority encoder. Searches and returns index of the first valid stream. Manually
-        advance using advancePast() if the stream could be used successfully. Keeps state across calls. */
-        template<int... Ws>
+        advance using advancePast() if the stream could be used successfully. Keeps state across calls.
+
+        Usage:
+        `round_robin_selector_t<2> sel;`
+        `auto chosen = sel.select(s0, s1);`
+        `sel.advancePast(chosen);`
+        ...
+        */
+        template<size_t N>
         struct round_robin_selector_t {
-            static constexpr int N = sizeof...(Ws);
+          private:
             static constexpr int INDEX_WIDTH = clog2(N + 1);
             ap_uint<INDEX_WIDTH> index = 0;
 
-            ap_uint<INDEX_WIDTH> select(hls::stream<ap_uint<Ws>>&... streams) {
-                // Get an array of all valid streams and only consider these
-                bool _valids[N] = {!streams.empty()...};
-                ap_uint<N> valids = 0;
-
-                // Transfer into ap_uint
-                for (unsigned i = 0; i < sizeof...(Ws); ++i) {
-                    #pragma HLS unroll
-                    valids[i] = _valids[i];
-                }
-
+            ap_uint<INDEX_WIDTH> _select(ap_uint<N> valids) {
                 // Return faulty value if no index is valid
                 if (valids == 0) {
                     return N;
@@ -78,8 +77,34 @@ namespace lsp {
                 return foundUpper ? upper : lower;
             }
 
+          public:
+            template<typename... Es>
+            ap_uint<INDEX_WIDTH> select(hls::stream<Es>&... streams) {
+                // Get an array of all valid streams and only consider these
+                bool _valids[N] = {!streams.empty()...};
+                ap_uint<N> valids = 0;
+
+                // Transfer into ap_uint
+                for (unsigned i = 0; i < N; ++i) {
+                    #pragma HLS unroll
+                    valids[i] = _valids[i];
+                }
+                return _select(valids);
+            }
+
+            template<typename T>
+            ap_uint<INDEX_WIDTH> select(hls::stream<T> (&streams)[N]) {
+                ap_uint<N> valids = 0;
+                // Transfer into ap_uint
+                for (unsigned i = 0; i < N; ++i) {
+                    #pragma HLS unroll
+                    valids[i] = !streams[i].empty();
+                }
+                return _select(valids);
+            }
+
             void advancePast(ap_uint<INDEX_WIDTH> target) {
-                index = (target == sizeof...(Ws) - 1) ? ap_uint<INDEX_WIDTH>(0) : ap_uint<INDEX_WIDTH>(target + 1);
+                index = (target == N - 1) ? ap_uint<INDEX_WIDTH>(0) : ap_uint<INDEX_WIDTH>(target + 1);
             }
 
         };
@@ -149,6 +174,47 @@ namespace lsp {
         bool serialBefore(const ap_uint<W>& a, const ap_uint<W>& b) {
             const ap_uint<W> difference = b - a;
             return difference != 0 && !difference[W - 1];
+        }
+
+        /** Implementation of visitTuple: one call of `f` per element, only the matching one enabled. */
+        template<typename Tuple, typename F, typename R, size_t... Is>
+        R _visitTuple(Tuple& tuple, unsigned index, F& f, R result, std::index_sequence<Is...>) {
+            #pragma HLS inline
+            // C++14 replacement for a fold expression: checks every element index in order. The cast
+            // to void is needed because ap_int overloads the comma operator as concatenation
+            int expanded[] = {0, (index == Is ? ((void) (result = f(std::get<Is>(tuple))), 0) : 0)...};
+            (void) expanded;
+            return result;
+        }
+
+        /** Call `f` with the tuple element at runtime position `index` and return its result, or
+        `fallback` if no element has that index. Every element can have its own type, so a runtime
+        index cannot return a reference; `f` is a generic lambda instead. It must compile for every
+        element type, and its result must convert to the type of `fallback`.
+        Works on tuples of objects and on tuples of references (std::tie), e.g. of hls::streams.
+        In hardware every element gets its own copy of `f`, only the matching one enabled: no
+        multiplexer in front of the elements, one behind them for the result. */
+        template<typename... Ts, typename F, typename R>
+        R visitTuple(std::tuple<Ts...>& tuple, unsigned index, F f, R fallback) {
+            #pragma HLS inline
+            return _visitTuple(tuple, index, f, fallback, std::index_sequence_for<Ts...>{});
+        }
+
+        /** Implementation of forEachInTuple: one call of `f` per element. */
+        template<typename Tuple, typename F, size_t... Is>
+        void _forEachInTuple(Tuple& tuple, F& f, std::index_sequence<Is...>) {
+            #pragma HLS inline
+            // C++14 replacement for a fold expression
+            int expanded[] = {0, ((void) f(std::get<Is>(tuple)), 0)...};
+            (void) expanded;
+        }
+
+        /** Call `f` (a generic lambda) on every element of a tuple, in index order. In hardware every
+        element gets its own copy of `f`, all running in parallel. */
+        template<typename... Ts, typename F>
+        void forEachInTuple(std::tuple<Ts...>& tuple, F f) {
+            #pragma HLS inline
+            _forEachInTuple(tuple, f, std::index_sequence_for<Ts...>{});
         }
     }
 

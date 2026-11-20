@@ -1,5 +1,6 @@
 // Shared types and helpers of the LSP receiver kernel: the beat type, the CMAC side FIFO depth,
-// the CTRL status of a connection, the MAC dispatcher and the CMAC ingress / egress processes.
+// the CTRL status of a connection, the MAC dispatcher, the CMAC ingress / egress processes and the
+// round robin forwarding of the CTRL frames to the egress.
 #ifndef LSP_RECEIVER_UTILS_HPP
 #define LSP_RECEIVER_UTILS_HPP
 
@@ -34,6 +35,7 @@ namespace lsp {
         */
         template<int Streams>
         struct ctrl_status_t {
+            static constexpr int STREAMS = Streams;
             static_assert(Streams >= 1, "A connection has at least one stream");
 
             // Next expected FSN: the cumulative ACK, and the FSN a NACK replays from. A state, so
@@ -199,6 +201,37 @@ namespace lsp {
                 beat = egress.read();
                 toCMAC.write(beat);
             } while (!beat.last);
+        }
+
+        /** Forward from source to egress until the tlast signal is set. */
+        inline void forwardCtrlToEgress(hls::stream<beat_t, CMAC_BEAT_BUFFER>& egress, hls::stream<beat_t>& source) {
+            beat_t beat;
+            do {
+                beat = source.read();
+                egress.write(beat);
+            } while (!beat.last);
+        }
+
+        /** HLS-Task compatible function/kernel that selects a controller TX stream to read. Once
+        selected, the stream is read until tlast is seen. Then the stateful index counter is incremented
+        and its the turn of the next stream. */
+        template<size_t N>
+        void writeToEgress(
+            hls::stream<beat_t, CMAC_BEAT_BUFFER>& egress,
+            hls::stream<bool, CMAC_BEAT_BUFFER>& egressFrames,
+            hls::stream<beat_t> (&ctrlStreams)[N]
+        ) {
+            // Selector to decide which control stream may write
+            static helpers::round_robin_selector_t<N> selector;
+
+            // Write into egress. select() returns N if no stream holds a frame
+            auto selectedStream = selector.select(ctrlStreams);
+            if (selectedStream == N) {
+                return;
+            }
+            forwardCtrlToEgress(egress, ctrlStreams[selectedStream]);
+            egressFrames.write(true);
+            selector.advancePast(selectedStream);
         }
     }
 }
