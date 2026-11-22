@@ -20,7 +20,7 @@
         "functions": [
           {
             "function_name": "idle",
-            "kwargs" : {"time" : 5}
+            "kwargs" : {"time" : 3}
           }
         ]
       },
@@ -31,7 +31,7 @@
         "functions": [
           {
             "function_name": "experiment_instrumentation",
-            "kwargs" : {"runtime": 5}
+            "kwargs" : {"runtime": 3}
           }
         ]
       }

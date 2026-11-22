@@ -8,6 +8,7 @@ import multiprocessing
 import os
 import sys
 import time
+import traceback
 from finn_plus_driver import get_driver_class
 from measurement_util import PAF, Recorder
 from pynq import PL
@@ -22,6 +23,17 @@ def em_log(msg):
     per-run measurement time (overlay load, warmup, experiment, report writing).
     """
     print(f"[EM +{time.monotonic() - _T0:6.1f}s] {msg}", flush=True)
+
+
+def em_reset_clock():
+    """Restart the elapsed-time reference of em_log (called once per deployment package)."""
+    global _T0
+    _T0 = time.monotonic()
+
+
+# PAF instances per board name: the power analysis library initialises the board's sensors on
+# construction, which a long-lived manager (see serve()) should pay once per process
+_PAF_CACHE = {}
 
 
 class ExperimentManager:
@@ -75,21 +87,32 @@ class ExperimentManager:
 
         # This is not referenced but sets the _paf global variable,
         # which is used by the other classes
-        self._paf = PAF(self._experiment_info.get("global").get("PAF").get("board", None))
+        board = self._experiment_info.get("global").get("PAF").get("board", None)
+        if board not in _PAF_CACHE:
+            _PAF_CACHE[board] = PAF(board)
+        self._paf = _PAF_CACHE[board]
 
     def start_experiments(self):
-        """Main method to commence experimentation.
+        """Run the experiments one after another and return the exit code (0 = all passed).
 
-        Each experiement specified in the configuratin gets executed after another.
+        Experiments with identical driver parameters (same bitstream and settings) share one
+        driver instance, so the bitstream is downloaded and its metadata parsed once per
+        deployment package instead of once per experiment.
         """
         exit_code = 0
+        shared_driver = None
+        shared_params = None
         for experiment in self._experiments:
-            e = experiment.start_experiment()
+            reuse = shared_driver is not None and experiment.params_dict == shared_params
+            e = experiment.start_experiment(shared_driver=shared_driver if reuse else None)
+            if not reuse and experiment._driver_inst is not None:
+                shared_driver = experiment._driver_inst
+                shared_params = experiment.params_dict
             if e != 0:
                 exit_code = 1
                 em_log(f"EXPERIMENT {experiment._name} EXITED WITH ERROR: {e}")
         em_log("ALL EXPERIMENTS DONE")
-        sys.exit(exit_code)
+        return exit_code
 
 
 class Experiment:
@@ -112,6 +135,10 @@ class Experiment:
         # Sampling interval of the power recorder in seconds (default 1 s): short experiments
         # keep their number of samples by sampling faster
         self._interval = float(ex_config.get("PAF").get("interval", 1.0))
+        # The recordings are always saved as json; the xlsx export (nothing in CI reads it,
+        # and its first use costs ~10 s of imports on the board) is opt-in
+        self._save_xlsx = bool(ex_config.get("PAF").get("save_xlsx", False))
+        self._driver_inst = None
 
         self._driver_class = ex_config.get("driver_type")
         # Inspect Class functions to get the args
@@ -151,17 +178,23 @@ class Experiment:
         else:
             self._driver_inst = self._driver_class(**self.params_dict)
 
-    def start_experiment(self):
+    def start_experiment(self, shared_driver=None):
         """Main method to start an experiment.
 
         Before an experiment is executed it is initialized and then run
-        with the specified configuration.
+        with the specified configuration. ``shared_driver`` is a driver instance of a
+        previous experiment with the same parameters; it is reused instead of loading the
+        overlay again.
         """
         em_log(f"SETTING UP EXPERIMENT: {self._name}")
         em_log(f"MONITORING RAILS: {self._rails}")
         em_log(f"MONITORING SENSORS: {self._sensors}")
-        self.load_experiment_overlay()
-        em_log(f"OVERLAY LOADED FOR EXPERIMENT: {self._name}")
+        if shared_driver is not None:
+            self._driver_inst = shared_driver
+            em_log(f"REUSING LOADED OVERLAY FOR EXPERIMENT: {self._name}")
+        else:
+            self.load_experiment_overlay()
+            em_log(f"OVERLAY LOADED FOR EXPERIMENT: {self._name}")
         if self._power_supply_ip is not None:
             em_log(f"POWER SUPPLY IP: {self._power_supply_ip}")
 
@@ -213,7 +246,9 @@ class Experiment:
 
             # stop & reset recorder and save results
             self._recorder.stop()
-            self._recorder.save_dfs_to_xlsx(experiment_path, f"{self._name}_run_{i}")
+            em_log(f"RECORDER STOPPED FOR ITERATION {i} OF EXPERIMENT: {self._name}")
+            if self._save_xlsx:
+                self._recorder.save_dfs_to_xlsx(experiment_path, f"{self._name}_run_{i}")
             self._recorder.save_dfs_to_json(experiment_path, f"{self._name}_run_{i}")
             self._recorder.reset()
             em_log(f"RESULTS SAVED FOR ITERATION {i} OF EXPERIMENT: {self._name}")
@@ -226,13 +261,41 @@ class Experiment:
         return 0
 
 
-if __name__ == "__main__":
-    if len(sys.argv) == 3:
-        json_path = os.path.abspath(sys.argv[1])
-        working_dir = sys.argv[2]
+RUN_FINISHED_MARKER = "EM_RUN_FINISHED"
 
-        ex_flow = ExperimentManager(json_path, working_dir)
-        ex_flow.start_experiments()
+
+def run_package(json_path, working_dir):
+    """Measure one deployment package and return its exit code (an exception counts as 1)."""
+    em_reset_clock()
+    try:
+        return ExperimentManager(os.path.abspath(json_path), working_dir).start_experiments()
+    except Exception:
+        traceback.print_exc()
+        sys.stdout.flush()
+        return 1
+
+
+def serve():
+    """Measure the packages handed over on stdin, one ``<settings.json>\t<working dir>`` per line.
+
+    After each package a line ``EM_RUN_FINISHED <exit code>`` is printed; the process ends at
+    EOF. ci/measure.py uses this mode so that the interpreter start, the PYNQ import and the
+    board setup are paid once per job instead of once per package.
+    """
+    for line in sys.stdin:
+        line = line.rstrip("\n")
+        if not line:
+            continue
+        json_path, _, working_dir = line.partition("\t")
+        code = run_package(json_path, working_dir)
+        print(f"{RUN_FINISHED_MARKER} {code}", flush=True)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] == "--serve":
+        serve()
+    elif len(sys.argv) == 3:
+        sys.exit(run_package(sys.argv[1], sys.argv[2]))
     else:
-        em_log("ERROR: Provide settings.json path and working directory as argument")
+        em_log("ERROR: Provide settings.json path and working directory as argument, or --serve")
         sys.exit(1)

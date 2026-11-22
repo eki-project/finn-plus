@@ -123,9 +123,17 @@ Versal-only backends or two-stream elementwise operations.
   (`launch_runs -jobs`), and 4 workers doubled the build time of every operator. The runs
   of a task are built one after another, so size `PARALLEL_JOBS` for about eight runs per
   task. A retried `Measurement` job resumes after the runs it already measured.
-- The board measures a microbenchmark with a 5 s idle and a 5 s load phase sampled at 5 Hz
+- The board measures a microbenchmark with a 3 s idle and a 3 s load phase sampled at 5 Hz
   (`ci/experiments/instrument_only_default.json`); interval and latency come from the
   instrumentation counters and do not depend on the duration, only the power averages do.
+  The fixed cost per package is kept small: `ci/measure.py` keeps one experiment manager
+  process (`experiment_manager.py --serve`) for the whole job instead of starting Python,
+  PYNQ and the power library per package, unpacks packages and writes reports in RAM
+  (`/dev/shm`, override with `FINN_BENCH_SCRATCH_DIR`) because single file operations on the
+  board's SD card stalled for tens of seconds, loads the overlay once per package for both
+  experiments, and writes the power recordings as json only (`PAF.save_xlsx: true` restores
+  the xlsx export). The `[EM +<s>]` and `[DRV +<s>]` stamps in the Measurement trace give the
+  elapsed time per step of a package.
 - Microbenchmarks run no RTL simulation and no Vivado power estimation (both simulated whole
   frames for hours per build): the build steps are codegen, IP generation, stitched IP,
   out-of-context synthesis, bitfile, driver and deployment package.

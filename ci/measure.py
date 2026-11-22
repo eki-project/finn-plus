@@ -33,6 +33,91 @@ def _previous_measurement_ok(run_out_dir):
         return False
 
 
+def scratch_dir():
+    """Local directory the packages are unpacked into and the reports are written to.
+
+    ``FINN_BENCH_SCRATCH_DIR`` if set, else a directory in ``/dev/shm`` (RAM) when available,
+    else ``measurement/`` in the working directory. The board's SD card stalled for tens of
+    seconds on single file operations after every unpacked bitfile, so by default none of
+    the per-run traffic touches it.
+    """
+    root = os.environ.get("FINN_BENCH_SCRATCH_DIR")
+    if not root:
+        shm = "/dev/shm"
+        root = (
+            os.path.join(shm, "finn_measurement")
+            if os.path.isdir(shm) and os.access(shm, os.W_OK)
+            else "measurement"
+        )
+    os.makedirs(root, exist_ok=True)
+    return os.path.abspath(root)
+
+
+class ManagerProcess:
+    """One long-lived experiment manager (``experiment_manager.py --serve``) for all packages.
+
+    Starting the interpreter, importing PYNQ and initialising the board's power sensors cost
+    about ten seconds per package when done per run; the server mode pays them once per job.
+    A manager that dies is reported for the run it was measuring and restarted for the next.
+    """
+
+    CMD = [sys.executable, "-u", "ci/power_measurement/experiment_manager.py", "--serve"]
+    RUN_FINISHED_MARKER = "EM_RUN_FINISHED"
+
+    def __init__(self):
+        """Create the handle; the process is started on the first measurement."""
+        self._proc = None
+
+    def _start(self):
+        print("STARTING EXPERIMENT MANAGER PROCESS..", flush=True)
+        self._proc = subprocess.Popen(
+            self.CMD,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+    def _send(self, settings_path, working_dir):
+        self._proc.stdin.write("%s\t%s\n" % (settings_path, working_dir))
+        self._proc.stdin.flush()
+
+    def measure(self, settings_path, working_dir, prefix):
+        """Measure one package, print the manager output with ``prefix``, return the exit code."""
+        for attempt in range(2):
+            if self._proc is None or self._proc.poll() is not None:
+                self._start()
+            try:
+                self._send(settings_path, working_dir)
+                break
+            except OSError as e:
+                print("WARNING: could not hand the package to the manager (%s)" % e, flush=True)
+                self._proc = None
+        else:
+            return 1
+        for line in self._proc.stdout:
+            line = line.rstrip("\n")
+            if line.startswith(self.RUN_FINISHED_MARKER):
+                return int(line.split()[1])
+            print("[%s] %s" % (prefix, line), flush=True)
+        # EOF without marker: the manager died (e.g. a segfault in the driver)
+        rc = self._proc.wait()
+        print("ERROR: EXPERIMENT MANAGER PROCESS DIED (exit code %d)" % rc, flush=True)
+        self._proc = None
+        return rc if rc != 0 else 1
+
+    def close(self):
+        """End the manager process (EOF on its stdin)."""
+        if self._proc is not None and self._proc.poll() is None:
+            self._proc.stdin.close()
+            try:
+                self._proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+        self._proc = None
+
+
 def delete_dir_contents(dir):
     """Delete all contents of a directory."""
     for filename in os.listdir(dir):
@@ -84,6 +169,9 @@ if __name__ == "__main__":
     exchange.ensure_dir(artifacts_out_dir)
     exchange.check_writable(artifacts_out_dir)
 
+    extract_dir = scratch_dir()
+    print("UNPACKING PACKAGES AND WRITING REPORTS IN %s" % extract_dir)
+    manager = ManagerProcess()
     print("SCANNING DEPLOYMENT PACKAGES IN BUILD ARTIFACTS (%s).." % artifacts_in_dir)
     # Only runs marked as complete by the build job are measured (see exchange.mark_done)
     for run_id in exchange.list_run_ids("build", args.followup):
@@ -91,7 +179,6 @@ if __name__ == "__main__":
         run_out_dir = exchange.run_dir("measurement", run_id, args.followup)
         reports_dir = run_out_dir / "reports"
         deploy_archive = run_in_dir / "deploy.zip"
-        extract_dir = "measurement"
         if not deploy_archive.is_file():
             continue
         # A retried job resumes: runs whose previous measurement completed (DONE marker with
@@ -103,8 +190,7 @@ if __name__ == "__main__":
             continue
         print("FOUND DEPLOYMENT PACKAGE IN %s, EXTRACTING.." % run_in_dir)
 
-        # Extract to a temporary dir on the local disk (never unpack onto the share)
-        os.makedirs(extract_dir, exist_ok=True)
+        # Extract to the local scratch dir (never unpack onto the share)
         delete_dir_contents(extract_dir)
         t_start = time.monotonic()
         shutil.unpack_archive(str(deploy_archive), extract_dir)
@@ -114,26 +200,15 @@ if __name__ == "__main__":
         print("LAUNCHING MEASUREMENT MANAGER FOR DEPLOY PACKAGE: %s" % run_in_dir.name)
         sys.stdout.flush()
 
-        # Launch experiment manager with generated config
-        result = subprocess.run(
-            [
-                sys.executable,
-                "ci/power_measurement/experiment_manager.py",
-                os.path.join(extract_dir, "driver/settings.json"),
-                extract_dir,
-            ],
-            capture_output=True,
-            text=True,
+        # Hand the package to the (long-lived) experiment manager
+        returncode = manager.measure(
+            os.path.join(extract_dir, "driver/settings.json"), extract_dir, run_in_dir.name
         )
 
         t_measured = time.monotonic()
-        for line in result.stdout.splitlines():
-            print(f"[{run_in_dir.name}] {line}")
-        for line in result.stderr.splitlines():
-            print(f"[{run_in_dir.name}] {line}")
         status = "ok"
-        if result.returncode != 0:
-            print("ERROR: MEASUREMENT MANAGER NON-ZERO EXIT CODE (%d)!" % result.returncode)
+        if returncode != 0:
+            print("ERROR: MEASUREMENT MANAGER NON-ZERO EXIT CODE (%d)!" % returncode)
             exit_code = 1
             status = "failed"
         else:
@@ -151,7 +226,7 @@ if __name__ == "__main__":
             exit_code = 1
             status = "failed"
 
-        exchange.mark_done(run_out_dir, status, returncode=result.returncode)
+        exchange.mark_done(run_out_dir, status, returncode=returncode)
         # Per-phase wall-clock of this run (the board trace carries no timestamps): where the
         # time goes between the experiments themselves and the share/board overhead
         print(
@@ -168,6 +243,8 @@ if __name__ == "__main__":
         summary[f"run_{run_id}"] = status
         delete_dir_contents(extract_dir)
 
+    manager.close()
+    delete_dir_contents(extract_dir)
     with open(summary_name, "w") as f:
         json.dump(summary, f, indent=2)
     print("PROCESSED ALL DEPLOYMENT PACKAGES (%d). EXITING.." % len(summary))

@@ -8,6 +8,14 @@ from pynq import Overlay
 from pynq.ps import Clocks
 
 
+def _stamp(t0, msg):
+    """Print a driver log line with the seconds elapsed since ``t0``.
+
+    The board trace carries no timestamps, so these stamps attribute the measurement time.
+    """
+    print(f"[DRV +{time.monotonic() - t0:5.1f}s] {msg}", flush=True)
+
+
 class FINNInstrumentationOverlay(Overlay):
     """FINN overlay for instrumentation."""
 
@@ -150,11 +158,14 @@ class FINNInstrumentationOverlay(Overlay):
         mux_interval = kwargs.get("mux_interval", 0)
 
         # start accelerator
+        t0 = time.monotonic()
         print("Running accelerator for %d seconds.." % runtime)
         self.start_accelerator(mux_interval=mux_interval)
+        _stamp(t0, "accelerator started")
 
         # let it run for specified runtime
         time.sleep(runtime)
+        _stamp(t0, "runtime elapsed")
 
         # read measurement from instrumentation
         (
@@ -195,9 +206,11 @@ class FINNInstrumentationOverlay(Overlay):
             "min_pipeline_depth": round(min_latency / interval, 2) if interval != 0 else 0,
             "pipeline_depth": round(latency / interval, 2) if interval != 0 else 0,
         }
+        _stamp(t0, "instrumentation read")
         reportfile = os.path.join(report_dir, "report_experiment_instrumentation.json")
         with open(reportfile, "w") as f:
             json.dump(report, f, indent=2)
+        _stamp(t0, "report written")
 
         print("Done.")
 
