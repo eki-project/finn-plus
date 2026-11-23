@@ -11,7 +11,7 @@ from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
-from typing import Optional
+from typing import ClassVar
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
@@ -35,7 +35,7 @@ class bench_fifo(MicrobenchDUT):
 
     NAME = "fifo"
     OP_TYPES = ("StreamingFIFO_rtl",)
-    PARAMS = {
+    PARAMS: ClassVar[dict[str, str]] = {
         "dtype": "element datatype",
         "elems": "elements per stream beat (width = elems * bits)",
         "n": "beats per input vector (loop bound only)",
@@ -44,7 +44,7 @@ class bench_fifo(MicrobenchDUT):
     }
 
     @staticmethod
-    def validate(params: dict) -> Optional[str]:
+    def validate(params: dict) -> str | None:
         """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         bits = DataType[params["dtype"]].bitwidth()
         elems, n, depth = int(params["elems"]), int(params["n"]), int(params["depth"])
@@ -74,7 +74,7 @@ class bench_fifo(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
-        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
+        """Return the sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "dtype": Choice(
                 ["BINARY", "UINT2", "UINT4", "INT4", "UINT8", "INT8", "INT16", "INT32"]
@@ -88,7 +88,7 @@ class bench_fifo(MicrobenchDUT):
         }
 
     @classmethod
-    def make_model(cls, params: dict, fpga_part: str):
+    def make_model(cls, params: dict, fpga_part: str) -> tuple[ModelWrapper, dict]:
         """Build the single-node model for ``params`` and return it with its dut_info."""
         dtype = DataType[params["dtype"]]
         elems, n, depth = int(params["elems"]), int(params["n"]), int(params["depth"])

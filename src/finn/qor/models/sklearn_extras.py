@@ -1,35 +1,38 @@
 """Small scikit-learn building blocks for the QoR model zoo.
 
-* :func:`log1p_float` / :func:`signed_log1p` – picklable transforms for log-scaled inputs and
+* :func:`log1p_float` / :func:`signed_log1p` - picklable transforms for log-scaled inputs and
   targets (resource counts span several orders of magnitude, and minimizing the squared error
   in log space approximates minimizing the relative error the LUT models are selected by).
-* :class:`LogTargetHGBRegressor` / :class:`LogTargetMLPRegressor` – gradient boosting and a
+* :class:`LogTargetHGBRegressor` / :class:`LogTargetMLPRegressor` - gradient boosting and a
   tuned multi-layer perceptron fitted on the log-transformed target.
 
 Only depends on numpy and scikit-learn.
 """
 
 import numpy as np
+from collections.abc import Callable
+from sklearn.base import BaseEstimator
 from sklearn.compose import TransformedTargetRegressor
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.neural_network import MLPRegressor
+from typing import Any
 
 RANDOM_STATE = 42
 
 
-def log1p_float(X):
+def log1p_float(x: Any) -> np.ndarray:
     """``log1p`` of the (non-negative) input as float64; module-level so that pipelines using
     it pickle, and explicit about the dtype (bool/int mixes would otherwise degrade)."""
-    return np.log1p(np.asarray(X, dtype=float))
+    return np.log1p(np.asarray(x, dtype=float))
 
 
-def signed_log1p(y):
+def signed_log1p(y: Any) -> np.ndarray:
     """Sign-preserving ``log1p`` (``sign(y) * log1p(|y|)``), defined for any real target."""
     y = np.asarray(y, dtype=float)
     return np.sign(y) * np.log1p(np.abs(y))
 
 
-def signed_expm1(y):
+def signed_expm1(y: Any) -> np.ndarray:
     """Inverse of :func:`signed_log1p`."""
     y = np.asarray(y, dtype=float)
     return np.sign(y) * np.expm1(np.abs(y))
@@ -39,7 +42,12 @@ class LogTargetRegressor(TransformedTargetRegressor):
     """Regressor fitted on the sign-preserving log of the target (predictions are mapped
     back). ``regressor`` defaults to :class:`HistGradientBoostingRegressor`."""
 
-    def __init__(self, regressor=None, func=signed_log1p, inverse_func=signed_expm1):
+    def __init__(
+        self,
+        regressor: BaseEstimator | None = None,
+        func: Callable[[Any], np.ndarray] = signed_log1p,
+        inverse_func: Callable[[Any], np.ndarray] = signed_expm1,
+    ) -> None:
         """Wrap ``regressor`` with the log1p/expm1 target transform."""
         if regressor is None:
             regressor = self._default_regressor()
@@ -48,7 +56,7 @@ class LogTargetRegressor(TransformedTargetRegressor):
         )
 
     @staticmethod
-    def _default_regressor():
+    def _default_regressor() -> BaseEstimator:
         """Regressor used when none is given."""
         return HistGradientBoostingRegressor(random_state=RANDOM_STATE)
 
@@ -62,6 +70,6 @@ class LogTargetMLPRegressor(LogTargetRegressor):
     be standardized by the pipeline's preprocessor."""
 
     @staticmethod
-    def _default_regressor():
+    def _default_regressor() -> BaseEstimator:
         """Regressor used when none is given."""
         return MLPRegressor(early_stopping=True, max_iter=2000, random_state=RANDOM_STATE)

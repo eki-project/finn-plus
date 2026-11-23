@@ -30,13 +30,17 @@
 """Module for raise scalar to rank1."""
 from __future__ import annotations
 
-from collections.abc import Iterable
-from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
+from typing import TYPE_CHECKING
 
 from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
     lift_to_rank1,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from qonnx.core.modelwrapper import ModelWrapper
 
 
 class RaiseScalarToRank1(Transformation):
@@ -49,7 +53,7 @@ class RaiseScalarToRank1(Transformation):
     initializer data consistent.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize instance."""
         super().__init__()
 
@@ -66,7 +70,7 @@ class RaiseScalarToRank1(Transformation):
                 seen.add(name)
                 yield name
 
-    def apply(self, model: ModelWrapper):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply transformation."""
         graph_modified = False
         for tensor_name in self._tensor_names(model):

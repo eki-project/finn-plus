@@ -152,16 +152,23 @@ class InferThresholdingLayer(Transformation):
 
                 odt = model.get_tensor_datatype(thl_output)
                 scale = getCustomOp(node).get_nodeattr("out_scale")
-                if scale != 1.0:
-                    raise FINNUserError(
-                        f"{node.name}: MultiThreshold out_scale must be 1 for HLS conversion."
-                    )
                 actval = cast("float", getCustomOp(node).get_nodeattr("out_bias"))
                 if int(actval) != actval:
                     raise FINNUserError(
                         f"{node.name}: MultiThreshold out_bias must be integer for HLS conversion."
                     )
                 actval = int(actval)
+                # a bipolar output (out = 2 * step - 1) needs no scale or bias in hardware:
+                # the step index 0/1 already is the stream encoding of BIPOLAR, so the
+                # binary-to-bipolar conversion is a reinterpretation (as for the MVAU)
+                bipolar_ok = odt == DataType["BIPOLAR"] and scale == 2.0 and actval == -1
+                if scale != 1.0 and not bipolar_ok:
+                    raise FINNUserError(
+                        f"{node.name}: MultiThreshold out_scale must be 1 (or 2 with out_bias "
+                        "-1 for a bipolar output) for HLS conversion."
+                    )
+                if bipolar_ok:
+                    actval = 0
 
                 # a signed activation should always have a negative bias,
                 # but BIPOLAR uses the -1 as 0 encoding so the check does not apply

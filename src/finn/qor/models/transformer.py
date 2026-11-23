@@ -13,8 +13,9 @@ import time
 from scipy import sparse
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.model_selection import train_test_split
+from sklearn.utils import Tags
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
-from typing import Any
+from typing import Any, Self
 
 from finn.qor.models.sklearn_extras import RANDOM_STATE, signed_expm1, signed_log1p
 
@@ -60,26 +61,26 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
 
     def __init__(
         self,
-        d_model=32,
-        n_layers=2,
-        n_heads=4,
-        ffn_mult=2,
-        dropout=0.1,
-        pooling="cls",
-        target_transform="log1p",
-        loss="mse",
-        lr=1e-3,
-        weight_decay=1e-4,
-        batch_size=128,
-        max_epochs=300,
-        patience=30,
-        validation_fraction=0.1,
-        lr_patience=10,
-        lr_factor=0.5,
-        torch_threads=1,
-        random_state=RANDOM_STATE,
-        verbose=0,
-    ):
+        d_model: int = 32,
+        n_layers: int = 2,
+        n_heads: int = 4,
+        ffn_mult: int = 2,
+        dropout: float = 0.1,
+        pooling: str = "cls",
+        target_transform: str = "log1p",
+        loss: str = "mse",
+        lr: float = 1e-3,
+        weight_decay: float = 1e-4,
+        batch_size: int = 128,
+        max_epochs: int = 300,
+        patience: int = 30,
+        validation_fraction: float = 0.1,
+        lr_patience: int = 10,
+        lr_factor: float = 0.5,
+        torch_threads: int = 1,
+        random_state: int = RANDOM_STATE,
+        verbose: int = 0,
+    ) -> None:
         """Store the hyperparameters (sklearn convention: no validation here)."""
         self.d_model = d_model
         self.n_layers = n_layers
@@ -112,11 +113,11 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
         return {k: getattr(self, k) for k in _HP_KEYS}
 
     @staticmethod
-    def _dense(X) -> np.ndarray:
+    def _dense(x: Any) -> np.ndarray:
         """Dense float array from a dense or sparse input."""
-        if sparse.issparse(X):
-            X = X.toarray()
-        return np.asarray(X, dtype=np.float32)
+        if sparse.issparse(x):
+            x = x.toarray()
+        return np.asarray(x, dtype=np.float32)
 
     def _transform_target(self, y: np.ndarray) -> np.ndarray:
         """Apply the configured target transform."""
@@ -137,29 +138,29 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
         return y
 
     # -- sklearn API -----------------------------------------------------------------------
-    def fit(self, X, y):
+    def fit(self, X: Any, y: Any) -> Self:  # noqa: N803
         """Fit the model on ``X``/``y`` (see the class docstring)."""
         self.check_runtime()
         from finn.qor.models import _torch_impl
 
-        X, y = check_X_y(X, y, accept_sparse=True, y_numeric=True)
-        X = self._dense(X)
+        x, y = check_X_y(X, y, accept_sparse=True, y_numeric=True)
+        x = self._dense(x)
         y = np.asarray(y, dtype=float)
-        self.n_features_in_ = X.shape[1]
+        self.n_features_in_ = x.shape[1]
         self.y_shift_ = float(np.mean(y))
         self.y_scale_ = float(np.std(y)) or 1.0
         yt = self._transform_target(y)
-        if 0 < self.validation_fraction < 1 and len(X) >= 10:
-            X_train, X_val, y_train, y_val = train_test_split(
-                X, yt, test_size=self.validation_fraction, random_state=self.random_state
+        if 0 < self.validation_fraction < 1 and len(x) >= 10:
+            x_train, x_val, y_train, y_val = train_test_split(
+                x, yt, test_size=self.validation_fraction, random_state=self.random_state
             )
         else:
-            X_train, X_val, y_train, y_val = X, X, yt, yt
+            x_train, x_val, y_train, y_val = x, x, yt, yt
         start = time.perf_counter()
         state, info = _torch_impl.train(
-            X_train,
+            x_train,
             y_train,
-            X_val,
+            x_val,
             y_val,
             self._hp(),
             int(self.random_state),
@@ -171,34 +172,34 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
         _CACHE.pop(id(self), None)
         return self
 
-    def predict(self, X):
+    def predict(self, X: Any) -> np.ndarray:  # noqa: N803
         """Predict ``X`` with the fitted model."""
         check_is_fitted(self, "state_dict_")
         self.check_runtime()
         from finn.qor.models import _torch_impl
 
-        X = self._dense(check_array(X, accept_sparse=True))
-        if X.shape[1] != self.n_features_in_:
-            raise ValueError(f"expected {self.n_features_in_} features, got {X.shape[1]}")
+        x = self._dense(check_array(X, accept_sparse=True))
+        if x.shape[1] != self.n_features_in_:
+            raise ValueError(f"expected {self.n_features_in_} features, got {x.shape[1]}")
         module = _CACHE.get(id(self))
         if module is None:
             module = _torch_impl.load_module(self.n_features_in_, self._hp(), self.state_dict_)
             _CACHE[id(self)] = module
-        return self._inverse_target(_torch_impl.predict(module, X, int(self.torch_threads)))
+        return self._inverse_target(_torch_impl.predict(module, x, int(self.torch_threads)))
 
-    def __sklearn_tags__(self):
-        """sklearn estimator tags (regressor, sparse input accepted)."""
+    def __sklearn_tags__(self) -> Tags:
+        """Sklearn estimator tags (regressor, sparse input accepted)."""
         tags = super().__sklearn_tags__()
         tags.input_tags.sparse = True
         tags.non_deterministic = False
         return tags
 
     # -- persistence: no torch objects in the pickle -----------------------------------------
-    def __getstate__(self):
+    def __getstate__(self) -> dict[str, Any]:
         """Pickle without the cached runtime objects."""
         return dict(self.__dict__)
 
-    def __setstate__(self, state):
+    def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore the state; runtime objects are rebuilt lazily."""
         self.__dict__.update(state)
         _CACHE.pop(id(self), None)

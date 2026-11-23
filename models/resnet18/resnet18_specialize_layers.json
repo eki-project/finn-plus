@@ -15,7 +15,7 @@
   "Thresholding_1": {
     "preferred_impl_style": "rtl"
   },
-  "ReplicateStream_0": {
+  "DuplicateStreams_0": {
     "preferred_impl_style": "hls"
   },
   "FMPadding_1": {
@@ -48,7 +48,7 @@
   "Thresholding_4": {
     "preferred_impl_style": "rtl"
   },
-  "ReplicateStream_1": {
+  "DuplicateStreams_1": {
     "preferred_impl_style": "hls"
   },
   "FMPadding_3": {
@@ -81,7 +81,7 @@
   "Thresholding_7": {
     "preferred_impl_style": "rtl"
   },
-  "ReplicateStream_2": {
+  "DuplicateStreams_2": {
     "preferred_impl_style": "hls"
   },
   "FMPadding_5": {
@@ -123,7 +123,7 @@
   "Thresholding_11": {
     "preferred_impl_style": "rtl"
   },
-  "ReplicateStream_3": {
+  "DuplicateStreams_3": {
     "preferred_impl_style": "hls"
   },
   "FMPadding_7": {
@@ -156,7 +156,7 @@
   "Thresholding_14": {
     "preferred_impl_style": "rtl"
   },
-  "ReplicateStream_4": {
+  "DuplicateStreams_4": {
     "preferred_impl_style": "hls"
   },
   "FMPadding_9": {
@@ -198,7 +198,7 @@
   "Thresholding_18": {
     "preferred_impl_style": "rtl"
   },
-  "ReplicateStream_5": {
+  "DuplicateStreams_5": {
     "preferred_impl_style": "hls"
   },
   "FMPadding_11": {
@@ -231,7 +231,7 @@
   "Thresholding_21": {
     "preferred_impl_style": "rtl"
   },
-  "ReplicateStream_6": {
+  "DuplicateStreams_6": {
     "preferred_impl_style": "hls"
   },
   "FMPadding_13": {
@@ -273,7 +273,7 @@
   "Thresholding_25": {
     "preferred_impl_style": "rtl"
   },
-  "ReplicateStream_7": {
+  "DuplicateStreams_7": {
     "preferred_impl_style": "hls"
   },
   "FMPadding_15": {

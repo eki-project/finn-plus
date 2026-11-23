@@ -6,13 +6,10 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
-## 1.6.0 - 28.09.2026
+## Unreleased
 
 ### Added
-- **Sync with upstream `dev` branch, including FINN v1.0.0-alpha** (Xilinx#1687, up to Xilinx#1703): pulls in all upstream `dev` changes since April 2026, see the sections below for the user-facing ones (eki-project#259)
-- **Empirical QoR estimation**: regression models fitted on the CI microbenchmark database predict post-synthesis LUTs and power per layer (eki-project#260)
-    - *Corresponding poster @ FPT'25: ["Empirical QoR Estimation Flow for Fast Design Space Exploration of DNN Dataflow Accelerators"](https://doi.org/10.1109/ICFPT67023.2025.00044)*
-    - See [QoR README](src/finn/qor/README.md); this is the initial implementation, extensions will follow soon
+- Typed errors for models that FINN+ cannot build, so that tools can tell why and where a model was rejected: `FINNUnsupportedOpError` (a node without hardware mapping or implementation, raised by `SpecializeLayers` and by `step_create_dataflow_partition` for unmapped nodes in between hardware layers) and `FINNFoldingError` (an illegal or unachievable folding) are `FINNUserError`s that carry the `node_name` and `op_type` of the offending node. The new analysis passes `unmapped_layer_report` (every unmapped node with its position relative to the hardware layers) and `folding_violations` (every node with an illegal folding, based on the new `HWCustomOp.check_folding`) report the same without building. `SetFolding` records the op types it cannot fold and the achieved cycles per frame (`unhandled_op_types`, `achieved_cycles_per_frame`) and raises a `FINNFoldingError` for them with `strict=True` (eki-project#310)
 - **Microbenchmarks for more operators**: single-operator microbenchmark DUTs (`finn.benchmarking.dut.*`, base class `MicrobenchDUT`) and QoR feature specs for Thresholding, ConvolutionInputGenerator (SWG), VVAU, StreamingFIFO, StreamingDataWidthConverter, Pool, FMPadding and elementwise Add/Mul in addition to the MVAU
 - **Random sampling of microbenchmark configurations**: `mode: sample` config entries (and `finn bench --sample DUT:N`) draw new configurations from each DUT's parameter space and skip those already in the result database (`finn.benchmarking.sampling`, `finn.qor.params_key`); `ci/cfg/microbenchmark_sample_*.yml`, pipeline variables `SAMPLE_COUNT`/`SAMPLE_SEED`
 - **Empirical DSP/BRAM/URAM estimation**: models for `metrics.synth.resources.{DSP,URAM}` and BRAM in 18K-block equivalents next to LUTs and power; zero-inflated targets are selected by MAE, only fitted with enough signal, and reported with MAE/zero hit rate in the fitting artifacts
@@ -27,6 +24,82 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - **Re-collection without rebuilding**: `COLLECT_PIPELINE_ID=<bench child id>` on a manual pipeline runs only `Result Collection` and the QoR jobs on that pipeline's exchange directory (experiments and database entries keep the builds' pipeline id; `DONE` markers now record the build commit)
 - **Time limit for tool calls**: `FINN_TOOL_TIMEOUT_S` (read by `launch_process_helper`) bounds every Vitis HLS / Vivado call and terminates the tool's whole process group when exceeded; microbenchmark builds set it to 2 h (`TOOL_TIMEOUT_S`, config parameter `tool_timeout_s`) after one sampled MVAU_hls spent a day in HLS and blocked its Slurm array task
 - **Self-contained result collection**: the `Result Collection` jobs create their own venv (dvc, dvclive, matplotlib, yaml) instead of using the runner's system Python, whose packages an OS upgrade of the runner had silently broken
+
+### Changed
+- **QoR model store decision on current data**: `ci/qor/fit_estimators.py` compares a new model against the stored model's pipeline re-fitted and cross-validated on the current database instead of against the score recorded when it was stored, so a model trained on more samples is no longer rejected for a marginally lower historical number
+- Microbenchmark samples pin the memstream `ram_cascade_height` to 0 (the mapping the database was collected with) so that resource figures stay comparable across the cascade-height rule
+- A folding that cannot be implemented (e.g. a `PE` that does not divide the number of channels of an MVAU, VVAU, sliding window generator, padding, pooling, stream duplication or label selection layer) fails at the end of `step_apply_folding_config` with a `FINNFoldingError` that lists all affected nodes, instead of an assertion during code generation or FIFO insertion. Estimate-only builds, which used to report estimates for such a folding, fail as well (eki-project#310)
+- The CI test suite runs representative subsets of its five largest test grids by default: `test_fpgadataflow_thresholding` (HLS rtlsim cases), `test_elementwise_binary_operation_stitched_ip`, `test_requant_rtl` (stitched-IP cases), `test_fpgadataflow_rtl_mvau` and the multi-FPGA `test_partitioning`. Together they took 370 of the suite's 520 worker-hours; the subsets take about 90. The remaining combinations carry the `xslow` marker, which the `quick`, `quicktest_ci` and `full_ci` variants deselect and `pytest -m xslow` selects (eki-project#326)
+- **Faster microbenchmark sampling**: microbenchmark builds request 16 cores / 64 GB / 16 FINN workers (= parallel Vivado synthesis runs) per Slurm array task (pipeline variables `MICROBENCH_CPU_CORES`, `MICROBENCH_MEM`, `MICROBENCH_FINN_WORKERS`) instead of the regression request, their per-tool-call time limit drops from 2 h to 1 h, and the board measures them with 5 s idle / 5 s load phases sampled at 5 Hz instead of 10 s / 20 s at 1 Hz (`PAF.interval` in the experiment config); a retried `Measurement` job skips the runs it already measured
+- **Faster board measurements**: `ci/measure.py` keeps one experiment manager process per job (`experiment_manager.py --serve`), unpacks packages and writes reports in `/dev/shm` (`FINN_BENCH_SCRATCH_DIR` overrides), the manager loads the overlay once per package for all experiments with the same parameters, the xlsx export of the power recordings is opt-in (`PAF.save_xlsx`), the microbenchmark phases are 3 s instead of 5 s, and the manager and the instrumentation driver stamp their log lines with elapsed seconds
+- **Local bench artifacts are optional**: the run parameter `save_local_artifacts` (`always` (default), `on_failure`, `never`) controls whether a bench run copies its build output and zipped FINN tmp dir into the local artifact directory; microbenchmark samples default to `on_failure`, which removes ~180 files and ~100 MB per successful run (~250 GB and 540k files per 1800-run pipeline) that nothing downstream reads
+
+### Fixed
+- The merged JUnit report of the CI test suite counted a test that failed on both of its attempts as passed: pytest-rerunfailures 16 writes the first attempt without a result element and the merge preferred it over the final failure. Entries of one testcase in one report are now resolved in order, the last attempt counts. The separate rerun of crashed tests after the main run is removed: it never ran a test (it passed dotted module names as node ids, which pytest does not resolve), and pytest-rerunfailures already retries a test whose worker crashed (eki-project#326)
+- `StreamlinePlus` never terminated on a `Transpose` followed by a scalar `Mul` that nothing downstream absorbs: `MoveTransposePastEltwise` and `MoveScalarLinearPastInvariants` moved the two past each other forever. The Transpose is no longer moved past scalar constants, the graph input/output shapes survive the reordering, and the join movers handle a join of a tensor with itself (eki-project#321)
+- `MoveMulPastJoinAdd` raised `ValueError: The truth value of an array ... is ambiguous` when the Mul constants in front of the join were per-channel arrays; they are now compared element-wise (eki-project#325)
+- `finn run` crashed on start with `run() got an unexpected keyword argument 'num_default_workers'`; the deprecated command accepts the `--num-workers` option again
+
+## 1.6.2 - 13.11.2026
+
+### Added
+- Reset pipeline for the Alveo and Zynq hardware kernels (`reset_pipeline_stages`, default 2): every dataflow node takes its reset from a register stage of its own instead of one register driving every node across the device (eki-project#301)
+- Optional AXI-stream register slices in front of every node input that another node drives (`stream_register_slices`, off by default); on mobilenetv1 (U55C) they raise the clock by 3-8 % for about 8 % more LUTs and registers (eki-project#301)
+- `vitis_opt_strategy` PERFORMANCE and PERFORMANCE_BEST also set the Vivado implementation directives of the link and synthesize the kernels with retiming (eki-project#301)
+- The PYNQ driver validates accelerators on more datasets: Google Speech Commands v2 (`speechcommands`), GTSRB (`gtsrb`), the evaluation split of the RadioML transformer (`radioml_transformer`) and masked token prediction on TinyStories (`tinystories`); `scripts/prepare_validation_datasets.py` fetches them into the dataset directory (eki-project#290)
+- Alveo builds warn when `step_synthesize_bitfile` is configured without `step_prepare_synthesis`, and a missing kernel XO file names the missing step instead of failing on the file (eki-project#258)
+
+### Changed
+- The transformer regression models are the current `main` of finn-transformers (`3a21c22`; radioml, vision and language reach 71 %, 66 % and 67 % top-1 instead of 39 %, 26 % and 39 %), with throughput targets and threshold memory styles adjusted to the wider models (eki-project#290)
+- The CIFAR validation of the PYNQ driver normalizes the images for every accelerator with a float input, not only for CIFAR-100 (override with the `normalize` kwarg of `validate`) (eki-project#290)
+- Pin `onnx-passes` to 0.4.1 (eki-project#288)
+- `FMPadding_Pixel` is renamed to `InputDilation` (`InputDilation_hls`); models that still contain `FMPadding_Pixel` nodes have to be regenerated (eki-project#299)
+- `ReplicateStream` and `InferReplicateStream` are removed; `DuplicateStreams` covers the same functionality (eki-project#299)
+- Custom ops register themselves with the `@register_custom_op` decorator instead of being listed by hand in the `custom_op` packages (eki-project#299)
+- The HLS/TCL code-generation templates moved from `finn.custom_op.fpgadataflow.templates` to `src/finn/templates/codegen/`, loaded with `finn.templates.load_codegen_template` (eki-project#299)
+- Invalid inputs raise `FINNUserError` and broken invariants `FINNInternalError` instead of `AssertionError`/`Exception` everywhere in `src/` (eki-project#299, eki-project#300)
+- `rtlsim_output_to_npy` and `unpack_innermost_dim_from_hex_string` take `packed_bits`/`target_bits` instead of `packedBits`/`targetBits`, and `finn.transformation.streamline.streamline_plus` no longer re-exports the transformations of the other streamlining modules (eki-project#300)
+
+### Fixed
+- Alveo links with Vivado 2023.1, 2023.2 and 2024.2 placed and routed the kernel clock at 100 MHz whatever `synth_clk_period_ns` asked for; the link now re-creates the kernel clock at the requested frequency (eki-project#301)
+- The XDC of the Vitis kernels was silently dropped at link time (`Designutils 20-1275`) (eki-project#301)
+- Kernels pinned to an SLR took the kernel reset of SLR0 across the SLR boundary, and only the Aurora transceiver was actually pinned: each kernel now takes the reset of its own SLR and every kernel with an SLR assignment (e.g. from `vitis_floorplan_file`) is pinned (eki-project#301)
+- A second `[vivado]` line added to a v++ link configuration was glued onto the first (eki-project#301)
+- The LUT estimate of the RTL MVAU was always 0 (eki-project#301)
+- The pointer registers of `memstream` and the command registers of the AXI-Lite interface are replicated at synthesis (`MAX_FANOUT`) instead of fanning out over whole block RAM arrays (eki-project#301)
+- Standalone thresholds (`standalone_thresholds`) rejected `MultiThreshold` nodes with a bipolar output (`out_scale=2`, `out_bias=-1`, e.g. the last layer of the cybsec MLP), which the fused MVAU conversion has accepted all along (eki-project#286)
+- `finn build` and `finn auto` exit with code 1 when the build fails instead of always exiting with 0; the README describes the current `finn` commands (eki-project#306)
+- `FINN_SETTINGS` pointing to a directory, and other user errors while loading the settings, print a short error message instead of a stack trace, unless `FINN_DEBUG=1` is set (eki-project#316)
+- The settings wizard and the README no longer suggest that the settings have to live in `~/.finn/`, and FINN+ no longer creates `~/.finn/` when it only reads settings (eki-project#316)
+- `finn --version` shows the `git describe` output instead of 0.0.0 in development installations (eki-project#316)
+- `AUTOMATIC_DEPENDENCY_UPDATES` from the settings file or the environment was always overridden by the CLI; only `--skip-dep-update` overrides it now, and `finn check` no longer updates dependencies, as its help says (eki-project#316)
+- `finn run` failed on every call with `run() got an unexpected keyword argument 'num_default_workers'` (eki-project#300, eki-project#316)
+- Declare the missing `psutil` dependency, without which `finn build` failed on a plain `pip install finn-plus` (eki-project#288)
+- (Xilinx) RTL data width converters for integer down-conversions use the small serializer again instead of the generic converter, which had cost up to 2.8x the LUTs since the upstream sync (Xilinx#1710, eki-project#292)
+- RTL data width converters between stream widths that are not integer multiples of each other (e.g. 24 to 32 bit) stalled periodically and only reached about two thirds of their throughput; they now run at full rate for a slightly larger buffer (eki-project#290)
+- The simulation-based FIFO sizing (`distributed_sim`) sporadically failed its final validation with a timeout for short simulations such as fully unrolled MLPs: the nodes other than the output node simulated a timing-dependent number of extra cycles after the stop, which set the cycle limit and inflated the measured FIFO occupancies; the simulation now stops deterministically (eki-project#295)
+- The simulation-based FIFO sizing never finished for some double-pumped RTL MVAUs (`pumpedCompute`, e.g. with `SIMD == MW`): the C++ simulation released the reset just before a rising edge shared by `ap_clk` and `ap_clk2x`, so the pumped core came out of reset in the wrong phase; the reset is now released right after the edge, as in the Python simulation and in hardware (eki-project#297)
+- `DuplicateStreams` and `StreamingSplit` reported too few expected output words for inputs whose first dimension is not 1 (e.g. `[seq, dim]` tensors or a batch), so their RTL simulation timed out for such shapes (eki-project#299)
+- `MoveTransposePastJoinAdd`, `MoveTransposePastJoinMul` and `MoveTransposePastJoinConcat` also moved Transposes with different permutations past the join and kept only the first permutation, which changed the function of the graph; such joins are now left untouched (eki-project#300)
+- `InferPixelPaddingDeconv` could leave out the Im2Col of a ConvTranspose with a 1x1 kernel and non-zero padding when an unpadded ConvTranspose had been converted before it (eki-project#300)
+- The `ports_per_device` limit of the Aurora multi-FPGA partitioner had no effect, because the connections of a device were summed over the wrong nodes; partitionings that need more ports per device than configured are now rejected (eki-project#300)
+
+## 1.6.1 - 01.10.2026
+
+### Changed
+- The `finn-plus-tests` package is removed: the test suite is no longer packaged, `finn test` runs it from the `tests/` directory of a repository checkout (`--tests-path`, default `./tests`) and its tooling is available as the `test` extra (`pip install finn-plus[test]`) (eki-project#284)
+
+### Fixed
+- A plain `pip install finn-plus` could not start the CLI because it imported `junitparser`, a dependency of the optional test suite, on start-up (eki-project#284)
+- The cycle estimate of the RTL sliding window generator in 1D depthwise mode was about 2x too low for windows spanning a whole sequence, and `SetFolding` now folds the window generator together with the pooling/depthwise layer it feeds so that it no longer becomes the throughput bottleneck (eki-project#280)
+
+## 1.6.0 - 28.09.2026
+
+### Added
+- **Sync with upstream `dev` branch, including FINN v1.0.0-alpha** (Xilinx#1687, up to Xilinx#1703): pulls in all upstream `dev` changes since April 2026, see the sections below for the user-facing ones (eki-project#259)
+- **Empirical QoR estimation**: regression models fitted on the CI microbenchmark database predict post-synthesis LUTs and power per layer (eki-project#260)
+    - *Corresponding poster @ FPT'25: ["Empirical QoR Estimation Flow for Fast Design Space Exploration of DNN Dataflow Accelerators"](https://doi.org/10.1109/ICFPT67023.2025.00044)*
+    - See [QoR README](src/finn/qor/README.md); this is the initial implementation, extensions will follow soon
 - `verify_nodewise_report` build option: the `folded_hls_cppsim` and `node_by_node_rtlsim` verification steps also execute the folded graph with the Python implementation of every layer and report the first node whose simulated output deviates (eki-project#263)
 - Improved diagnostics in the PYNQ driver: multi-pass dataset validation (`passes` kwarg of `validate`) with per-sample predictions saved next to the report, and the driver's unit tests run on the board at the start of every CI measurement (eki-project#263)
 - Build config option `large_fifo_mem_style` is back (`auto`/`block`/`distributed`/`ultra`): it pins the memory style of the FIFOs that `fifo.sv` would back with BRAM/URAM after sizing, since the RTL's `auto` takes URAM for every FIFO deeper than 2028 entries (eki-project#259)
@@ -46,9 +119,6 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - (Xilinx) Board support: `AUP-ZU3_8GB` (Xilinx#1659)
 
 ### Changed
-- **Faster microbenchmark sampling**: microbenchmark builds request 16 cores / 64 GB / 16 FINN workers (= parallel Vivado synthesis runs) per Slurm array task (pipeline variables `MICROBENCH_CPU_CORES`, `MICROBENCH_MEM`, `MICROBENCH_FINN_WORKERS`) instead of the regression request, their per-tool-call time limit drops from 2 h to 1 h, and the board measures them with 5 s idle / 5 s load phases sampled at 5 Hz instead of 10 s / 20 s at 1 Hz (`PAF.interval` in the experiment config); a retried `Measurement` job skips the runs it already measured
-- **Faster board measurements**: `ci/measure.py` keeps one experiment manager process per job (`experiment_manager.py --serve`), unpacks packages and writes reports in `/dev/shm` (`FINN_BENCH_SCRATCH_DIR` overrides), the manager loads the overlay once per package for all experiments with the same parameters, the xlsx export of the power recordings is opt-in (`PAF.save_xlsx`), the microbenchmark phases are 3 s instead of 5 s, and the manager and the instrumentation driver stamp their log lines with elapsed seconds
-- **Local bench artifacts are optional**: the run parameter `save_local_artifacts` (`always` (default), `on_failure`, `never`) controls whether a bench run copies its build output and zipped FINN tmp dir into the local artifact directory; microbenchmark samples default to `on_failure`, which removes ~180 files and ~100 MB per successful run (~250 GB and 540k files per 1800-run pipeline) that nothing downstream reads
 - New build step `step_minimize_bit_width_initial` runs the bit width minimization once directly after the conversion to HW layers (default steps and benchmark DUT step lists), so that layer specialization and folding see minimized datatypes instead of the placeholders left by datatype inference (32 bit MAC results, 64 bit initializers from the ONNX passes frontend). Upstream's datatype-only first pass `step_minimize_bit_width_datatype_only` (Xilinx#1700) is available as well but not used by default: with the INT64 placeholder annotation of the onnx-passes frontend a datatype-only pass leaves the inflated widths in place (eki-project#259)
 - `step_prepare_synthesis` is skipped when no bitfile is requested (in line with `step_synthesize_bitfile`) (eki-project#259)
 - `InferRequantLayer` derives the output datatype of converted `Quant` nodes from the node attributes instead of the (possibly missing) tensor annotation (eki-project#259); it skips signed-output `MultiThreshold` nodes with `out_bias == 0` and points to `AbsorbScalarBiasIntoMultiThreshold` (Xilinx#1699)
@@ -70,7 +140,6 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - (Xilinx) Datatype minimization for more layers: `Lookup` minimizes its embedding datatype and `GlobalAccPool` its output datatype (Xilinx#1701); `Pool` minimizes its accumulator/output datatype (`AccPool`/`AvgPool`; `AccumBits` of `QuantAvgPool`) and passes the input datatype through for `MaxPool` when datatypes change after conversion (Xilinx#1697, Xilinx#1701, eki-project#259)
 
 ### Fixed
-- `finn run` crashed on start with `run() got an unexpected keyword argument 'num_default_workers'`; the deprecated command accepts the `--num-workers` option again
 - ImageNet validation in the Pynq driver could count a first image in place of a last one at the end of a pass, making the reported top-1 accuracy vary by single images between runs of the same bitfile (eki-project#263)
 - Runtime-writable weights were never written on the CI board because the driver looked for `runtime_weights/` relative to the working directory and skipped the load silently when it was missing; the weight directory is now resolved next to `settings.json` and a missing directory is an error for accelerators with runtime-writable weights (eki-project#255)
 - The MLO (DDR) weight directory of the Pynq driver was resolved relative to the working directory as well; it is now taken from next to `settings.json` like `runtime_weights/`, and a missing directory reports what to pass instead of failing on the first `.dat` file (eki-project#259)

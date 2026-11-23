@@ -15,10 +15,11 @@ import logging
 import numpy as np
 import os
 import pandas as pd
+from collections.abc import Callable
 from onnx import NodeProto
+from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
-from typing import Callable, Optional
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.qor.database import POWER_TARGET_COL
@@ -45,8 +46,10 @@ NodeFeatureExtractor = Callable[[ModelWrapper, NodeProto, HWCustomOp], dict]
 NODE_FEATURE_EXTRACTORS: dict[str, NodeFeatureExtractor] = {}
 
 
-def register_node_features(spec_name: str):
-    """Decorator registering the node feature extractor of an operator spec."""
+def register_node_features(
+    spec_name: str,
+) -> Callable[[NodeFeatureExtractor], NodeFeatureExtractor]:
+    """Register the node feature extractor of an operator spec (decorator)."""
     assert spec_name in SPECS, f"No feature spec named {spec_name}"
 
     def decorator(fn: NodeFeatureExtractor) -> NodeFeatureExtractor:
@@ -123,7 +126,9 @@ def _mvau_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> di
 
 
 @register_node_features("thresholding")
-def _thresholding_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+def _thresholding_features(
+    model: ModelWrapper, node: NodeProto, inst: HWCustomOp  # noqa: ARG001 (uniform signature)
+) -> dict:
     """Feature row of a Thresholding node (see ``THRESHOLDING_SPEC``)."""
     hls = backend_of(node) == "hls"
     return {
@@ -141,7 +146,9 @@ def _thresholding_features(model: ModelWrapper, node: NodeProto, inst: HWCustomO
 
 
 @register_node_features("swg")
-def _swg_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+def _swg_features(
+    model: ModelWrapper, node: NodeProto, inst: HWCustomOp  # noqa: ARG001 (uniform signature)
+) -> dict:
     """Feature row of a ConvolutionInputGenerator node (see ``SWG_SPEC``)."""
     k_h, k_w = inst.get_nodeattr("ConvKernelDim")
     ifm_h, ifm_w = inst.get_nodeattr("IFMDim")
@@ -195,7 +202,9 @@ def _vvau_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> di
 
 
 @register_node_features("fifo")
-def _fifo_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+def _fifo_features(
+    model: ModelWrapper, node: NodeProto, inst: HWCustomOp  # noqa: ARG001 (uniform signature)
+) -> dict:
     """Feature row of a StreamingFIFO node (see ``FIFO_SPEC``)."""
     width = inst.get_instream_width()
     depth = inst.get_nodeattr("depth")
@@ -209,7 +218,9 @@ def _fifo_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> di
 
 
 @register_node_features("dwc")
-def _dwc_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+def _dwc_features(
+    model: ModelWrapper, node: NodeProto, inst: HWCustomOp  # noqa: ARG001 (uniform signature)
+) -> dict:
     """Feature row of a StreamingDataWidthConverter node (see ``DWC_SPEC``)."""
     in_width = inst.get_nodeattr("inWidth")
     out_width = inst.get_nodeattr("outWidth")
@@ -226,7 +237,9 @@ def _dwc_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dic
 
 
 @register_node_features("pool")
-def _pool_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+def _pool_features(
+    model: ModelWrapper, node: NodeProto, inst: HWCustomOp  # noqa: ARG001 (uniform signature)
+) -> dict:
     """Feature row of a Pool node (see ``POOL_SPEC``)."""
     k_h, k_w = inst.get_nodeattr("KernelSize")
     return {
@@ -242,7 +255,9 @@ def _pool_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> di
 
 
 @register_node_features("fmpadding")
-def _fmpadding_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+def _fmpadding_features(
+    model: ModelWrapper, node: NodeProto, inst: HWCustomOp  # noqa: ARG001 (uniform signature)
+) -> dict:
     """Feature row of an FMPadding node (see ``FMPADDING_SPEC``)."""
     idim_h, idim_w = inst.get_nodeattr("ImgDim")
     pad_t, pad_l, pad_b, pad_r = inst.get_nodeattr("Padding")
@@ -260,7 +275,9 @@ def _fmpadding_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) 
 
 
 @register_node_features("eltwise")
-def _eltwise_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
+def _eltwise_features(
+    model: ModelWrapper, node: NodeProto, inst: HWCustomOp  # noqa: ARG001 (uniform signature)
+) -> dict:
     """Feature row of an elementwise binary node (see ``ELTWISE_SPEC``)."""
     op = node.op_type.replace("Elementwise", "").rsplit("_", 1)[0]
     lhs_style = inst.get_nodeattr("lhs_style")
@@ -293,7 +310,7 @@ def _eltwise_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) ->
 class QoRModelSet:
     """All fitted QoR estimators found in a model directory, addressable by node op_type."""
 
-    def __init__(self, estimators: Optional[list[QoREstimator]] = None, model_dir: str = ""):
+    def __init__(self, estimators: list[QoREstimator] | None = None, model_dir: str = "") -> None:
         """Index the given estimators by operator name and target column."""
         self.model_dir = model_dir
         self._by_operator: dict[str, dict[str, QoREstimator]] = {}
@@ -308,28 +325,28 @@ class QoRModelSet:
         for op, target in QoREstimator.available_models(model_dir):
             try:
                 estimators.append(QoREstimator.load(model_dir, op, target))
-            except Exception as e:  # noqa: BLE001 - one broken model must not disable all
+            except Exception as e:  # one broken model must not disable all  # noqa: PERF203
                 logger.warning("Skipping QoR model %s/%s: %s", op, target, e)
         logger.info("Loaded %d QoR models from %s", len(estimators), model_dir)
         return cls(estimators, model_dir)
 
     @classmethod
-    def load_from_env(cls) -> Optional["QoRModelSet"]:
+    def load_from_env(cls) -> "QoRModelSet | None":
         """Load models from ``$FINN_QOR_MODEL_DIR``; None if unset, missing or empty."""
         model_dir = os.environ.get(MODEL_DIR_ENV_VAR)
         if not model_dir:
             return None
-        if not os.path.isdir(model_dir):
+        if not Path(model_dir).is_dir():
             logger.warning("%s=%s is not a directory", MODEL_DIR_ENV_VAR, model_dir)
             return None
         models = cls.load(model_dir)
         return models if len(models) > 0 else None
 
     def __len__(self) -> int:
-        """Number of loaded estimators (over all operators and targets)."""
+        """Return the number of loaded estimators (over all operators and targets)."""
         return sum(len(targets) for targets in self._by_operator.values())
 
-    def get(self, op_type: str, target: str) -> Optional[QoREstimator]:
+    def get(self, op_type: str, target: str) -> QoREstimator | None:
         """Estimator for a node op_type and target column, or None if not available."""
         spec = spec_for_op_type(op_type)
         if spec is None:

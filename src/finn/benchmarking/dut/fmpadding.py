@@ -5,7 +5,7 @@ from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
-from typing import Optional
+from typing import ClassVar
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
@@ -24,7 +24,7 @@ class bench_fmpadding(MicrobenchDUT):
 
     NAME = "fmpadding"
     OP_TYPES = ("FMPadding_rtl",)
-    PARAMS = {
+    PARAMS: ClassVar[dict[str, str]] = {
         "idt": "input datatype (must be able to represent 0)",
         "ch": "channels",
         "simd": "channel parallelism (must divide ch)",
@@ -33,7 +33,7 @@ class bench_fmpadding(MicrobenchDUT):
     }
 
     @staticmethod
-    def validate(params: dict) -> Optional[str]:
+    def validate(params: dict) -> str | None:
         """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         idt = DataType[params["idt"]]
         if not idt.allowed(0):
@@ -61,7 +61,7 @@ class bench_fmpadding(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
-        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
+        """Return the sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "idt": Choice(["BINARY", "UINT2", "INT2", "UINT4", "INT4", "UINT8", "INT8"]),
             "ch": Choice([3, 4, 8, 16, 32, 64, 128, 256, 512, 1024]),
@@ -86,7 +86,7 @@ class bench_fmpadding(MicrobenchDUT):
         }
 
     @classmethod
-    def make_model(cls, params: dict, fpga_part: str):
+    def make_model(cls, params: dict, fpga_part: str) -> tuple[ModelWrapper, dict]:
         """Build the single-node model for ``params`` and return it with its dut_info."""
         idt = DataType[params["idt"]]
         ch, simd = int(params["ch"]), int(params["simd"])

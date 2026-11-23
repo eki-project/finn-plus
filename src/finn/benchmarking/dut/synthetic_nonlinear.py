@@ -16,7 +16,7 @@ Classes:
 
 import numpy as np
 from onnx import TensorProto, helper
-from qonnx.core.datatype import DataType
+from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.transformation.general import (
@@ -34,12 +34,18 @@ from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 import finn.builder.build_dataflow_config as build_cfg
 from finn.benchmarking.bench_base import bench
 
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.util.basic import make_build_dir
+from finn.util.exception import FINNInternalError, FINNUserError
 
 
 def _generate_random_threshold_values(
-    data_type, num_input_channels, num_steps, narrow=False, per_tensor=False
-):
+    data_type: BaseDataType,
+    num_input_channels: int,
+    num_steps: int,
+    narrow: bool = False,
+    per_tensor: bool = False,
+) -> np.ndarray:
     """Generate random threshold values for quantization operations.
 
     This helper function creates random threshold arrays used in multi-threshold operators.
@@ -67,14 +73,16 @@ def _generate_random_threshold_values(
     if narrow:
         num_steps -= 1
 
-    return np.random.randint(
-        data_type.min(),
-        data_type.max() + 1,
+    # NOTE: uses the legacy global numpy RNG (not np.random.Generator) so that
+    # benchmark configs stay reproducible against previously recorded results
+    return np.random.randint(  # noqa: NPY002
+        int(data_type.min()),
+        int(data_type.max()) + 1,
         (num_input_channels, num_steps),
     ).astype(np.float32)
 
 
-def _sort_thresholds_increasing(thresholds):
+def _sort_thresholds_increasing(thresholds: np.ndarray) -> np.ndarray:
     """Sort threshold arrays in ascending order along the last axis.
 
     This helper function ensures that threshold values are in monotonic increasing order,
@@ -92,7 +100,9 @@ def _sort_thresholds_increasing(thresholds):
     return np.sort(thresholds, axis=1)
 
 
-def _make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_window=0):
+def _make_conv_building_block(
+    ifm_dim: int, ch: int, kernel_size: int, simd: int, pe: int, parallel_window: int = 0
+) -> ModelWrapper:
     """Create a single convolutional building block for synthetic CNN models.
 
     This function generates a complete convolutional processing block consisting of:
@@ -118,7 +128,7 @@ def _make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_windo
                      with initialized weights and thresholds
 
     Raises:
-        AssertionError: If input and output dimensions don't match (not stackable)
+        FINNUserError: If input and output dimensions don't match (not stackable)
 
     Fixed Configuration:
         - Data types: UINT4 for inputs/weights/outputs, UINT32 for thresholds
@@ -146,7 +156,8 @@ def _make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_windo
     inpgen_out_shape = [1, out_feature_dim, out_feature_dim, in_ch * kernel_size * kernel_size]
     output_shape = [1, out_feature_dim, out_feature_dim, out_ch]
 
-    assert input_shape == output_shape, "ERROR: Conv layer dimensions not stackable"
+    if input_shape != output_shape:
+        raise FINNUserError("ERROR: Conv layer dimensions not stackable")
 
     padding_config = {}
     padding_config["domain"] = "finn.custom_op.fpgadataflow.rtl"
@@ -239,7 +250,9 @@ def _make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_windo
     return model
 
 
-def _combine_blocks(lb, rb, ifm_dim, ch, pe):
+def _combine_blocks(
+    lb: ModelWrapper, rb: ModelWrapper, ifm_dim: int, ch: int, pe: int
+) -> ModelWrapper:
     """Combine two processing branches into a nonlinear topology with split-merge pattern.
 
     This function creates a nonlinear CNN architecture by combining two
@@ -309,8 +322,8 @@ def _combine_blocks(lb, rb, ifm_dim, ch, pe):
         rb.get_tensor_datatype(rb_output.name).name,
     ]
 
-    nodes_lb = [node for node in lb.graph.node]
-    nodes_rb = [node for node in rb.graph.node]
+    nodes_lb = list(lb.graph.node)
+    nodes_rb = list(rb.graph.node)
     nodes_new = (
         nodes_lb
         + nodes_rb
@@ -324,12 +337,12 @@ def _combine_blocks(lb, rb, ifm_dim, ch, pe):
         ]
     )
 
-    value_info_lb = [x for x in lb.graph.value_info]
-    value_info_rb = [x for x in rb.graph.value_info]
+    value_info_lb = list(lb.graph.value_info)
+    value_info_rb = list(rb.graph.value_info)
     value_info_new = value_info_lb + value_info_rb + [lb_input, lb_output, rb_input, rb_output]
 
-    initializer_lb = [x for x in lb.graph.initializer]
-    initializer_rb = [x for x in rb.graph.initializer]
+    initializer_lb = list(lb.graph.initializer)
+    initializer_rb = list(rb.graph.initializer)
     initializer_new = initializer_lb + initializer_rb
     modelproto = qonnx_make_model(
         helper.make_graph(
@@ -343,7 +356,10 @@ def _combine_blocks(lb, rb, ifm_dim, ch, pe):
 
     model = ModelWrapper(modelproto)
     model.set_tensor_datatype("top_in", lb.get_tensor_datatype(lb_input.name))
-    model.set_tensor_layout("top_in", lb.get_tensor_layout(lb_input.name))
+    lb_input_layout = lb.get_tensor_layout(lb_input.name)
+    if lb_input_layout is None:
+        raise FINNInternalError(f"Left branch input tensor {lb_input.name} has no layout set")
+    model.set_tensor_layout("top_in", lb_input_layout)
     for i in initializer_new:
         model.graph.initializer.append(i)
 
@@ -369,7 +385,7 @@ class bench_synthetic_nonlinear(bench):
         - Flexible folding parameters (SIMD, PE, parallel_window)
     """
 
-    def _step_export_onnx(self, onnx_export_path):
+    def _step_export_onnx(self, onnx_export_path: str) -> None:
         """Generate and export a synthetic nonlinear CNN model for benchmarking.
 
         This method creates a synthetic CNN with branching topology by:
@@ -398,7 +414,9 @@ class bench_synthetic_nonlinear(bench):
             Input -> DuplicateStreams -> [Left: N conv blocks]  -> AddStreams -> Output
                                       -> [Right: M conv blocks] ->
         """
-        np.random.seed(0)
+        # NOTE: uses the legacy global numpy RNG (not np.random.Generator) so that
+        # benchmark configs stay reproducible against previously recorded results
+        np.random.seed(0)  # noqa: NPY002
         tmp_output_dir = str(make_build_dir("test_fifosizing"))
 
         # TODO: allow manual folding/fifo config as input
@@ -413,25 +431,29 @@ class bench_synthetic_nonlinear(bench):
         parallel_window = self._params["parallel_window"]
 
         lb = None
-        for i in range(self._params["lb_num_layers"]):
+        for _i in range(self._params["lb_num_layers"]):
             new_block = _make_conv_building_block(
                 dim, ch, kernel_size=kernel_size, simd=simd, pe=pe, parallel_window=parallel_window
             )
             lb = new_block if lb is None else lb.transform(MergeONNXModels(new_block))
+        if lb is None:
+            raise FINNUserError("lb_num_layers must be at least 1")
         lb.save(tmp_output_dir + "/lb.onnx")
 
         rb = None
-        for i in range(self._params["rb_num_layers"]):
+        for _i in range(self._params["rb_num_layers"]):
             new_block = _make_conv_building_block(
                 dim, ch, kernel_size=kernel_size, simd=simd, pe=pe, parallel_window=parallel_window
             )
             rb = new_block if rb is None else rb.transform(MergeONNXModels(new_block))
+        if rb is None:
+            raise FINNUserError("rb_num_layers must be at least 1")
         rb.save(tmp_output_dir + "/rb.onnx")
 
         model = _combine_blocks(lb, rb, dim, ch, pe=4)
         model.save(onnx_export_path)
 
-    def _step_build_setup(self):
+    def _step_build_setup(self) -> DataflowBuildConfig:
         """Configure a minimal dataflow build config for synthetic nonlinear CNN benchmarks.
 
         Returns:

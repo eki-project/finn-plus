@@ -15,13 +15,14 @@ import yaml
 from pathlib import Path
 from shutil import copy as shcopy
 from shutil import copytree
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
 from finn.benchmarking.util import delete_dir_contents
 from finn.builder.build_dataflow_config import AutoFIFOSizingMethod, DataflowBuildConfig
 from finn.util.basic import alveo_default_platform, alveo_part_map, part_map
+from finn.util.exception import FINNUserError
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
@@ -74,7 +75,7 @@ class bench:
         - Prepares build directories and clears previous build artifacts
         """
         super().__init__()
-        self._params: dict[str, str | int] = params
+        self._params: dict[str, Any] = params
         self._task_id = task_id
         self._run_id = run_id
         self._work_dir = work_dir
@@ -108,7 +109,7 @@ class bench:
         elif self._board in part_map:
             self._part = part_map[self._board]
         else:
-            raise Exception(f"No part specified for board {self._board}")
+            raise FINNUserError(f"No part specified for board {self._board}")
 
         if self._board in alveo_part_map:
             self._params["shell_flow_type"] = build_cfg.ShellFlowType.VITIS_ALVEO
@@ -131,8 +132,13 @@ class bench:
             self._params["validation_dataset"] = "imagenet"
         elif self._params["dut"] == "cybsec":
             self._params["validation_dataset"] = "unswnb15"
+        elif self._params["dut"] == "kws":
+            self._params["validation_dataset"] = "speechcommands"
+        elif self._params["dut"] == "gtsrb":
+            self._params["validation_dataset"] = "gtsrb"
         else:
-            # TODO implement for gtsrb, kws, transformer, synthetic_nonlinear (?), mvau (?)
+            # The transformer DUT serves models trained on different datasets, which the
+            # bench configs select per model. TODO implement for synthetic_nonlinear (?), mvau (?)
             log.warning(
                 "No dataset available for the selected DUT. Configure manually if possible."
             )
@@ -279,15 +285,15 @@ class bench:
             self._save_local_artifacts == "on_failure" and not failed
         ):
             print(
-                "Skipping local artifacts (save_local_artifacts=%s, failed=%s)"
-                % (self._save_local_artifacts, failed)
+                f"Skipping local artifacts (save_local_artifacts={self._save_local_artifacts}, "
+                f"failed={failed})"
             )
             return
         for name, source_path, archive in self._local_artifacts_collection:
             target_path = Path(self._save_dir) / name / f"run_{self._run_id}"
             self._save_artifact(str(target_path), str(source_path), archive)
 
-    def _step_export_onnx(self, onnx_export_path: str) -> None:
+    def _step_export_onnx(self, onnx_export_path: str) -> Literal["skipped"] | None:
         """Export or generate ONNX model for benchmarking.
 
         This method must be implemented by subclasses to provide the ONNX model
@@ -323,11 +329,11 @@ class bench:
         dut_path = Path(__file__).parent / "dut" / dut_yaml_name
         if dut_path.is_file():
             with dut_path.open() as f:
-                return DataflowBuildConfig.from_yaml(f)
+                return DataflowBuildConfig.from_yaml(f.read())
         else:
-            raise Exception("No DUT-specific YAML build definition found")
+            raise FINNUserError("No DUT-specific YAML build definition found")
 
-    def run(self) -> None | Literal["skipped"]:
+    def run(self) -> Literal["skipped"] | None:
         """Execute the benchmark run.
 
         This method defaults to running the complete FINN build flow but may be
@@ -368,7 +374,7 @@ class bench:
             }
             # TODO: mark job as failed if verification fails?
 
-    def _steps_full_build_flow(self) -> None | Literal["skipped"]:
+    def _steps_full_build_flow(self) -> Literal["skipped"] | None:
         """Execute the complete FINN dataflow build sequence.
 
         This method implements the default step sequence for benchmarking a full
@@ -409,9 +415,9 @@ class bench:
         elif "model_path" in self._params:
             self._build_inputs["onnx_path"] = Path(cast("str", self._params["model_path"]))
         elif cfg.multi_dnn_config_path is not None:
-            # The Models are provided in the multi-DNN config
+            # The Models are provided in the multi-DNN config, so no single onnx_path applies
             # TODO: handle verification I/O for multi-DNN configs
-            self._build_inputs["onnx_path"] = None
+            pass
         else:
             # input ONNX model (+ optional I/O pair for verification) will be generated
             self._build_inputs["onnx_path"] = (
@@ -484,7 +490,7 @@ class bench:
         os.environ["LIVENESS_THRESHOLD"] = "10000000"
 
         # BUILD
-        build.build_dataflow_cfg(self._build_inputs["onnx_path"], cfg)
+        build.build_dataflow_cfg(self._build_inputs.get("onnx_path"), cfg)
 
         # ANALYSIS
         self._step_parse_builder_output(str(self._build_inputs["build_dir"]))

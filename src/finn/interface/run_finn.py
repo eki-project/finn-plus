@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import finn.util.settings
 import finn.xsi
-from finn.interface import IS_POSIX
+from finn.interface import DEBUG, IS_POSIX
 from finn.interface.interface_utils import (
     NullablePath,
     error,
@@ -31,9 +31,9 @@ from finn.interface.interface_utils import (
     warning,
 )
 from finn.interface.manage_deps import DependencyUpdater
-from finn.interface.manage_tests import run_test
-from finn.interface.settings import FINNSettings
-from finn.util.exception import FINNUserError, FINNValidationError
+from finn.interface.manage_tests import resolve_tests_dir, run_test
+from finn.interface.settings import FINN_ROOT, FINNSettings
+from finn.util.exception import FINNUserError
 from finn.util.multiprocessing import configure_start_method
 
 if TYPE_CHECKING:
@@ -149,8 +149,8 @@ def skip_dep_update(f: Callable) -> Callable[..., Any]:
         "--skip-dep-update",
         "-s",
         is_flag=True,
-        help="Whether to skip the dependency update. Can be changed in settings via"
-        "AUTOMATIC_DEPENDENCY_UPDATES: false",
+        help="Skip the dependency update for this run. To skip it by default, set "
+        "AUTOMATIC_DEPENDENCY_UPDATES to false in the settings file or the environment.",
     )(f)
 
 
@@ -160,6 +160,22 @@ def accept_defaults(f: Callable) -> Callable[..., Any]:
         "--accept-defaults",
         is_flag=True,
         help="If set, skip the setup wizard in case that no settings files were found.",
+    )(f)
+
+
+def tests_path(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter called --tests-path (tests_path) that defaults to None if the
+    param is empty, and a path otherwise."""
+    return click.option(
+        "--tests-path",
+        "tests_path",
+        help=(
+            "Directory of the FINN+ test suite, i.e. the tests/ directory of a repository "
+            "checkout (the suite is not part of the pip package). Defaults to ./tests of the "
+            "current directory."
+        ),
+        default="",
+        type=NullablePath(),
     )(f)
 
 
@@ -317,6 +333,13 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         "wizard and use the predefined "
         "default values. Otherwise follow the next instructions.[/bold green]\n"
     )
+    console.print(
+        "[italic grey46]FINN+ reads its settings from the first of these files that exists: "
+        f"$FINN_SETTINGS, settings.yaml in the FINN+ root ({FINN_ROOT}), or "
+        "~/.finn/settings.yaml. A settings file is optional, and ~/.finn/ is only the "
+        "default for installed packages. In a development checkout you can keep the "
+        "settings.yaml in the repository root instead.[/italic grey46]\n"
+    )
     do_setup = Confirm.ask("Continue?")
     if not do_setup:
         return
@@ -377,7 +400,6 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     )
     console.print(f"[bold]FINN_CUSTOM_HLS[/bold]: {settings.finn_custom_hls}")
     console.print(f"[bold]FINN_RTLLIB[/bold]: {settings.finn_rtllib}")
-    console.print(f"[bold]FINN_TESTS[/bold]: {settings.finn_tests}")
     console.print(
         "\n\n[bold green]Please check your edited settings and confirm them "
         "(Relative paths will be displayed as the absolute paths they would be "
@@ -401,7 +423,8 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         return
     where = Path(
         Prompt.ask(
-            "Where do you want to save these settings?",
+            "Where do you want to save these settings? (FINN+ finds them at $FINN_SETTINGS, "
+            "in the FINN+ root or in ~/.finn/)",
             default=str(settings.get_path()),
         )
     )
@@ -593,7 +616,6 @@ def prepare_finn(
     # e.g., still used in templates.py
     os.environ["FINN_RTLLIB"] = resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
-    os.environ["FINN_TESTS"] = resolve_module_path("tests")
 
 
 @click.group(
@@ -605,9 +627,23 @@ def prepare_finn(
 def main_group(version: bool) -> None:
     """Main click group."""  # noqa
     if version:
-        import importlib_metadata
+        from importlib.metadata import version as package_version
 
-        print("FINN+ " + importlib_metadata.version("finn-plus") + "\n")
+        finn_version = package_version("finn-plus")
+        if finn_version == "0.0.0" and (FINN_ROOT / ".git").exists():
+            # Development installs without poetry-dynamic-versioning keep the placeholder
+            # version of pyproject.toml, so describe the checked-out commit instead
+            try:
+                described = subprocess.run(
+                    ["git", "-C", str(FINN_ROOT), "describe", "--tags", "--always", "--dirty"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.strip()
+                finn_version = f"{described} (development installation)"
+            except (OSError, subprocess.CalledProcessError):
+                pass
+        print("FINN+ " + finn_version + "\n")
         sys.exit()
     else:
         ctx = click.get_current_context()
@@ -698,14 +734,14 @@ def _build(
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=not skip_dep_update,
+        automatic_dependency_updates=False if skip_dep_update else None,
         **get_function_args(),
     )
     prepare_finn(settings, accept_defaults or batch, batch)
 
     # Can import from finn now, since all deps are installed
     # and all environment variables are set correctly
-    from finn.builder.build_dataflow import build_dataflow_cfg
+    from finn.builder.build_dataflow import build_dataflow_cfg, get_logfile_path
     from finn.builder.build_dataflow_config import DataflowBuildConfig
 
     status("Creating dataflow build config...")
@@ -796,7 +832,9 @@ def _build(
             f"{settings.num_default_workers}"
         )
         ort.capi._pybind_state.get_default_session_options = get_modified_session_options  # type: ignore # noqa
-    build_dataflow_cfg(str(model), dfbc)
+    if build_dataflow_cfg(str(model), dfbc) != 0:
+        error(f"FINN build failed. See the build log at {get_logfile_path(dfbc)}")
+        sys.exit(1)
 
 
 @click.command(help="Build a hardware design")
@@ -895,7 +933,7 @@ def run(
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=not skip_dep_update,
+        automatic_dependency_updates=False if skip_dep_update else None,
         flow_config=script,
         **get_function_args(),
     )
@@ -970,10 +1008,9 @@ def flow_wizard() -> None:
 
 
 def _settings_wizard_wrapper() -> None:
-    """Use both by 'finn wizard config' and 'finn config create'."""
+    """Use both by 'finn wizard settings' and 'finn settings create'."""
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=not skip_dep_update,
         **get_function_args(),
         flow_config=Path(),
         finn_build_dir=Path("FINN_TMP"),
@@ -1033,7 +1070,6 @@ def bench(
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=True,
         flow_config=finn_build_dir / "dummy.yaml",
         **get_function_args(),
     )
@@ -1048,13 +1084,18 @@ def bench(
 
 
 @click.command(
-    help="Run a given test. Uses /tmp/FINN_TEST_BUILD_DIR as the temporary file location"
+    help=(
+        "Run the FINN+ test suite from a repository checkout (see --tests-path). Uses "
+        "/tmp/FINN_TEST_BUILD_DIR as the temporary file location. Requires the test tooling: "
+        "part of 'poetry install' in a checkout, or pip install finn-plus[test]."
+    )
 )
 @finn_deps
 @finn_deps_definitions
 @finn_build_dir
 @num_default_workers
 @skip_dep_update
+@tests_path
 @click.option(
     "--variant",
     "-v",
@@ -1081,11 +1122,14 @@ def test(
     finn_deps_definitions: Path | None,
     num_default_workers: int,
     skip_dep_update: bool,
+    tests_path: Path | None,
     num_test_workers: str,
     finn_build_dir: Path | None,
     batch: bool,
 ) -> None:
     """Run a selected subset of the FINN(+) testsuite."""
+    # Fail early, before dependencies are prepared, if the suite or its tooling is missing
+    tests_dir = resolve_tests_dir(tests_path)
     if finn_build_dir is None:
         finn_build_dir = Path("/tmp/FINN_TEST_BUILD_DIR")
     finn_build_dir = finn_build_dir.expanduser().absolute()
@@ -1097,7 +1141,7 @@ def test(
         finn_build_dir.mkdir(parents=True, exist_ok=True)
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=not skip_dep_update,
+        automatic_dependency_updates=False if skip_dep_update else None,
         flow_config=finn_build_dir / "dummy.yaml",
         **get_function_args(),
     )
@@ -1119,7 +1163,7 @@ def test(
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
-    run_test(variant, num_test_workers, args)
+    run_test(variant, num_test_workers, tests_dir, args)
 
 
 @click.group(help="Dependency management")
@@ -1175,7 +1219,6 @@ def deps_edit(finn_deps_definitions: Path | None) -> None:
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=True,
         flow_config=Path(),
         **get_function_args(),
     )
@@ -1190,7 +1233,6 @@ def deps_show(finn_deps_definitions: Path | None) -> None:
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=True,
         flow_config=Path(),
         **get_function_args(),
     )
@@ -1222,18 +1264,6 @@ def settings() -> None:
     pass
 
 
-def _command_get_settings() -> FINNSettings:
-    """Return a settings instance for use in config commands."""
-    settings = FINNSettings.init(
-        auto_set_environment_vars=True, automatic_dependency_updates=False, flow_config=Path()
-    )
-    prepare_finn(settings, True, create_build_dir=False)
-    if not settings.settingsfile_exists():
-        warning("Could not resolve settings file.")
-        sys.exit(1)
-    return settings
-
-
 @click.command("show", help="List the settings files contents")
 def config_show() -> None:
     """List all settings found in the current settings file."""
@@ -1256,10 +1286,11 @@ def config_show() -> None:
 def config_edit() -> None:
     """Edit the settings in an editor."""
     settings = FINNSettings.init(None, False, Path(), True)
+    settings.get_path().absolute().parent.mkdir(parents=True, exist_ok=True)
     edit_file(settings.get_path().absolute())
 
 
-@click.command("create", help="Create a configuration. Same as 'finn wizard config'.")
+@click.command("create", help="Create a settings file. Same as 'finn wizard settings'.")
 def config_create() -> None:
     """Run the configuration wizard."""
     _settings_wizard_wrapper()
@@ -1270,7 +1301,9 @@ def config_create() -> None:
 )
 def finn_check() -> None:
     """Start FINN and close it after loading the environment."""
-    settings = FINNSettings.init(auto_set_environment_vars=False, flow_config=Path())
+    settings = FINNSettings.init(
+        auto_set_environment_vars=False, automatic_dependency_updates=False, flow_config=Path()
+    )
     prepare_finn(settings, True, create_build_dir=False)
     Console().print("[bold green]FINN is ready![/bold green]")
 
@@ -1300,8 +1333,10 @@ def main() -> None:
     main_group.add_command(finn_check)
     try:
         main_group()
-    except FINNValidationError as e:
-        error(str(e))
+    except FINNUserError as e:
+        if DEBUG:
+            raise
+        error(f"{e}\n(Set FINN_DEBUG=1 to show the full stack trace.)")
         sys.exit(1)
 
 

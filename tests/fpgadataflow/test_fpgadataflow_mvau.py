@@ -28,6 +28,8 @@
 
 import pytest
 
+import itertools
+
 import numpy as np
 import qonnx.custom_op.general.xnorpopcount as xp
 from onnx import TensorProto, helper
@@ -694,9 +696,8 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
 
 # mem_mode: internal_embedded or internal_decoupled
 
+_RTL_MVAU_VERSAL_PART = "xcvc1902-vsva2197-2MP-e-S"
 
-@pytest.mark.parametrize("mh", [18])
-@pytest.mark.parametrize("mw", [32])
 # (PE, SIMD, TH, mem_mode) as a jointly-valid tuple satisfying MH % PE == 0,
 # MW % SIMD == 0 and (PE * SIMD) % TH == 0. TH=1 selects the standard MVAU;
 # TH>1 selects the tiled MVAU (Versal DSP58 only, filtered below).
@@ -709,40 +710,101 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
 #   - TH:                    3 and 9 (high tiling)
 #   - mem_mode:              external_mem and internal_decoupled (tiling is
 #                            decoupled from the weight memory mode)
+_RTL_MVAU_PE_SIMD_TH_MEM = [
+    (1, 1, 1, "internal_decoupled"),
+    (1, 16, 1, "internal_decoupled"),
+    (1, 32, 1, "internal_decoupled"),
+    (9, 1, 1, "internal_decoupled"),
+    (9, 16, 1, "internal_decoupled"),
+    (9, 32, 1, "internal_decoupled"),
+    (18, 1, 1, "internal_decoupled"),
+    (18, 16, 1, "internal_decoupled"),
+    (18, 32, 1, "internal_decoupled"),
+    (3, 1, 3, "external_mem"),  # WSIMD=1 edge, CHAINLEN=1
+    (6, 1, 3, "external_mem"),  # IWSIMD=(PE*SIMD)/TH=2 != SIMD=1
+    (6, 1, 3, "internal_decoupled"),  # Same shape as above, but internal_decoupled
+    (6, 4, 3, "internal_decoupled"),  # CHAINLEN=2, decoupled
+    (9, 8, 9, "external_mem"),  # TH=9 high tiling, CHAINLEN=3
+    (9, 16, 3, "external_mem"),  # CHAINLEN=6
+    (18, 32, 3, "internal_decoupled"),  # max fold, CHAINLEN=11, decoupled
+    # external_mem + TH=1: standard MVAU fed by fetch_weights from external memory
+    # (PE>1 catches PE-lane swaps, SIMD=1 covers the sub-word byte-packing edge).
+    (9, 16, 1, "external_mem"),
+    (18, 1, 1, "external_mem"),
+]
+
+# Four configurations that stand in for the full list when the integration axes (part,
+# clock period, clock pumping, 4-bit data types) are swept.
+_RTL_MVAU_REPRESENTATIVE = {
+    (1, 1, 1, "internal_decoupled"),
+    (9, 16, 1, "internal_decoupled"),
+    (18, 32, 1, "internal_decoupled"),
+    (9, 16, 1, "external_mem"),
+}
+
+
+# Every case takes about 15 minutes (IP generation, node-by-node and stitched-IP rtlsim) and the
+# full grid has 864 combinations (284 after the skips inside the test). By default, the full
+# configuration list runs on Versal only, with 8-bit data types, 1.66 ns and no clock pumping;
+# the other parts, the 4 ns clock, clock pumping and the 4-bit data types run on
+# _RTL_MVAU_REPRESENTATIVE. The remaining combinations are marked xslow, which the CI test
+# variants deselect (finn test ... --variant full_ci), and can be run explicitly with
+# ``pytest -m xslow``.
+def _rtl_mvau_cases():
+    """The full grid of test_fpgadataflow_rtl_mvau with all but the default subset marked
+    xslow."""
+    idt_wdts = [[DataType["UINT4"], DataType["INT4"]], [DataType["UINT8"], DataType["INT8"]]]
+    parts = [_RTL_MVAU_VERSAL_PART, "xcku3p-ffva676-1-e", "xc7z020clg400-1"]
+    cases = []
+    for (
+        pumpedCompute,
+        pumpedMemory,
+        clk_ns,
+        part,
+        (idt_idx, idt_wdt),
+        (cfg_idx, pe_simd_th_mem),
+    ) in itertools.product(
+        [False, True],
+        [False, True],
+        [1.66, 4],
+        parts,
+        enumerate(idt_wdts),
+        enumerate(_RTL_MVAU_PE_SIMD_TH_MEM),
+    ):
+        eight_bit = idt_idx == 1
+        unpumped = not pumpedMemory and not pumpedCompute
+        representative = pe_simd_th_mem in _RTL_MVAU_REPRESENTATIVE
+        default = (
+            # every configuration on Versal
+            (part == _RTL_MVAU_VERSAL_PART and clk_ns == 1.66 and unpumped and eight_bit)
+            # the other parts, the 4 ns clock and clock pumping
+            or (representative and eight_bit)
+            # the 4-bit data types on every part
+            or (representative and unpumped and clk_ns == 1.66)
+        )
+        cases.append(
+            pytest.param(
+                18,  # mh
+                32,  # mw
+                pe_simd_th_mem,
+                idt_wdt,
+                part,
+                clk_ns,
+                pumpedMemory,
+                pumpedCompute,
+                marks=[] if default else [pytest.mark.xslow],
+                # same ids as pytest generated for the stacked parametrize decorators before
+                id=f"{pumpedCompute}-{pumpedMemory}-{clk_ns}-{part}-idt_wdt{idt_idx}-"
+                f"pe_simd_th_mem{cfg_idx}-32-18",
+            )
+        )
+    return cases
+
+
 @pytest.mark.parametrize(
-    "pe_simd_th_mem",
-    [
-        (1, 1, 1, "internal_decoupled"),
-        (1, 16, 1, "internal_decoupled"),
-        (1, 32, 1, "internal_decoupled"),
-        (9, 1, 1, "internal_decoupled"),
-        (9, 16, 1, "internal_decoupled"),
-        (9, 32, 1, "internal_decoupled"),
-        (18, 1, 1, "internal_decoupled"),
-        (18, 16, 1, "internal_decoupled"),
-        (18, 32, 1, "internal_decoupled"),
-        (3, 1, 3, "external_mem"),  # WSIMD=1 edge, CHAINLEN=1
-        (6, 1, 3, "external_mem"),  # IWSIMD=(PE*SIMD)/TH=2 != SIMD=1
-        (6, 1, 3, "internal_decoupled"),  # Same shape as above, but internal_decoupled
-        (6, 4, 3, "internal_decoupled"),  # CHAINLEN=2, decoupled
-        (9, 8, 9, "external_mem"),  # TH=9 high tiling, CHAINLEN=3
-        (9, 16, 3, "external_mem"),  # CHAINLEN=6
-        (18, 32, 3, "internal_decoupled"),  # max fold, CHAINLEN=11, decoupled
-        # external_mem + TH=1: standard MVAU fed by fetch_weights from external memory
-        # (PE>1 catches PE-lane swaps, SIMD=1 covers the sub-word byte-packing edge).
-        (9, 16, 1, "external_mem"),
-        (18, 1, 1, "external_mem"),
-    ],
+    "mh, mw, pe_simd_th_mem, idt_wdt, part, clk_ns, pumpedMemory, pumpedCompute",
+    _rtl_mvau_cases(),
 )
-@pytest.mark.parametrize(
-    "idt_wdt", [[DataType["UINT4"], DataType["INT4"]], [DataType["UINT8"], DataType["INT8"]]]
-)
-@pytest.mark.parametrize(
-    "part", ["xcvc1902-vsva2197-2MP-e-S", "xcku3p-ffva676-1-e", "xc7z020clg400-1"]
-)
-@pytest.mark.parametrize("clk_ns", [1.66, 4])
-@pytest.mark.parametrize("pumpedMemory", [False, True])
-@pytest.mark.parametrize("pumpedCompute", [False, True])
 @pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
@@ -850,14 +912,6 @@ def test_fpgadataflow_rtl_mvau(
     assert (
         output_matmul == output_mvau_rtl
     ).all(), "Output of ONNX model not matching output of node-by-node RTLsim!"
-
-    if simd == mw and pumpedCompute:
-        # Known FINN+ limitation: the FIFO-sizing simulation (functional-synthesis netlist
-        # in the distributed simulation) of a double-pumped MVAU with SF=1 never reports
-        # completion, so the sizing below would hang the test (and, in CI, the whole suite
-        # until the Slurm limit). cppsim and node-by-node rtlsim above do pass for these
-        # configurations; only the sizing/stitched-IP part is left out.
-        pytest.skip("SIMD=MW with pumpedCompute=True: FIFO-sizing simulation never completes")
 
     # Run stitched-ip RTLsim
     model = insert_and_set_fifo_depths(model, part, clk_ns)

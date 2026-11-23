@@ -8,7 +8,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
-from typing import Optional
+from typing import ClassVar
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
@@ -27,7 +27,7 @@ _DTYPES_HLS = ("INT", "UINT", "FLOAT32")
 
 def _dtype_ok(name: str) -> bool:
     """Whether the datatype name is an INT/UINT type or FLOAT32."""
-    return name.startswith("INT") or name.startswith("UINT") or name == "FLOAT32"
+    return name.startswith(("INT", "UINT")) or name == "FLOAT32"
 
 
 def rhs_shape_for(bcast: str, shape: list[int]) -> list[int]:
@@ -53,7 +53,7 @@ class bench_eltwise(MicrobenchDUT):
         "ElementwiseMul_hls",
         "ElementwiseMul_rtl",
     )
-    PARAMS = {
+    PARAMS: ClassVar[dict[str, str]] = {
         "backend": "hls or rtl (rtl: Versal, at least one FLOAT32 operand, internal_decoupled)",
         "op": "Add or Mul",
         "lhs_dtype": "datatype of the streamed operand (INT/UINT or FLOAT32)",
@@ -66,7 +66,7 @@ class bench_eltwise(MicrobenchDUT):
     }
 
     @staticmethod
-    def validate(params: dict) -> Optional[str]:
+    def validate(params: dict) -> str | None:
         """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         backend = params.get("backend")
         if backend not in ("hls", "rtl"):
@@ -108,7 +108,7 @@ class bench_eltwise(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
-        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
+        """Return the sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "backend": Choice(["hls", "hls", "hls", "rtl"]),
             "op": Choice(["Add", "Mul"]),
@@ -144,7 +144,7 @@ class bench_eltwise(MicrobenchDUT):
         }
 
     @classmethod
-    def make_model(cls, params: dict, fpga_part: str):
+    def make_model(cls, params: dict, fpga_part: str) -> tuple[ModelWrapper, dict]:
         """Build the single-node model for ``params`` and return it with its dut_info."""
         backend, op = params["backend"], params["op"]
         lhs_dt, rhs_dt = DataType[params["lhs_dtype"]], DataType[params["rhs_dtype"]]

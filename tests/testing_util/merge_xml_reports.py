@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Merge arbitrary many pytest JUnit XML files with this rule:
 - Identity key: (classname, name)
-- If same testcase appears multiple times:
+- Within one file, a testcase that appears several times was retried (pytest-rerunfailures):
+  the attempts come first and the final outcome last, so the last entry wins. An attempt is
+  either marked <rerun> or, with pytest-rerunfailures 16 and pytest 9, a testcase without any
+  result element that merely looks like a pass; a marked attempt never wins over a final
+  outcome.
+- Across files (main run, crash rerun), for the same testcase:
   - PASSED always wins over FAILED/ERROR/SKIPPED
-  - A retried attempt (<rerun>, pytest-rerunfailures) never wins over a final outcome
+  - A retried attempt (<rerun>) never wins over a final outcome
   - Otherwise, latest file wins (input order).
 
 Usage:
@@ -104,6 +109,25 @@ def should_replace(existing_tc: TestCase, new_tc: TestCase) -> bool:
     return True  # latest wins if no pass involved
 
 
+def should_replace_within_file(existing_tc: TestCase, new_tc: TestCase) -> bool:
+    """Decide whether a later entry of the same testcase in the same file replaces an earlier one.
+
+    Entries of one testcase in one file are the attempts of pytest-rerunfailures in
+    chronological order, so the later entry is the more final one. Only an entry that is
+    marked as a mere attempt (<rerun>) does not replace an earlier final outcome.
+
+    Args:
+        existing_tc: Earlier entry of the testcase in the file.
+        new_tc: Later entry of the testcase in the file.
+
+    Returns:
+        True if new_tc should replace existing_tc, else False.
+    """
+    if testcase_status(new_tc) == "rerun":
+        return testcase_status(existing_tc) == "rerun"
+    return True
+
+
 def merge_reports(inputs: Iterable[str], output: str) -> None:
     """Merge multiple JUnit XML reports into one output report.
 
@@ -123,11 +147,17 @@ def merge_reports(inputs: Iterable[str], output: str) -> None:
         if not Path(path).is_file():
             continue
         xml = JUnitXml.fromfile(path)
+        # Reruns within one file: the final attempt comes last and is the outcome of the
+        # test, whatever the earlier attempts look like (a result-less attempt is not a pass)
+        in_file: OrderedDict[TestKey, TestCase] = OrderedDict()
         for suite in xml:
             for tc in suite:
                 key = testcase_key(tc)
-                if key not in by_key or should_replace(by_key[key], tc):
-                    by_key[key] = tc
+                if key not in in_file or should_replace_within_file(in_file[key], tc):
+                    in_file[key] = tc
+        for key, tc in in_file.items():
+            if key not in by_key or should_replace(by_key[key], tc):
+                by_key[key] = tc
 
     merged = JUnitXml()
     out_suite = TestSuite("merged")

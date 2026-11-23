@@ -31,6 +31,7 @@ from pkgutil import extend_path
 
 __path__ = extend_path(__path__, __name__)
 
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.batchnorm_to_affine import BatchNormToAffine
 from qonnx.transformation.general import (
@@ -71,8 +72,8 @@ from finn.transformation.streamline.sign_to_thres import ConvertSignToThres
 class Streamline(Transformation):
     """Apply the streamlining transform, see arXiv:1709.04060."""
 
-    def apply(self, model):
-        """Collects and applies the default list of streamlining transformations."""
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Collect and apply the default list of streamlining transformations."""
         streamline_transformations = [
             ConvertSubToAdd(),
             ConvertDivToMul(),

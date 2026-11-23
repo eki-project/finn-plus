@@ -12,8 +12,9 @@ Pure python (random/math only) so that it can be used and tested without FINN.
 
 import math
 import random
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -25,7 +26,7 @@ class Dimension(Protocol):
         ...
 
 
-def _weighted_choice(rng: random.Random, values: Sequence, weights: Optional[Sequence[float]]):
+def _weighted_choice(rng: random.Random, values: Sequence, weights: Sequence[float] | None) -> Any:
     """Draw one of ``values`` with the given (unnormalized) weights."""
     if weights is None:
         return rng.choice(list(values))
@@ -37,9 +38,9 @@ class Choice:
     """Uniform (or weighted) choice from a fixed list of values."""
 
     values: list
-    weights: Optional[list[float]] = None
+    weights: list[float] | None = None
 
-    def sample(self, rng: random.Random, partial: dict) -> Any:
+    def sample(self, rng: random.Random, partial: dict) -> Any:  # noqa: ARG002
         """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         return _weighted_choice(rng, self.values, self.weights)
 
@@ -53,10 +54,10 @@ class IntRange:
     log: bool = False
     step: int = 1
 
-    def sample(self, rng: random.Random, partial: dict) -> int:
+    def sample(self, rng: random.Random, partial: dict) -> int:  # noqa: ARG002
         """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         if self.log:
-            value = int(round(math.exp(rng.uniform(math.log(self.lo), math.log(self.hi)))))
+            value = round(math.exp(rng.uniform(math.log(self.lo), math.log(self.hi))))
         else:
             value = rng.randint(self.lo, self.hi)
         value = max(self.lo, min(self.hi, value))
@@ -71,7 +72,7 @@ class Pow2Range:
 
     lo: int
     hi: int
-    weights: Optional[list[float]] = None
+    weights: list[float] | None = None
 
     def values(self) -> list[int]:
         """All powers of two in ``[lo, hi]``."""
@@ -79,7 +80,7 @@ class Pow2Range:
         e_hi = math.floor(math.log2(self.hi))
         return [2**e for e in range(e_lo, e_hi + 1)]
 
-    def sample(self, rng: random.Random, partial: dict) -> int:
+    def sample(self, rng: random.Random, partial: dict) -> int:  # noqa: ARG002
         """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         return _weighted_choice(rng, self.values(), self.weights)
 
@@ -91,9 +92,9 @@ class FloatRange:
     lo: float
     hi: float
     log: bool = False
-    step: Optional[float] = None
+    step: float | None = None
 
-    def sample(self, rng: random.Random, partial: dict) -> float:
+    def sample(self, rng: random.Random, partial: dict) -> float:  # noqa: ARG002
         """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         if self.log:
             value = math.exp(rng.uniform(math.log(self.lo), math.log(self.hi)))
@@ -127,7 +128,7 @@ class Divisor:
     extra: tuple = ()
     extra_weight: float = 0.0
     lo: int = 1
-    hi: Optional[int] = None
+    hi: int | None = None
 
     def sample(self, rng: random.Random, partial: dict) -> int:
         """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
@@ -148,7 +149,7 @@ class Derived:
 
     fn: Callable[[dict], Any]
 
-    def sample(self, rng: random.Random, partial: dict) -> Any:
+    def sample(self, rng: random.Random, partial: dict) -> Any:  # noqa: ARG002
         """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         return self.fn(partial)
 
@@ -159,7 +160,7 @@ class Fixed:
 
     value: Any
 
-    def sample(self, rng: random.Random, partial: dict) -> Any:
+    def sample(self, rng: random.Random, partial: dict) -> Any:  # noqa: ARG002
         """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""
         return self.value
 
@@ -176,7 +177,7 @@ class SpaceOverride:
     fixed: dict[str, Any] = field(default_factory=dict)
 
 
-def sample_params(space: ParamSpace, rng: random.Random, fixed: Optional[dict] = None) -> dict:
+def sample_params(space: ParamSpace, rng: random.Random, fixed: dict | None = None) -> dict:
     """Draw one parameter set: fixed values first, then every dimension in space order."""
     params: dict = dict(fixed or {})
     for name, dim in space.items():
@@ -203,7 +204,7 @@ class Conditional:
     on: str
     cases: dict
     default: Any
-    key: Optional[Callable[[Any], Any]] = None
+    key: Callable[[Any], Any] | None = None
 
     def sample(self, rng: random.Random, partial: dict) -> Any:
         """Draw a value of this dimension; ``partial`` holds the already sampled parameters."""

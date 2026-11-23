@@ -10,26 +10,31 @@ import subprocess
 import sys
 import time
 import yaml
+from collections.abc import Callable, Iterable
 from datetime import date
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src"))
 from dvc.repo import Repo
 from dvclive import Live
+from pathlib import Path
+from typing import Any, ClassVar, cast
+
+# Metric selection/aggregation config, shipped next to this script
+COLLECT_CFG_PATH = Path(__file__).resolve().parent / "collect.yaml"
 
 from finn.benchmarking import exchange  # noqa: E402
 
 
-def delete_dir_contents(dir):
+def delete_dir_contents(directory: str | Path) -> None:
     """Delete all contents of a directory."""
-    for filename in os.listdir(dir):
-        file_path = os.path.join(dir, filename)
+    for entry in Path(directory).iterdir():
         try:
-            if os.path.isfile(file_path) or os.path.islink(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)
-        except Exception as e:
-            print("Failed to delete %s. Reason: %s" % (file_path, e))
+            if entry.is_file() or entry.is_symlink():
+                entry.unlink()
+            elif entry.is_dir():
+                shutil.rmtree(entry)
+        except Exception as e:  # noqa: PERF203  (one failure must not stop the cleanup)
+            print(f"Failed to delete {entry}. Reason: {e}")
 
 
 def artifact_reports_dir(kind, id, is_followup=False):
@@ -38,24 +43,35 @@ def artifact_reports_dir(kind, id, is_followup=False):
     return exchange.run_dir(kind, id, is_followup) / "reports"
 
 
-def retry(fn, description, attempts=4, base_delay=10):
-    """Call fn() and retry with exponential backoff if it raises (transient network errors)."""
+def retry(fn: Callable[[], Any], description: str, attempts: int = 4, base_delay: int = 10) -> Any:
+    """Call fn() and retry with exponential backoff if it raises (transient network errors).
+
+    Args:
+        fn: Zero-argument callable to run.
+        description: What fn does, used in the retry warning.
+        attempts: Total number of attempts before the last exception is re-raised.
+        base_delay: Delay in seconds before the first retry, doubled after each retry.
+
+    Returns:
+        The return value of the first successful fn() call.
+    """
     delay = base_delay
     for attempt in range(1, attempts + 1):
         try:
             return fn()
-        except Exception as e:
+        except Exception as e:  # noqa: PERF203
             if attempt >= attempts:
                 raise
             print(
-                "WARNING: %s failed (attempt %d/%d): %s, retrying in %ds"
-                % (description, attempt, attempts, e, delay)
+                f"WARNING: {description} failed (attempt {attempt}/{attempts}): {e}, "
+                f"retrying in {delay}s"
             )
             time.sleep(delay)
             delay *= 2
+    return None
 
 
-def open_json_report(id, report_name, is_followup=False):
+def open_json_report(run_id: int, report_name: str, is_followup: bool = False) -> dict | None:
     """Open JSON report from build or measurement artifacts."""
     for kind in ("build", "measurement"):
         path = artifact_reports_dir(kind, id, is_followup) / report_name
@@ -65,7 +81,7 @@ def open_json_report(id, report_name, is_followup=False):
     return None
 
 
-def classify_run(params):
+def classify_run(params: dict) -> str:
     """Classify a run as a standard build, a live FIFO-sizing build or its follow-up build."""
     if params.get("auto_fifo_strategy") != "live_fifo":
         return "standard"
@@ -75,10 +91,11 @@ def classify_run(params):
     return "live_fifo_followup"
 
 
-def generate_metric_plots(metric_reports, file):
+def generate_metric_plots(metric_reports: dict, file: str) -> None:
+    """Render the comparison bar charts for all collected metric reports."""
     _bar_palette = ["steelblue", "orange", "green", "purple", "brown", "pink"]
 
-    def _is_numeric_key(key):
+    def _is_numeric_key(key: str) -> bool:
         """Return True if any report has a numeric (int/float) value for this key."""
         for report in metric_reports.values():
             result = report["metrics"].get(key)
@@ -150,7 +167,7 @@ def generate_metric_plots(metric_reports, file):
                 if internal_key == "current" and status == "not ok":
                     bars[i].set_color("red")
 
-            for bar, val in zip(bars, values):
+            for bar, val in zip(bars, values, strict=True):
                 if val is not None:
                     ax.text(
                         bar.get_x() + bar.get_width() / 2,
@@ -180,9 +197,8 @@ def generate_metric_plots(metric_reports, file):
             ax.grid(axis="y", alpha=0.3)
 
             valid_vals = [v for v in values if v is not None]
-            if valid_vals:
-                if max(abs(v) for v in valid_vals) > 0:
-                    ax.set_ylim(0, max(valid_vals) * 1.2)
+            if valid_vals and max(abs(v) for v in valid_vals) > 0:
+                ax.set_ylim(0, max(valid_vals) * 1.2)
 
         if has_table:
             ax = axes[row_idx][-1]
@@ -239,8 +255,14 @@ class DVCLoggerHelper:
     """Wrapper around DVC Live for logging experiments."""
 
     def __init__(
-        self, experiment_name, experiment_msg, id, params, is_followup=False, dvc_experiments=True
-    ):
+        self,
+        experiment_name: str,
+        experiment_msg: str,
+        id: int,
+        params: dict,
+        is_followup: bool = False,
+        dvc_experiments: bool = True,
+    ) -> None:
         """Initialize DVC logger with experiment details.
 
         ``dvc_experiments=False`` (``--no-dvc-experiments``) disables the DVC experiment of
@@ -266,30 +288,30 @@ class DVCLoggerHelper:
             self.live = None
 
         if self.store_as_data:
-            self.data_dict = dict()
+            self.data_dict = {}
         else:
             self.data_dict = None
 
         self.log_params(params)
 
-    def __enter__(self):
+    def __enter__(self) -> "DVCLoggerHelper":  # noqa: PYI034
         """Enter context manager."""
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         """Exit context manager and end DVC session."""
         if self.store_as_experiment:
             # End DVC Live experiment session
             self.live.end()
 
-    def log_params(self, params):
+    def log_params(self, params: dict) -> None:
         """Log parameters to DVC."""
         if self.store_as_experiment:
             self.live.log_params(params)
         if self.store_as_data:
             self.data_dict.update(params)
 
-    def log_metric(self, prefix, name, value):
+    def log_metric(self, prefix: str, name: str, value: float | str) -> None:
         """Log a single metric to DVC."""
         # sanitize '/' in name because DVC uses it to nest metrics (which we do via prefix)
         name = name.replace("/", "-")
@@ -299,34 +321,34 @@ class DVCLoggerHelper:
         if self.store_as_data:
             # store in nested dictionary structure based on prefix
             if "metrics" not in self.data_dict:
-                self.data_dict["metrics"] = dict()
+                self.data_dict["metrics"] = {}
             _dict = self.data_dict["metrics"]
 
             for key in prefix.split("/"):
                 if key:
                     if key not in _dict:
-                        _dict[key] = dict()
+                        _dict[key] = {}
                     _dict = _dict[key]
             _dict[name] = value
 
-    def log_image(self, image_name, image_path):
+    def log_image(self, image_name: str, image_path: str) -> None:
         """Log an image artifact to DVC."""
         if self.store_as_experiment:
             self.live.log_image(image_name, image_path)
 
-    def log_artifact(self, artifact_path):
+    def log_artifact(self, artifact_path: str) -> None:
         """Log an artifact to DVC."""
         if self.store_as_experiment:
             self.live.log_artifact(artifact_path)
 
-    def log_all_metrics_from_report(self, report_name, prefix=""):
+    def log_all_metrics_from_report(self, report_name: str, prefix: str = "") -> None:
         """Log all metrics from a JSON report."""
         report = open_json_report(self.id, report_name, self.is_followup)
         if report:
             for key in report:
                 self.log_metric(prefix, key, report[key])
 
-    def log_metrics_from_report(self, report_name, keys, prefix=""):
+    def log_metrics_from_report(self, report_name: str, keys: list[str], prefix: str = "") -> None:
         """Log specific metrics from a JSON report."""
         report = open_json_report(self.id, report_name, self.is_followup)
         if report:
@@ -334,14 +356,15 @@ class DVCLoggerHelper:
                 if key in report:
                     self.log_metric(prefix, key, report[key])
 
-    def log_nested_metrics_from_report(self, report_name, key_top, keys, prefix=""):
+    def log_nested_metrics_from_report(
+        self, report_name: str, key_top: str, keys: list[str], prefix: str = ""
+    ) -> None:
         """Log nested metrics from a JSON report."""
         report = open_json_report(self.id, report_name, self.is_followup)
-        if report:
-            if key_top in report:
-                for key in keys:
-                    if key in report[key_top]:
-                        self.log_metric(prefix, key, report[key_top][key])
+        if report and key_top in report:
+            for key in keys:
+                if key in report[key_top]:
+                    self.log_metric(prefix, key, report[key_top][key])
 
 
 class ExperimentMetricsLogger:
@@ -351,45 +374,40 @@ class ExperimentMetricsLogger:
     experiment: changing them only affects future runs, never experiments already pushed.
     """
 
-    def __init__(self, dvc_logger, collect_cfg_path):
+    def __init__(self, dvc_logger: "DVCLoggerHelper", collect_cfg_path: Path) -> None:
+        """Initialize with a DVC logger and the collection config path."""
         self.dvc_logger = dvc_logger
-        with open(collect_cfg_path, "r") as f:
+        with collect_cfg_path.open() as f:
             self.collect_cfg = yaml.safe_load(f)
 
-    def retrieve_experiment_reports(self, report_path):
+    def retrieve_experiment_reports(self, report_path: Path) -> dict:
+        """Return the experiment reports found under the given path, keyed by file name."""
         metrics = self.collect_cfg.get("Metrics", {})
         experiment_files = list(metrics.keys())
-        exp_reports = {exp: [] for exp in experiment_files}
+        exp_reports: dict[str, list[Path]] = {exp: [] for exp in experiment_files}
 
-        if not os.path.isdir(report_path):
+        if not report_path.is_dir():
             return {k: [] for k in exp_reports}
 
-        for foldername in os.listdir(report_path):
-            files = os.listdir(os.path.join(report_path, foldername))
-            folders = [
-                f
-                for f in files
-                if os.path.isdir(os.path.join(report_path, foldername, f))
-                and f.startswith("exp_itr_")
+        for folder in report_path.iterdir():
+            exp_itr_dirs = [
+                d for d in folder.iterdir() if d.is_dir() and d.name.startswith("exp_itr_")
             ]
-            for exp_itr in folders:
-                path = os.path.join(report_path, foldername, exp_itr)
-                for file in os.listdir(path):
-                    if file in experiment_files:
-                        exp_reports[file].append(os.path.join(path, file))
+            for exp_itr_dir in exp_itr_dirs:
+                for file in exp_itr_dir.iterdir():
+                    if file.name in experiment_files:
+                        exp_reports[file.name].append(file)
 
-        exp_reports = {
-            k: list(map(lambda p: json.load(open(p)), v)) for k, v in exp_reports.items()
-        }
-        return exp_reports
+        return {k: [json.loads(p.read_text()) for p in v] for k, v in exp_reports.items()}
 
-    def _extract_fn_from_cfg(self, metric, path=None):
+    def _extract_fn_from_cfg(self, metric: dict, path: list | None = None) -> tuple[dict, list]:
+        """Return a map of metric path -> aggregation function from the config."""
         if path is None:
             path = []
         cleaned = {}
         functions = []
         for key, value_list in metric.items():
-            current_path = path + [key]
+            current_path = [*path, key]
             cleaned_sub = []
             for item in value_list:
                 if isinstance(item, dict) and list(item.keys()) == ["fn"]:
@@ -404,7 +422,8 @@ class ExperimentMetricsLogger:
             cleaned[key] = cleaned_sub
         return cleaned, functions
 
-    def _filter_report(self, report, cleaned_metrics):
+    def _filter_report(self, report: dict, cleaned_metrics: list) -> dict:
+        """Return only the metrics of ``report`` named in ``cleaned_metrics``."""
         filtered = {}
         for metric in cleaned_metrics:
             if isinstance(metric, str):
@@ -421,7 +440,8 @@ class ExperimentMetricsLogger:
                             filtered[key] = report[key]
         return filtered
 
-    def _merge_reports_and_apply_fn(self, report_list, fn_map):
+    def _merge_reports_and_apply_fn(self, report_list: list[dict], fn_map: dict) -> dict:
+        """Merge several reports, applying the configured function per metric."""
         if not report_list:
             return {}
         merged = {}
@@ -441,7 +461,8 @@ class ExperimentMetricsLogger:
                 merged[key] = values[0]
         return merged
 
-    def remove_ignored_metrics_and_apply_fn(self, exp_reports):
+    def remove_ignored_metrics_and_apply_fn(self, exp_reports: dict) -> dict:
+        """Drop ignored metrics and apply the configured aggregation function."""
         metrics = self.collect_cfg.get("Metrics", {})
         result = {}
         for report_file, report_list in exp_reports.items():
@@ -462,18 +483,22 @@ class ExperimentMetricsLogger:
             result[report_file] = self._merge_reports_and_apply_fn(filtered_list, fn_map)
         return result
 
-    def _log_nested(self, data, prefix):
+    def _log_nested(self, data: dict, prefix: str) -> None:
+        """Recursively log a nested metric dict under the given prefix."""
         for key, value in data.items():
             if isinstance(value, dict):
                 self._log_nested(value, prefix + key + "/")
             else:
                 self.dvc_logger.log_metric(prefix, key, value)
 
-    def log_metrics(self, metrics, prefix="measurement/"):
-        # Yields keys of the form "measurement/<report file stem>/<metric>", which is how they
-        # have to be referenced in the "Compare" config section
+    def log_metrics(self, metrics: dict, prefix: str = "measurement/") -> None:
+        """Log every metric in the given report dict under the given prefix.
+
+        Yields keys of the form "measurement/<report file stem>/<metric>", which is how they
+        have to be referenced in the "Compare" config section.
+        """
         for report_file, report_data in metrics.items():
-            file_stem = os.path.splitext(report_file)[0]
+            file_stem = Path(report_file).stem
             self._log_nested(report_data, prefix + file_stem + "/")
 
 
@@ -487,7 +512,11 @@ class ExperimentComparator:
 
     # Params that are allowed to differ between the current run and its comparison reference
     # (they affect only how/where results are stored, not the DUT configuration itself).
-    _IGNORED_PARAM_KEYS = {
+    # validation_dataset is one of them: it does not influence the build, only which data the
+    # accuracy is measured on. A run that gains a dataset is still compared in everything else
+    # (the reference has no accuracy to compare with), and a run whose dataset changes shows up
+    # as a deviation of the required accuracy metric.
+    _IGNORED_PARAM_KEYS: ClassVar[set[str]] = {
         "store_results_in_dvc_experiment",
         "store_results_in_dvc_data",
         # legacy key of old microbenchmark configs that never had an effect
@@ -497,6 +526,7 @@ class ExperimentComparator:
         "generate_outputs",
         # time limit per tool call of a microbenchmark build
         "tool_timeout_s",
+        "validation_dataset",
     }
 
     # Additional params ignored when matching a live FIFO-sizing run (or its follow-up) against
@@ -504,9 +534,9 @@ class ExperimentComparator:
     # the same DUT in exactly these: it selects the sizing flow, derives its own folding/FIFO
     # config (the follow-up build even points at generated files that no reference can match),
     # drops target_fps and estimate reports, and skips verification. Everything that identifies
-    # the DUT itself (dut, model_path, specialize_layers_config_file, validation_dataset, board,
+    # the DUT itself (dut, model_path, specialize_layers_config_file, board,
     # synth_clk_period_ns, microbenchmark params, ...) must still match.
-    _LIVE_FIFO_IGNORED_PARAM_KEYS = {
+    _LIVE_FIFO_IGNORED_PARAM_KEYS: ClassVar[set[str]] = {
         "auto_fifo_depths",
         "auto_fifo_strategy",
         "fifo_config_file",
@@ -516,53 +546,60 @@ class ExperimentComparator:
         "verify_steps",
     }
 
-    def __init__(self, dvc_logger, collect_cfg_path):
+    def __init__(self, dvc_logger: "DVCLoggerHelper", collect_cfg_path: Path) -> None:
+        """Initialize with a DVC logger and the collection config path."""
         self.dvc_logger = dvc_logger
-        with open(collect_cfg_path, "r") as f:
+        with collect_cfg_path.open() as f:
             self.collect_cfg = yaml.safe_load(f)
 
-    def _normalize_params(self, metadata, extra_ignored_keys=frozenset()):
+    def _normalize_params(
+        self, metadata: dict | None, extra_ignored_keys: Iterable[str] = frozenset()
+    ) -> dict:
         """Return the bench params of a run, stripped of keys irrelevant to matching.
 
         Used to compare the full DUT configuration (e.g. idt/wdt/nhw/... for microbenchmarks
         like "mvau"), not just the DUT name, so that e.g. two "mvau" runs with different data
         types are never mistaken for one another when picking a comparison reference.
 
-        extra_ignored_keys relaxes the match further, see _LIVE_FIFO_IGNORED_PARAM_KEYS.
+        Args:
+            metadata: DVC params of the run (the bench params are under its "params" key).
+            extra_ignored_keys: Relaxes the match further, see _LIVE_FIFO_IGNORED_PARAM_KEYS.
+
+        Returns:
+            A copy of the bench params without the ignored keys.
         """
         params = dict((metadata or {}).get("params", {}) or {})
         for key in set(self._IGNORED_PARAM_KEYS) | set(extra_ignored_keys):
             params.pop(key, None)
         return params
 
-    def _get_experiment_data(self):
+    def _get_experiment_data(self) -> dict:
+        """Return the DVC experiment data for the configured comparison tag."""
         tag = self.collect_cfg.get("Compare").get("compare_tag")
-        print("Using compare_tag: %s" % tag)
+        print(f"Using compare_tag: {tag}")
         try:
             tag_commit = subprocess.run(
-                ["git", "rev-parse", "%s^{commit}" % tag],
+                ["git", "rev-parse", f"{tag}^{{commit}}"],
                 check=True,
                 capture_output=True,
                 text=True,
             ).stdout.strip()
-            print("compare_tag %s points to commit: %s" % (tag, tag_commit))
+            print(f"compare_tag {tag} points to commit: {tag_commit}")
         except subprocess.CalledProcessError as e:
-            print(
-                "ERROR: Could not resolve compare_tag %s to a commit: %s" % (tag, e.stderr.strip())
-            )
+            print(f"ERROR: Could not resolve compare_tag {tag} to a commit: {e.stderr.strip()}")
         git_remote = "git@github.com:eki-project/finn-plus.git"
 
         with Repo(".") as repo:
             remote_exp_map = retry(
                 lambda: repo.experiments.ls(git_remote=git_remote, rev=tag),
-                "listing experiments on %s" % git_remote,
+                f"listing experiments on {git_remote}",
             )
             remote_exps = set()
-            for _, exps in remote_exp_map.items():
+            for exps in remote_exp_map.values():
                 remote_exps.update(a for a, b in exps)
 
             if not remote_exps:
-                print("ERROR: No experiments found with tag %s" % tag)
+                print(f"ERROR: No experiments found with tag {tag}")
                 return {}
 
             exp_data = {}
@@ -578,9 +615,7 @@ class ExperimentComparator:
                             }
 
             exp_data = {
-                k: v
-                for k, v in exp_data.items()
-                if not (v.get("metrics", {}).get("status") == "failed")
+                k: v for k, v in exp_data.items() if v.get("metrics", {}).get("status") != "failed"
             }
 
         return {
@@ -588,7 +623,7 @@ class ExperimentComparator:
         }
 
     @staticmethod
-    def _is_valid_reference(exp_name, exp_data):
+    def _is_valid_reference(exp_name: str, exp_data: dict) -> bool:
         """Return whether an experiment of the compare tag may serve as comparison reference.
 
         Live FIFO-sizing runs size their FIFOs from a live measurement and their follow-up runs
@@ -599,8 +634,11 @@ class ExperimentComparator:
         kind = classify_run((exp_data.get("params") or {}).get("params", {}) or {})
         return kind == "standard" and "_followup_" not in exp_name
 
-    def _flatten_metrics_dict(self, d, prefix=""):
-        # DVC nests metrics on '/', undo that to get the keys used in the "Compare" config section
+    def _flatten_metrics_dict(self, d: dict, prefix: str = "") -> dict:
+        """Flatten a nested metrics dict into slash-separated keys.
+
+        DVC nests metrics on '/', undo that to get the keys used in the "Compare" config section.
+        """
         flat = {}
         for k, v in d.items():
             key = f"{prefix}/{k}" if prefix else k
@@ -610,11 +648,14 @@ class ExperimentComparator:
                 flat[key] = v
         return flat
 
-    def aggregate_metrics_across_reports(self):
+    def aggregate_metrics_across_reports(self) -> list | None:
+        """Return the current and comparison metric sets across matching experiments."""
         experiment_data = self._get_experiment_data()
 
-        current_metrics = self.dvc_logger.live.summary
-        current_params = self.dvc_logger.live._params
+        # live is None unless results are stored as a DVC experiment (the caller catches the error)
+        live = cast("Live", self.dvc_logger.live)
+        current_metrics = live.summary
+        current_params = live._params  # noqa: SLF001
 
         matching_exps = {}
         current_model_name = self.extract_model_name(current_params)
@@ -627,8 +668,8 @@ class ExperimentComparator:
         )
         if extra_ignored_keys:
             print(
-                "Run kind '%s': relaxing param matching, ignoring %s"
-                % (current_run_kind, ", ".join(sorted(extra_ignored_keys)))
+                f"Run kind '{current_run_kind}': relaxing param matching, ignoring "
+                f"{', '.join(sorted(extra_ignored_keys))}"
             )
         current_full_params = self._normalize_params(current_params, extra_ignored_keys)
 
@@ -656,12 +697,10 @@ class ExperimentComparator:
                     newest_exp = (exp_name, exp_data)
         else:
             # Only standard runs enforce the comparison, so do not cry ERROR for the others
+            level = "ERROR" if current_run_kind == "standard" else "WARNING"
             print(
-                "%s: No matching experiments found with model_name %s and matching params"
-                % (
-                    "ERROR" if current_run_kind == "standard" else "WARNING",
-                    current_model_name,
-                )
+                f"{level}: No matching experiments found with model_name {current_model_name} "
+                "and matching params"
             )
             return None
 
@@ -677,12 +716,12 @@ class ExperimentComparator:
                 if current_raw.get(key, unset) != compare_raw.get(key, unset)
             }
             if differing:
+                differing_str = ", ".join(
+                    f"{k}: {cur!r} vs {ref!r}" for k, (cur, ref) in differing.items()
+                )
                 print(
-                    "Comparing against '%s' despite differing params (current vs reference): %s"
-                    % (
-                        newest_exp[0],
-                        ", ".join("%s: %r vs %r" % (k, v[0], v[1]) for k, v in differing.items()),
-                    )
+                    f"Comparing against '{newest_exp[0]}' despite differing params "
+                    f"(current vs reference): {differing_str}"
                 )
 
         compare = {
@@ -705,7 +744,8 @@ class ExperimentComparator:
 
         return [current, compare]
 
-    def compare_metrics_across_reports(self, aggregated_metrics):
+    def compare_metrics_across_reports(self, aggregated_metrics: list) -> dict:
+        """Compare aggregated metrics and return a per-metric pass/fail report."""
         compare_cfg = self.collect_cfg.get("Compare")
         global_uncertainty = compare_cfg.get("allowed_uncertainty", 0.0)
         metrics_cfg = compare_cfg.get("Metrics", {})
@@ -736,7 +776,12 @@ class ExperimentComparator:
             compare_val = compare.get(key)
 
             if current_val is None or compare_val is None:
-                if is_required:
+                # A required metric that the current run lacks is a failure. One that only the
+                # reference lacks (e.g. the accuracy of a model whose validation dataset was
+                # added later) has nothing to be compared with and must not fail the run.
+                if is_required and current_val is not None:
+                    print(f"Required metric {key} has no reference value, not compared")
+                elif is_required:
                     results[key] = {
                         "current": current_val,
                         "compare": compare_val,
@@ -770,10 +815,7 @@ class ExperimentComparator:
             else:
                 delta = 0.0 if current_num == 0 else float("inf")
 
-            if abs(delta) <= uncertainty:
-                status = "ok"
-            else:
-                status = "not ok"
+            status = "ok" if abs(delta) <= uncertainty else "not ok"
 
             results[key] = {
                 "current": current_num,
@@ -801,13 +843,14 @@ class ExperimentComparator:
             "metrics": results,
         }
 
-    def extract_model_name(self, metadata):
+    def extract_model_name(self, metadata: dict) -> str | None:
+        """Return the model name for a run, derived from its metadata."""
         dut_name = metadata.get("params").get("dut")
         if dut_name == "bnn-pynq":
             model_path = metadata.get("params", {}).get("model_path", "")
             if model_path:
                 # Extract filename from path and remove suffix
-                model_filename = os.path.basename(model_path)
+                model_filename = Path(model_path).name
                 # Remove _qonnx.onnx or similar suffixes
                 model_name = model_filename.replace("_qonnx.onnx", "").replace(".onnx", "")
                 return model_name
@@ -864,18 +907,24 @@ if __name__ == "__main__":
         print("Re-collecting the runs of pipeline %s" % pipeline_id)
     build_commit = None
 
-    for id in run_ids:
-        print("Processing run %d" % id)
+    for run_id in run_ids:
+        print("Processing run %d" % run_id)
         if args.followup:
-            experiment_name = "CI_" + pipeline_id + "_followup_" + str(id)
+            experiment_name = "CI_" + pipeline_id + "_followup_" + str(run_id)
         else:
-            experiment_name = "CI_" + pipeline_id + "_" + str(id)
+            experiment_name = "CI_" + pipeline_id + "_" + str(run_id)
         experiment_msg = (
-            "[CI] " + os.environ.get("CI_PIPELINE_NAME") + " (" + pipeline_id + "_" + str(id) + ")"
+            "[CI] "
+            + os.environ.get("CI_PIPELINE_NAME")
+            + " ("
+            + pipeline_id
+            + "_"
+            + str(run_id)
+            + ")"
         )
 
         # initialize logging wrapper with input parameters logged by benchmarking infrastructure
-        metadata_bench = open_json_report(id, "metadata_bench.json", args.followup)
+        metadata_bench = open_json_report(run_id, "metadata_bench.json", args.followup)
         params = {"params": metadata_bench["params"]}
         run_kind = "live_fifo_followup" if args.followup else classify_run(metadata_bench["params"])
         # Only standard builds are held against the regression tolerances of the compare tag.
@@ -885,18 +934,18 @@ if __name__ == "__main__":
         enforce_comparison = run_kind == "standard" and not is_sampled
         print(
             "Run %d classified as '%s'%s (enforce_comparison=%s)"
-            % (id, run_kind, ", randomly sampled" if is_sampled else "", enforce_comparison)
+            % (run_id, run_kind, ", randomly sampled" if is_sampled else "", enforce_comparison)
         )
         with DVCLoggerHelper(
             experiment_name,
             experiment_msg,
-            id,
+            run_id,
             params,
             is_followup=args.followup,
             dvc_experiments=not args.no_dvc_experiments,
         ) as dvc_logger:
             # optional metadata logged by builder
-            metadata_builder = open_json_report(id, "metadata_builder.json", args.followup)
+            metadata_builder = open_json_report(run_id, "metadata_builder.json", args.followup)
             if metadata_builder:
                 metadata = {
                     "metadata": {
@@ -906,7 +955,7 @@ if __name__ == "__main__":
                 dvc_logger.log_params(metadata)
 
             # optional dut_info.json (additional information generated during model generation)
-            dut_info_report = open_json_report(id, "dut_info.json", args.followup)
+            dut_info_report = open_json_report(run_id, "dut_info.json", args.followup)
             if dut_info_report:
                 dut_info = {"dut_info": dut_info_report}
                 dvc_logger.log_params(dut_info)
@@ -919,29 +968,29 @@ if __name__ == "__main__":
 
             # status
             status = metadata_bench["status"]
-            if status == "ok":
+            if status == "ok" and metadata_builder:
                 # mark as failed if either bench or builder indicates failure
-                if metadata_builder:
-                    status_builder = metadata_builder["status"]
-                    if status_builder == "failed":
-                        status = "failed"
+                status_builder = metadata_builder["status"]
+                if status_builder == "failed":
+                    status = "failed"
             dvc_logger.log_metric("", "status", status)
-            run_index["run_%d" % id] = {
+            run_index["run_%d" % run_id] = {
                 "status": status,
                 "dut": metadata_bench["params"].get("dut"),
-                "build_dir": str(exchange.run_dir("build", id, args.followup)),
-                "measurement_dir": str(exchange.run_dir("measurement", id, args.followup)),
-                "measured": exchange.is_done(exchange.run_dir("measurement", id, args.followup)),
+                "build_dir": str(exchange.run_dir("build", run_id, args.followup)),
+                "measurement_dir": str(exchange.run_dir("measurement", run_id, args.followup)),
+                "measured": exchange.is_done(
+                    exchange.run_dir("measurement", run_id, args.followup)
+                ),
             }
 
             # verification steps
-            if "output" in metadata_bench:
-                if "builder_verification" in metadata_bench["output"]:
-                    dvc_logger.log_metric(
-                        "",
-                        "verification",
-                        metadata_bench["output"]["builder_verification"]["verification"],
-                    )
+            if "output" in metadata_bench and "builder_verification" in metadata_bench["output"]:
+                dvc_logger.log_metric(
+                    "",
+                    "verification",
+                    metadata_bench["output"]["builder_verification"]["verification"],
+                )
 
             # estimate_layer_resources.json
             dvc_logger.log_nested_metrics_from_report(
@@ -1098,7 +1147,9 @@ if __name__ == "__main__":
                 "dut_op_type"
             ) or collect_fn.LEGACY_DUT_OPTYPE.get(dut_name)
             if dut_node_name or dut_op_type:
-                resource_report = open_json_report(id, "post_synth_resources.json", args.followup)
+                resource_report = open_json_report(
+                    run_id, "post_synth_resources.json", args.followup
+                )
                 if resource_report:
                     found = collect_fn.find_dut_hierarchy(
                         resource_report, dut_node_name, dut_op_type
@@ -1138,7 +1189,8 @@ if __name__ == "__main__":
             # negative slack, so record it (the QoR database drops runs that missed timing)
             wns = collect_fn.parse_wns(
                 os.path.join(
-                    str(artifact_reports_dir("build", id, args.followup)), "post_route_timing.rpt"
+                    str(artifact_reports_dir("build", run_id, args.followup)),
+                    "post_route_timing.rpt",
                 )
             )
             if wns is not None:
@@ -1151,7 +1203,9 @@ if __name__ == "__main__":
             )
 
             # power measurement
-            experiment_reports_path = str(artifact_reports_dir("measurement", id, args.followup))
+            experiment_reports_path = str(
+                artifact_reports_dir("measurement", run_id, args.followup)
+            )
             # rails as recorded (ci/experiments/*.json: 0V85 + 1V2_PL plus their total)
             power = collect_fn.generate_power_report(None, experiment_reports_path)
             if power:
@@ -1161,10 +1215,7 @@ if __name__ == "__main__":
                     dvc_logger.log_metric(prefix=prefix, name=metric, value=value)
 
             # measurement metric logging
-            collect_cfg_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "collect.yaml"
-            )
-            exp = ExperimentMetricsLogger(dvc_logger, collect_cfg_path)
+            exp = ExperimentMetricsLogger(dvc_logger, COLLECT_CFG_PATH)
             exp_reports = exp.retrieve_experiment_reports(experiment_reports_path)
             exp_metrics = exp.remove_ignored_metrics_and_apply_fn(exp_reports)
             exp.log_metrics(exp_metrics)
@@ -1175,42 +1226,45 @@ if __name__ == "__main__":
             # ARTIFACTS
             # Log build reports as they come from GitLab artifacts,
             # but copy them to a central dir first so all runs share the same path
-            run_report_dir1 = str(artifact_reports_dir("build", id, args.followup))
-            run_report_dir2 = str(artifact_reports_dir("measurement", id, args.followup))
+            run_report_dir1 = str(artifact_reports_dir("build", run_id, args.followup))
+            run_report_dir2 = str(artifact_reports_dir("measurement", run_id, args.followup))
             dvc_report_dir = "reports"
-            os.makedirs(dvc_report_dir, exist_ok=True)
+            Path(dvc_report_dir).mkdir(parents=True, exist_ok=True)
             delete_dir_contents(dvc_report_dir)
-            if os.path.isdir(run_report_dir1):
-                shutil.copytree(run_report_dir1, dvc_report_dir, dirs_exist_ok=True)
-            if os.path.isdir(run_report_dir2):
-                shutil.copytree(run_report_dir2, dvc_report_dir, dirs_exist_ok=True)
+            for run_report_dir in (run_report_dir1, run_report_dir2):
+                if os.path.isdir(run_report_dir):
+                    shutil.copytree(run_report_dir, dvc_report_dir, dirs_exist_ok=True)
             dvc_logger.log_artifact(dvc_report_dir)
 
             if build_commit is None:
-                done_info = exchange.read_done(exchange.run_dir("build", id, args.followup)) or {}
+                done_info = (
+                    exchange.read_done(exchange.run_dir("build", run_id, args.followup)) or {}
+                )
                 build_commit = done_info.get("commit") or os.environ.get("CI_COMMIT_SHA")
             # Save microbenchmark results in a list per DUT for later aggregation
             dut = params["params"]["dut"]
             if dut not in microbench_result_data:
                 # Initialize data dict for this DUT
-                microbench_result_data[dut] = list()
+                microbench_result_data[dut] = []
             microbench_result_data[dut].append(dvc_logger.data_dict)
 
         # Prepare benchmarking config for follow-up runs after live FIFO-sizing
         if run_kind == "live_fifo":
             # Choose the search order with the lowest fifo_size_total_kB
             lfs_base_dir = os.path.join(
-                str(artifact_reports_dir("measurement", id)), "experiment_fifosizing", "exp_itr_1"
+                str(artifact_reports_dir("measurement", run_id)),
+                "experiment_fifosizing",
+                "exp_itr_1",
             )
             best_search_order = None
             best_fifo_size = float("inf")
-            if os.path.isdir(lfs_base_dir):
-                for search_order in os.listdir(lfs_base_dir):
-                    sizing_report_path = os.path.join(
-                        lfs_base_dir, search_order, "both", "fifo_sizing_report.json"
+            if lfs_base_dir.is_dir():
+                for search_order in [p.name for p in lfs_base_dir.iterdir()]:
+                    sizing_report_path = (
+                        lfs_base_dir / search_order / "both" / "fifo_sizing_report.json"
                     )
-                    if os.path.isfile(sizing_report_path):
-                        with open(sizing_report_path, "r") as f:
+                    if sizing_report_path.is_file():
+                        with sizing_report_path.open() as f:
                             sizing_report = json.load(f)
                         fifo_size = sizing_report.get("fifo_size_total_kB", float("inf"))
                         if fifo_size < best_fifo_size:
@@ -1219,17 +1273,17 @@ if __name__ == "__main__":
 
             if best_search_order is None:
                 print(
-                    "ERROR: No valid search order with fifo_sizing_report.json found in %s."
-                    % lfs_base_dir
+                    "ERROR: No valid search order with fifo_sizing_report.json found in "
+                    f"{lfs_base_dir}."
                 )
             else:
                 print(
-                    "Selecting search order '%s' with fifo_size_total_kB=%.2f"
-                    % (best_search_order, best_fifo_size)
+                    f"Selecting search order '{best_search_order}' with "
+                    f"fifo_size_total_kB={best_fifo_size:.2f}"
                 )
                 # copy the selected configs into a small GitLab artifact so the follow-up
                 # build (on another runner) does not depend on the exchange path layout
-                followup_inputs_dir = os.path.join("followup_inputs", "run_%d" % (id))
+                followup_inputs_dir = os.path.join("followup_inputs", "run_%d" % (run_id))
                 os.makedirs(followup_inputs_dir, exist_ok=True)
                 folding_config_path = os.path.join(followup_inputs_dir, "folding_config.json")
                 fifo_config_path = os.path.join(followup_inputs_dir, "fifo_config.json")
@@ -1241,13 +1295,16 @@ if __name__ == "__main__":
                     os.path.join(lfs_base_dir, best_search_order, "both", "fifo_config.json"),
                     fifo_config_path,
                 )
+                # No check that the two files exist: a follow-up build that fails on a
+                # missing config is preferred over a follow-up run that is silently dropped
                 print(
-                    "Creating follow-up experiment config using folding config %s "
-                    "and FIFO config %s" % (folding_config_path, fifo_config_path)
+                    f"Creating follow-up experiment config using folding config "
+                    f"{folding_config_path} "
+                    f"and FIFO config {fifo_config_path}"
                 )
 
                 # Create benchmarking config
-                configuration = dict()
+                configuration = {}
                 for key in metadata_bench["params"]:
                     # wrap in list
                     configuration[key] = [metadata_bench["params"][key]]
@@ -1260,27 +1317,26 @@ if __name__ == "__main__":
                 follow_up_bench_cfg.append(configuration)
 
         # Always aggregate/compare/plot metrics, but only enforce the result for standard builds
-        collect_cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "collect.yaml")
         if not dvc_logger.store_as_experiment:
             # The comparison runs on DVC experiments (current and ci_known_good references).
             # Runs without experiment tracking (microbenchmarks, store_results_in_dvc_experiment
             # false) only feed the database, so there is nothing to compare and nothing to enforce.
-            print("Run %d: no DVC experiment tracking, skipping the reference comparison" % id)
+            print("Run %d: no DVC experiment tracking, skipping the reference comparison" % run_id)
             metrics = None
             enforce_comparison = False
         else:
             try:
-                comp = ExperimentComparator(dvc_logger, collect_cfg_path)
+                comp = ExperimentComparator(dvc_logger, COLLECT_CFG_PATH)
                 metrics = comp.aggregate_metrics_across_reports()
             except Exception as e:
-                print("ERROR: Metric aggregation raised an exception for run %d: %s" % (id, e))
+                print("ERROR: Metric aggregation raised an exception for run %d: %s" % (run_id, e))
                 metrics = None
         if metrics is None and not dvc_logger.store_as_experiment:
             pass
         elif metrics is None:
             print(
-                "%s: No comparison point found for run %d (kind '%s')"
-                % ("ERROR" if enforce_comparison else "WARNING", id, run_kind)
+                f"{'ERROR' if enforce_comparison else 'WARNING'}: No comparison point found for "
+                f"run {run_id} (kind '{run_kind}')"
             )
             if enforce_comparison:
                 fail_missing_comparison = True
@@ -1289,19 +1345,18 @@ if __name__ == "__main__":
             report["enforced"] = enforce_comparison
             report["run_kind"] = run_kind
             if args.followup:
-                name = metrics[0].get("dut") + f"_followup_r{id}"
+                name = metrics[0].get("dut") + f"_followup_r{run_id}"
             else:
-                name = metrics[0].get("dut") + f"_r{id}"
+                name = metrics[0].get("dut") + f"_r{run_id}"
             metric_reports[name] = report
 
     # Save microbenchmark results as (DVC-tracked? TODO) JSON for each DUT
     for dut in microbench_result_data:
         if None not in microbench_result_data[dut]:
             # dut_dir = os.path.join("ci", "benchmark_data", dut) TODO
-            dut_dir = os.path.join(os.environ.get("LOCAL_BENCHMARK_DIR_STORE"), dut)
-            os.makedirs(dut_dir, exist_ok=True)
-            dut_json_path = os.path.join(
-                dut_dir,
+            dut_dir = Path(os.environ.get("LOCAL_BENCHMARK_DIR_STORE")) / dut
+            dut_dir.mkdir(parents=True, exist_ok=True)
+            dut_json_path = dut_dir / (
                 date.today().strftime("%Y-%m-%d")
                 + "_"
                 + (build_commit or os.environ.get("CI_COMMIT_SHA") or "")[:8]
@@ -1309,7 +1364,7 @@ if __name__ == "__main__":
                 + pipeline_id
                 + "_"
                 + str(len(microbench_result_data[dut]))
-                + ".json",
+                + ".json"
             )
             dut_json = {
                 "dut": dut,
@@ -1332,8 +1387,8 @@ if __name__ == "__main__":
     # It is forwarded to the follow-up job via GitLab CI artifact
     if follow_up_bench_cfg:
         followup_artifact_path = "followup_bench_config.json"
-        print("Saving follow-up bench config as artifact: %s" % followup_artifact_path)
-        with open(followup_artifact_path, "w") as f:
+        print(f"Saving follow-up bench config as artifact: {followup_artifact_path}")
+        with Path(followup_artifact_path).open("w") as f:
             json.dump(follow_up_bench_cfg, f, indent=2)
 
     # Save an index of all runs (status and where their artifacts live) as artifact
@@ -1342,8 +1397,8 @@ if __name__ == "__main__":
 
     # Save metric comparison report as JSON
     report_name = "metric_report.json" if not args.followup else "metric_report_followup.json"
-    print("Saving metric report as artifact: %s" % report_name)
-    with open(report_name, "w") as f:
+    print(f"Saving metric report as artifact: {report_name}")
+    with Path(report_name).open("w") as f:
         json.dump(metric_reports, f, indent=2)
 
     # Plot comparisons
@@ -1359,7 +1414,7 @@ if __name__ == "__main__":
         for metric, result in report["metrics"].items():
             if result.get("required") and result.get("status") != "ok":
                 fail = True
-                print("Required metric %s for DUT %s is not ok: %s" % (metric, dut, result))
+                print(f"Required metric {metric} for DUT {dut} is not ok: {result}")
 
     if fail:
         print("FAIL: One or more required metrics were compared and are not ok")

@@ -22,6 +22,8 @@ import os
 import pandas as pd
 import sys
 from pathlib import Path
+from sklearn.base import clone
+from sklearn.model_selection import RepeatedKFold, cross_val_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
@@ -29,6 +31,7 @@ from finn.qor.database import DATABASE_ENV_VAR, load_microbenchmark_database
 from finn.qor.estimator import (
     DEFAULT_TARGETS,
     MODEL_DIR_ENV_VAR,
+    RANDOM_STATE,
     RESOURCE_TARGET_PREFIX,
     RESOURCE_TARGETS,
     QoREstimator,
@@ -153,7 +156,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def stored_score(model_dir: str, operator: str, target: str, scoring: str) -> float | None:
-    """CV score of the currently stored model, if it exists and used the same scoring."""
+    """Return the CV score recorded when the stored model was fitted (same scoring), if any."""
     sidecar = Path(model_dir) / (model_basename(operator, target) + ".json")
     if not sidecar.is_file():
         return None
@@ -161,6 +164,54 @@ def stored_score(model_dir: str, operator: str, target: str, scoring: str) -> fl
     if meta.get("cv_scoring") != scoring:
         return None
     return meta.get("cv_score")
+
+
+def rescore_stored_model(
+    model_dir: str,
+    operator: str,
+    target: str,
+    estimator: QoREstimator,
+    df: pd.DataFrame,
+    scoring: str,
+    cv: int,
+    n_repeats: int,
+    n_jobs: int,
+) -> float | None:
+    """Return the CV score of the stored model's pipeline re-fitted on the current data.
+
+    The score recorded in the sidecar was measured on the database of the day the model
+    was stored, so it is not comparable with a score on today's (usually larger) database:
+    a model trained on more samples was rejected for a marginally lower number. Cloning the
+    stored pipeline (same regressor and hyperparameters) and cross-validating it on the same
+    rows and folds as the new candidate makes the two scores comparable. None if no model is
+    stored or it cannot be evaluated here (missing runtime dependency, changed features).
+    """
+    try:
+        stored = QoREstimator.load(model_dir, operator, target)
+    except (OSError, ValueError):
+        return None
+    try:
+        stored.check_runtime()
+        rows = estimator.rows_with_target(df)
+        cv_obj = RepeatedKFold(n_splits=cv, n_repeats=n_repeats, random_state=RANDOM_STATE)
+        scores = cross_val_score(
+            clone(stored.pipeline),
+            rows[estimator.feature_cols],
+            rows[estimator.target].values,
+            cv=cv_obj,
+            scoring=scoring,
+            n_jobs=n_jobs,
+        )
+    except Exception as e:  # a stored model that cannot be re-scored must not block storing
+        logger.warning(
+            "%s/%s: stored model cannot be re-scored on the current data (%s), the new "
+            "model replaces it",
+            operator,
+            target,
+            e,
+        )
+        return None
+    return float(scores.mean())
 
 
 def _parse_value(text: str):
@@ -352,22 +403,36 @@ def main() -> int:
                 plot_learning_curve(curve, f"{base}_learning_curve.png")
 
             if not args.no_store:
-                previous = stored_score(args.model_dir, operator, target, result.scoring)
+                # compare on the current data: the stored model's recorded score belongs to
+                # the database it was fitted on (see rescore_stored_model)
+                previous = rescore_stored_model(
+                    args.model_dir,
+                    operator,
+                    target,
+                    estimator,
+                    df,
+                    result.scoring,
+                    args.cv,
+                    args.n_repeats,
+                    args.n_jobs,
+                )
+                entry["previous_cv_score_recorded"] = stored_score(
+                    args.model_dir, operator, target, result.scoring
+                )
+                entry["previous_cv_score_rescored"] = previous
                 if previous is not None and result.best_score < previous and not args.force:
                     logger.warning(
-                        "%s: new model (%s=%.4f) is worse than stored model (%.4f), keeping stored "
-                        "model (use --force to overwrite)",
+                        "%s: new model (%s=%.4f) is worse than the stored model re-scored on "
+                        "the current data (%.4f), keeping stored model (use --force to overwrite)",
                         name,
                         result.scoring,
                         result.best_score,
                         previous,
                     )
                     entry["stored"] = False
-                    entry["previous_cv_score"] = previous
                 else:
                     estimator.save(args.model_dir)
                     entry["stored"] = True
-                    entry["previous_cv_score"] = previous
             summary[name] = entry
 
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))

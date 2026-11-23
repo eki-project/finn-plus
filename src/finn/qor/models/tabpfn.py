@@ -29,11 +29,13 @@ import numpy as np
 import os
 import time
 import weakref
+from collections.abc import Sequence
 from pathlib import Path
 from scipy import sparse
 from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.utils import Tags
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
-from typing import Any, Optional
+from typing import Any, Self
 
 from finn.qor.models.sklearn_extras import RANDOM_STATE, signed_expm1, signed_log1p
 
@@ -51,13 +53,13 @@ def tabpfn_available() -> bool:
     return all(importlib.util.find_spec(m) is not None for m in ("tabpfn", "torch"))
 
 
-def model_cache_dir() -> Optional[Path]:
-    """The weights directory configured via ``$TABPFN_MODEL_CACHE_DIR``, if any."""
+def model_cache_dir() -> Path | None:
+    """Return the weights directory configured via ``$TABPFN_MODEL_CACHE_DIR``, if any."""
     value = os.environ.get(MODEL_CACHE_DIR_ENV_VAR)
     return Path(value).expanduser() if value else None
 
 
-def resolve_model_path(model_path: str = DEFAULT_MODEL_FILE) -> Optional[Path]:
+def resolve_model_path(model_path: str = DEFAULT_MODEL_FILE) -> Path | None:
     """Absolute path of a staged checkpoint, or None if it does not exist.
 
     Mirrors the package's rule for bare file names (current directory first, then the cache
@@ -117,18 +119,18 @@ class TabPFNRegressor(BaseEstimator, RegressorMixin):
 
     def __init__(
         self,
-        n_estimators=8,
-        target_transform="log1p",
-        model_path=DEFAULT_MODEL_FILE,
-        device="auto",
-        torch_threads=None,
-        categorical_features_indices=None,
-        inference_precision="auto",
-        fit_mode="fit_preprocessors",
-        reload_fit_mode="fit_with_cache",
-        ignore_pretraining_limits=True,
-        random_state=RANDOM_STATE,
-    ):
+        n_estimators: int = 8,
+        target_transform: str = "log1p",
+        model_path: str = DEFAULT_MODEL_FILE,
+        device: str = "auto",
+        torch_threads: int | None = None,
+        categorical_features_indices: Sequence[int] | None = None,
+        inference_precision: Any = "auto",
+        fit_mode: str = "fit_preprocessors",
+        reload_fit_mode: str = "fit_with_cache",
+        ignore_pretraining_limits: bool = True,
+        random_state: int = RANDOM_STATE,
+    ) -> None:
         """Store the hyperparameters (sklearn convention: no validation here)."""
         self.n_estimators = n_estimators
         self.target_transform = target_transform
@@ -155,11 +157,11 @@ class TabPFNRegressor(BaseEstimator, RegressorMixin):
             )
 
     @staticmethod
-    def _dense(X) -> np.ndarray:
+    def _dense(x: Any) -> np.ndarray:
         """Dense float array from a dense or sparse input."""
-        if sparse.issparse(X):
-            X = X.toarray()
-        return np.asarray(X, dtype=np.float64)
+        if sparse.issparse(x):
+            x = x.toarray()
+        return np.asarray(x, dtype=np.float64)
 
     def _transform_target(self, y: np.ndarray) -> np.ndarray:
         """Apply the configured target transform."""
@@ -180,7 +182,7 @@ class TabPFNRegressor(BaseEstimator, RegressorMixin):
 
             torch.set_num_threads(max(1, int(self.torch_threads)))
 
-    def _build(self, fit_mode: str):
+    def _build(self, fit_mode: str) -> Any:
         """Unfitted ``tabpfn.TabPFNRegressor`` with the configured settings."""
         self.check_runtime()
         from tabpfn import TabPFNRegressor as _TabPFNRegressor
@@ -197,7 +199,7 @@ class TabPFNRegressor(BaseEstimator, RegressorMixin):
             random_state=self.random_state,
         )
 
-    def _fit_context(self, fit_mode: str):
+    def _fit_context(self, fit_mode: str) -> Any:
         """Fit a TabPFN estimator on the stored context and cache it for this instance."""
         self._set_threads()
         model = self._build(fit_mode)
@@ -206,12 +208,12 @@ class TabPFNRegressor(BaseEstimator, RegressorMixin):
         return model
 
     # -- sklearn API -----------------------------------------------------------------------
-    def fit(self, X, y):
+    def fit(self, X: Any, y: Any) -> Self:  # noqa: N803
         """Store ``X``/``y`` as the in-context examples and encode them with TabPFN."""
         # NaN is allowed: TabPFN handles missing values natively (an ordinal encoder may
         # map a missing category to NaN)
-        X, y = check_X_y(X, y, accept_sparse=True, y_numeric=True, ensure_all_finite=False)
-        self.X_context_ = self._dense(X)
+        x, y = check_X_y(X, y, accept_sparse=True, y_numeric=True, ensure_all_finite=False)
+        self.X_context_ = self._dense(x)
         self.n_features_in_ = self.X_context_.shape[1]
         self.y_context_ = self._transform_target(np.asarray(y, dtype=float))
         start = time.perf_counter()
@@ -225,28 +227,28 @@ class TabPFNRegressor(BaseEstimator, RegressorMixin):
             "device": resolve_device(self.device),
             "model_file": Path(model.model_path).name,
             "n_estimators": int(self.n_estimators),
-            "n_context": int(len(self.X_context_)),
+            "n_context": len(self.X_context_),
             "fit_mode": self.fit_mode,
             "fit_time_s": time.perf_counter() - start,
         }
         return self
 
-    def predict(self, X):
+    def predict(self, X: Any) -> np.ndarray:  # noqa: N803
         """Predict ``X`` (mean of TabPFN's predictive distribution, target transform
         inverted); a pickled estimator re-fits itself from the stored context first."""
         check_is_fitted(self, "X_context_")
-        X = self._dense(check_array(X, accept_sparse=True, ensure_all_finite=False))
-        if X.shape[1] != self.n_features_in_:
-            raise ValueError(f"expected {self.n_features_in_} features, got {X.shape[1]}")
+        x = self._dense(check_array(X, accept_sparse=True, ensure_all_finite=False))
+        if x.shape[1] != self.n_features_in_:
+            raise ValueError(f"expected {self.n_features_in_} features, got {x.shape[1]}")
         model = _MODELS.get(self)
         if model is None:
             model = self._fit_context(self.reload_fit_mode)
         else:
             self._set_threads()
-        return self._inverse_target(np.asarray(model.predict(X), dtype=float))
+        return self._inverse_target(np.asarray(model.predict(x), dtype=float))
 
-    def __sklearn_tags__(self):
-        """sklearn estimator tags (regressor, sparse input accepted)."""
+    def __sklearn_tags__(self) -> Tags:
+        """Sklearn estimator tags (regressor, sparse input accepted)."""
         tags = super().__sklearn_tags__()
         tags.input_tags.sparse = True
         tags.input_tags.allow_nan = True
@@ -254,11 +256,11 @@ class TabPFNRegressor(BaseEstimator, RegressorMixin):
         return tags
 
     # -- persistence: no torch objects in the pickle -----------------------------------------
-    def __getstate__(self):
+    def __getstate__(self) -> dict[str, Any]:
         """Pickle the hyperparameters and the context (the TabPFN estimator is not in
         ``__dict__``)."""
         return dict(self.__dict__)
 
-    def __setstate__(self, state):
+    def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore the state; the TabPFN estimator is rebuilt on the first prediction."""
         self.__dict__.update(state)

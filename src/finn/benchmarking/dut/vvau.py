@@ -11,7 +11,7 @@ from qonnx.util.basic import (
     gen_finn_dt_tensor,
     qonnx_make_model,
 )
-from typing import Optional
+from typing import ClassVar
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
@@ -34,7 +34,7 @@ class bench_vvau(MicrobenchDUT):
 
     NAME = "vvau"
     OP_TYPES = ("VVAU_hls", "VVAU_rtl")
-    PARAMS = {
+    PARAMS: ClassVar[dict[str, str]] = {
         "backend": "hls or rtl (rtl requires a Versal part)",
         "idt": "input datatype",
         "wdt": "weight datatype",
@@ -50,7 +50,7 @@ class bench_vvau(MicrobenchDUT):
     }
 
     @staticmethod
-    def validate(params: dict) -> Optional[str]:
+    def validate(params: dict) -> str | None:
         """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         backend = params.get("backend")
         if backend not in ("hls", "rtl"):
@@ -101,7 +101,7 @@ class bench_vvau(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
-        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
+        """Return the sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "backend": Choice(["hls", "hls", "rtl"]),
             "idt": Choice(["UINT2", "INT2", "UINT4", "INT4", "UINT8", "INT8"]),
@@ -121,7 +121,7 @@ class bench_vvau(MicrobenchDUT):
         }
 
     @classmethod
-    def make_model(cls, params: dict, fpga_part: str):
+    def make_model(cls, params: dict, fpga_part: str) -> tuple[ModelWrapper, dict]:  # noqa: ARG003
         """Build the single-node model for ``params`` and return it with its dut_info."""
         backend = params["backend"]
         idt, wdt = DataType[params["idt"]], DataType[params["wdt"]]
@@ -135,26 +135,27 @@ class bench_vvau(MicrobenchDUT):
         else:
             export_wdt, export_idt, binary_xnor_mode = wdt, idt, 0
 
-        W = gen_finn_dt_tensor(wdt, (ch, 1, k_h, k_w))
-        zero_weights = round(float((W == 0).sum()) / W.size, 2)
+        w = gen_finn_dt_tensor(wdt, (ch, 1, k_h, k_w))
+        zero_weights = round(float((w == 0).sum()) / w.size, 2)
 
         if act is None:
-            T, tdt, actval, no_act = None, None, 0, 1
+            t_mat, tdt, actval, no_act = None, None, 0, 1
             odt = DataType["UINT32"] if binary_xnor_mode else DataType["INT32"]
         else:
             odt = DataType[act]
             no_act = 0
             actval = 0 if odt == DataType["BIPOLAR"] else int(odt.min())
             # thresholds within the accumulator range of each channel's k_h*k_w weights
-            (acc_min, acc_max) = calculate_matvec_accumulator_range(W.reshape(ch, k_h * k_w).T, idt)
+            (acc_min, acc_max) = calculate_matvec_accumulator_range(w.reshape(ch, k_h * k_w).T, idt)
             n_steps = odt.get_num_possible_values() - 1
-            T = np.random.randint(acc_min, max(acc_min + 1, acc_max - 1), (ch, n_steps)).astype(
-                np.float32
-            )
-            T = np.sort(T, axis=1)
+            # (legacy global RNG: recorded configurations are reproduced from the base seed)
+            t_mat = np.random.randint(  # noqa: NPY002
+                acc_min, max(acc_min + 1, acc_max - 1), (ch, n_steps)
+            ).astype(np.float32)
+            t_mat = np.sort(t_mat, axis=1)
             if binary_xnor_mode:
                 tdt = DataType["UINT32"]
-                T = np.ceil((T + k_h * k_w) / 2)
+                t_mat = np.ceil((t_mat + k_h * k_w) / 2)
             else:
                 tdt = DataType["INT32"]
 
@@ -164,7 +165,7 @@ class bench_vvau(MicrobenchDUT):
         outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [1, dim_h, dim_w, ch])
         node = helper.make_node(
             f"VVAU_{backend}",
-            ["inp", "weights"] + (["thresh"] if T is not None else []),
+            ["inp", "weights"] + (["thresh"] if t_mat is not None else []),
             ["outp"],
             domain=f"finn.custom_op.fpgadataflow.{backend}",
             backend="fpgadataflow",
@@ -188,10 +189,10 @@ class bench_vvau(MicrobenchDUT):
         model.set_tensor_datatype("inp", idt)
         model.set_tensor_datatype("outp", odt)
         model.set_tensor_datatype("weights", wdt)
-        model.set_initializer("weights", (W + 1) / 2 if binary_xnor_mode else W)
-        if T is not None:
+        model.set_initializer("weights", (w + 1) / 2 if binary_xnor_mode else w)
+        if t_mat is not None:
             model.set_tensor_datatype("thresh", tdt)
-            model.set_initializer("thresh", T)
+            model.set_initializer("thresh", t_mat)
 
         model = model.transform(MinimizeWeightBitWidth())
         model = model.transform(MinimizeAccumulatorWidth())

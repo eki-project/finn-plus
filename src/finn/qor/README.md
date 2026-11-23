@@ -80,6 +80,11 @@ nonzero samples only) and are only fitted if the target has enough signal
 estimate (and a previously stored model) is kept. Any target with fewer than `--min-samples`
 datapoints (default 20) is skipped as well, e.g. an operator that only has its smoke-test runs
 in the database. Resource predictions are clipped at zero and rounded.
+A new model replaces the stored one only if its cross-validated score is at least as good as
+that of the stored model's pipeline (same regressor and hyperparameters) re-fitted and
+cross-validated on the current database with the same folds; the score recorded when the
+stored model was saved refers to the database of that day and is only reported
+(`previous_cv_score_recorded` in `summary.json`). `--force` stores the new model regardless.
 
 Resource types and nodes without a fitted model fall back to the analytical
 `node_res_estimation`; nodes without a power model are reported as 0. A node whose

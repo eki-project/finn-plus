@@ -28,6 +28,8 @@
 
 import pytest
 
+import itertools
+
 import numpy as np
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
@@ -37,7 +39,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
-from qonnx.util.basic import gen_finn_dt_tensor
+from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
@@ -211,33 +213,101 @@ def make_single_multithresholding_modelwrapper(
     return model
 
 
-@pytest.mark.parametrize("num_input_channels", [6, 16])
-@pytest.mark.parametrize(
-    "num_input_vecs",
-    [
-        [1],
-        [1, 2, 2],
-    ],
-)
-@pytest.mark.parametrize("activation", [DataType["UINT4"], DataType["INT4"], DataType["BIPOLAR"]])
-@pytest.mark.parametrize(
-    "idt_tdt_cfg",
-    [
+# The full grid of test_fpgadataflow_thresholding has 13824 combinations (7200 after the skips
+# inside the test). The HLS variant in rtlsim synthesizes the operator for every case and takes
+# one to three minutes each, which made this the most expensive test of the CI suite (about
+# 80 worker-hours). By default, the HLS rtlsim cases therefore sweep only the data types, the
+# activation and the memory mode in full, while the secondary axes (folding, narrow range,
+# per-tensor thresholds, threshold rounding, channel count and input shape) are varied one at a
+# time from _THRESHOLDING_BASE. cppsim and the RTL variant are cheap and keep the full grid. The
+# deselected combinations are marked xslow, which the CI test variants deselect
+# (finn test ... --variant full_ci), and can be run explicitly with ``pytest -m xslow``.
+_THRESHOLDING_BASE = {
+    "fold": 2,
+    "narrow": False,
+    "per_tensor": False,
+    "round_thresh": False,
+    "num_input_channels": 6,
+    "num_input_vecs": [1, 2, 2],
+}
+
+
+def _thresholding_cases():
+    """The full grid of test_fpgadataflow_thresholding; HLS rtlsim cases that differ from
+    _THRESHOLDING_BASE in more than one secondary axis are marked xslow."""
+    idt_tdt_cfgs = [
         (DataType["INT8"], DataType["INT25"]),
         (DataType["UINT5"], DataType["UINT8"]),
         (DataType["INT8"], DataType["INT7"]),
         (DataType["FLOAT32"], DataType["FLOAT32"]),
         (DataType["FLOAT16"], DataType["FLOAT16"]),
         (DataType["FIXED<6,2>"], DataType["FIXED<8,4>"]),
-    ],
+    ]
+    activations = [DataType["UINT4"], DataType["INT4"], DataType["BIPOLAR"]]
+    cases = []
+    for (
+        num_input_channels,
+        (vecs_idx, num_input_vecs),
+        (act_idx, activation),
+        (cfg_idx, idt_tdt_cfg),
+        fold,
+        narrow,
+        per_tensor,
+        impl_style,
+        exec_mode,
+        mem_mode,
+        round_thresh,
+    ) in itertools.product(
+        [6, 16],
+        enumerate([[1], [1, 2, 2]]),
+        enumerate(activations),
+        enumerate(idt_tdt_cfgs),
+        [-1, 1, 2],
+        [True, False],
+        [True, False],
+        ["hls", "rtl"],
+        ["cppsim", "rtlsim"],
+        ["internal_embedded", "internal_decoupled"],
+        [True, False],
+    ):
+        secondary = {
+            "fold": fold,
+            "narrow": narrow,
+            "per_tensor": per_tensor,
+            "round_thresh": round_thresh,
+            "num_input_channels": num_input_channels,
+            "num_input_vecs": num_input_vecs,
+        }
+        deviations = sum(secondary[axis] != value for axis, value in _THRESHOLDING_BASE.items())
+        xslow = impl_style == "hls" and exec_mode == "rtlsim" and deviations > 1
+        cases.append(
+            pytest.param(
+                num_input_channels,
+                num_input_vecs,
+                activation,
+                idt_tdt_cfg,
+                fold,
+                narrow,
+                per_tensor,
+                impl_style,
+                exec_mode,
+                mem_mode,
+                round_thresh,
+                marks=[pytest.mark.xslow] if xslow else [],
+                # same ids as pytest generated for the stacked parametrize decorators before
+                id=f"{round_thresh}-{mem_mode}-{exec_mode}-{impl_style}-{per_tensor}-{narrow}-"
+                f"{fold}-idt_tdt_cfg{cfg_idx}-activation{act_idx}-num_input_vecs{vecs_idx}-"
+                f"{num_input_channels}",
+            )
+        )
+    return cases
+
+
+@pytest.mark.parametrize(
+    "num_input_channels, num_input_vecs, activation, idt_tdt_cfg, fold, narrow, per_tensor, "
+    "impl_style, exec_mode, mem_mode, round_thresh",
+    _thresholding_cases(),
 )
-@pytest.mark.parametrize("fold", [-1, 1, 2])
-@pytest.mark.parametrize("narrow", [True, False])
-@pytest.mark.parametrize("per_tensor", [True, False])
-@pytest.mark.parametrize("impl_style", ["hls", "rtl"])
-@pytest.mark.parametrize("exec_mode", ["cppsim", "rtlsim"])
-@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
-@pytest.mark.parametrize("round_thresh", [True, False])
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 @pytest.mark.slow
@@ -684,3 +754,44 @@ def test_fpgadataflow_thresholding_data_layout(num_input_vecs, num_input_channel
     y_produced = oxe.execute_onnx(model, input_dict)[model.get_first_global_out()]
 
     assert (y_produced.astype(np.float32) == y_expected.astype(np.float32)).all()
+
+
+@pytest.mark.fpgadataflow
+def test_infer_thresholding_bipolar_out_scale():
+    """An exported bipolar MultiThreshold (out_scale=2, out_bias=-1, as at the
+    output of the cybsec MLP) converts to a standalone Thresholding layer with
+    ActVal=0 and a BIPOLAR output (0/1 stream encoding), same as the fused MVAU
+    conversion, and executes identically."""
+    from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
+
+    ch, n = 8, 4
+    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [n, ch])
+    outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [n, ch])
+    thresh = helper.make_tensor_value_info("thresh", TensorProto.FLOAT, [ch, 1])
+    node = helper.make_node(
+        "MultiThreshold",
+        ["inp", "thresh"],
+        ["outp"],
+        domain="qonnx.custom_op.general",
+        out_dtype="BIPOLAR",
+        out_bias=-1.0,
+        out_scale=2.0,
+        data_layout="NC",
+    )
+    graph = helper.make_graph([node], "bipolar_thr", [inp], [outp], value_info=[thresh])
+    model = ModelWrapper(qonnx_make_model(graph, producer_name="bipolar-thr"))
+    model.set_tensor_datatype("inp", DataType["INT8"])
+    model.set_tensor_datatype("thresh", DataType["INT8"])
+    model.set_tensor_datatype("outp", DataType["BIPOLAR"])
+    model.set_initializer("thresh", np.random.randint(-64, 64, (ch, 1)).astype(np.float32))
+    x = gen_finn_dt_tensor(DataType["INT8"], (n, ch))
+    y_ref = oxe.execute_onnx(model, {"inp": x})["outp"]
+    assert set(np.unique(y_ref)) <= {-1.0, 1.0}
+
+    model = model.transform(InferThresholdingLayer())
+    assert model.graph.node[0].op_type == "Thresholding"
+    inst = getCustomOp(model.graph.node[0])
+    assert inst.get_nodeattr("ActVal") == 0
+    assert inst.get_output_datatype() == DataType["BIPOLAR"]
+    y = oxe.execute_onnx(model, {"inp": x})["outp"]
+    assert np.array_equal(y, y_ref)

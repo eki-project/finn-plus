@@ -7,12 +7,12 @@ from __future__ import annotations
 import pytest
 
 import contextlib
+import itertools
 import mip
 import os
 import types
 import yaml
 from copy import deepcopy
-from dataclasses import dataclass
 from fpgadataflow.multifpga.utils import (
     MockGraph,
     MockModelWrapper,
@@ -21,10 +21,8 @@ from fpgadataflow.multifpga.utils import (
     mock_model,
 )
 from pathlib import Path
-from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.custom_op.registry import getCustomOp
 from test_multifpga_sdp_creation import create_sdp_ready_model_no_branches
-from typing import Final, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
@@ -45,20 +43,13 @@ from finn.transformation.fpgadataflow.multifpga.create_multi_sdp import (
 from finn.transformation.fpgadataflow.multifpga.create_network_metadata import CreateNetworkMetadata
 from finn.transformation.fpgadataflow.multifpga.partition_model import PartitionForMultiFPGA
 from finn.util.basic import make_build_dir
-from finn.util.exception import (
-    FINNError,
-    FINNMultiFPGAConfigError,
-    FINNMultiFPGAError,
-    FINNMultiFPGAPartitionerError,
-    FINNMultiFPGAUserError,
-)
+from finn.util.exception import FINNError, FINNMultiFPGAPartitionerError
 from finn.util.fpgadataflow import get_device_id
 from finn.util.platforms import platforms
-from finn.util.resources import (
-    ResourceEstimates,
-    available_resources_on_platform,
-    get_estimated_model_resources,
-)
+from finn.util.resources import available_resources_on_platform, get_estimated_model_resources
+
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
 
 
 @pytest.mark.auroraflow
@@ -204,6 +195,73 @@ class TestAuroraFlowPreparationAndMetadata:
             assert res.exists()
 
 
+_PARTITIONING_MODELS = [
+    ("CNV", 1, 1, True),
+    ("CNV", 1, 2, True),
+    ("CNV", 2, 2, True),
+    ("LFC", 1, 1, True),
+    ("LFC", 1, 2, True),
+    ("SFC", 1, 2, True),
+    ("SFC", 2, 2, True),
+    ("TFC", 1, 1, True),
+    ("TFC", 1, 2, True),
+    ("mobilenetv1", 4, 4, True),
+    ("resnet18", 4, 4, True),
+]
+
+# Partitioning a model takes 4 to 20 minutes (resource estimation and the Gurobi MILP) and the
+# full grid of test_partitioning has 704 cases. By default, one bit-width variant per topology
+# (two for CNV) runs with the utilization pairs (0.95, 0.80) and (0.85, 0.75); the other
+# variants and the crossed utilization pairs are marked xslow, which the CI test variants
+# deselect (finn test ... --variant full_ci), and can be run explicitly with ``pytest -m xslow``.
+_PARTITIONING_DEFAULT_MODELS = {
+    ("CNV", 1, 1, True),
+    ("CNV", 2, 2, True),
+    ("LFC", 1, 2, True),
+    ("SFC", 1, 2, True),
+    ("TFC", 1, 1, True),
+    ("mobilenetv1", 4, 4, True),
+    ("resnet18", 4, 4, True),
+}
+_PARTITIONING_DEFAULT_UTILIZATION = {(0.95, 0.80), (0.85, 0.75)}  # (max_util, ideal_util)
+
+
+def _partitioning_cases():
+    """The full grid of test_partitioning with all but the default subset marked xslow."""
+    cases = []
+    for (
+        partition_strategy,
+        ideal_util,
+        max_util,
+        devices,
+        (model_idx, model_type),
+    ) in itertools.product(
+        [PartitioningStrategy.LAYER_COUNT, PartitioningStrategy.RESOURCE_UTILIZATION],
+        [0.80, 0.75],
+        [0.95, 0.85],
+        [2, 3, 4, 10],
+        enumerate(_PARTITIONING_MODELS),
+    ):
+        default = (
+            model_type in _PARTITIONING_DEFAULT_MODELS
+            and (max_util, ideal_util) in _PARTITIONING_DEFAULT_UTILIZATION
+        )
+        cases.append(
+            pytest.param(
+                model_type,
+                devices,
+                max_util,
+                ideal_util,
+                partition_strategy,
+                marks=[] if default else [pytest.mark.xslow],
+                # same ids as pytest generated for the stacked parametrize decorators before
+                id=f"{partition_strategy.value}-{ideal_util}-{max_util}-{devices}-"
+                f"model_type{model_idx}",
+            )
+        )
+    return cases
+
+
 @pytest.mark.auroraflow
 @pytest.mark.multifpga
 @pytest.mark.parametrize("board", ["U55C", "Pynq-Z1"])
@@ -228,9 +286,9 @@ class TestAuroraFlowPartitioning:
         Considers the number of devices, as well as the max utilization percentage.
         """
         assert cfg.partitioning_configuration is not None, "No partitioning configuration found!"
-        assert cfg.board is not None, (
-            "Partitioning requires the 'board' " "parameter to be set in the dataflow config."
-        )
+        assert (
+            cfg.board is not None
+        ), "Partitioning requires the 'board' parameter to be set in the dataflow config."
         resource_estimates = get_estimated_model_resources(
             model,
             cfg._resolve_fpga_part(),  # noqa
@@ -254,27 +312,7 @@ class TestAuroraFlowPartitioning:
     @pytest.mark.vivado
     @pytest.mark.slow
     @pytest.mark.parametrize(
-        "model_type",
-        [
-            ("CNV", 1, 1, True),
-            ("CNV", 1, 2, True),
-            ("CNV", 2, 2, True),
-            ("LFC", 1, 1, True),
-            ("LFC", 1, 2, True),
-            ("SFC", 1, 2, True),
-            ("SFC", 2, 2, True),
-            ("TFC", 1, 1, True),
-            ("TFC", 1, 2, True),
-            ("mobilenetv1", 4, 4, True),
-            ("resnet18", 4, 4, True),
-        ],
-    )
-    @pytest.mark.parametrize("devices", [2, 3, 4, 10])
-    @pytest.mark.parametrize("max_util", [0.95, 0.85])
-    @pytest.mark.parametrize("ideal_util", [0.80, 0.75])
-    @pytest.mark.parametrize(
-        "partition_strategy",
-        [PartitioningStrategy.LAYER_COUNT, PartitioningStrategy.RESOURCE_UTILIZATION],
+        "model_type, devices, max_util, ideal_util, partition_strategy", _partitioning_cases()
     )
     def test_partitioning(
         self,
@@ -285,7 +323,7 @@ class TestAuroraFlowPartitioning:
         board: str,
         max_util: float,
         ideal_util: float,
-        pytestconfig: pytest.Config,
+        pytestconfig: pytest.Config,  # noqa: ARG002
     ) -> None:
         """Test some known model - fpga combinations that should
         be solveable.

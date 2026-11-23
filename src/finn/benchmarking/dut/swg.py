@@ -6,7 +6,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
-from typing import Optional
+from typing import ClassVar
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
@@ -25,7 +25,7 @@ class bench_swg(MicrobenchDUT):
 
     NAME = "swg"
     OP_TYPES = ("ConvolutionInputGenerator_rtl",)
-    PARAMS = {
+    PARAMS: ClassVar[dict[str, str]] = {
         "idt": "input datatype",
         "ifm_ch": "input channels",
         "ifm_dim": "input feature map size [H, W] (H or W == 1 for 1D)",
@@ -40,7 +40,7 @@ class bench_swg(MicrobenchDUT):
     }
 
     @staticmethod
-    def validate(params: dict) -> Optional[str]:
+    def validate(params: dict) -> str | None:
         """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         idt = DataType[params["idt"]]
         ifm_ch, simd = int(params["ifm_ch"]), int(params["simd"])
@@ -87,7 +87,7 @@ class bench_swg(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
-        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
+        """Return the sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "idt": Choice(["BINARY", "UINT2", "INT2", "UINT4", "INT4", "UINT8", "INT8"]),
             "ifm_ch": Choice([3, 4, 8, 16, 32, 64, 128, 256, 512, 1024]),
@@ -124,7 +124,7 @@ class bench_swg(MicrobenchDUT):
         }
 
     @classmethod
-    def make_model(cls, params: dict, fpga_part: str):
+    def make_model(cls, params: dict, fpga_part: str) -> tuple[ModelWrapper, dict]:
         """Build the single-node model for ``params`` and return it with its dut_info."""
         idt = DataType[params["idt"]]
         ifm_ch, simd = int(params["ifm_ch"]), int(params["simd"])

@@ -6,10 +6,10 @@ facts about the generated node in ``report/dut_info.json``. Subclasses provide:
 
 * :attr:`NAME` (== ``params["dut"]`` == database subfolder == ``OperatorFeatureSpec.name``),
 * :attr:`OP_TYPES` (specialized op types the DUT may produce),
-* :meth:`validate` – a pure function rejecting invalid parameter sets *without* building
+* :meth:`validate` - a pure function rejecting invalid parameter sets *without* building
   anything (also used by the random sampler),
-* :meth:`param_space` – the declarative parameter space for random sampling,
-* :meth:`make_model` – model construction, returning the model and the dut_info dict.
+* :meth:`param_space` - the declarative parameter space for random sampling,
+* :meth:`make_model` - model construction, returning the model and the dut_info dict.
 
 Parameters that do not apply to the selected backend/variant must be ``None`` (strings) or
 ``0`` (numbers), which :meth:`validate` enforces; otherwise the parameter-set based
@@ -19,10 +19,11 @@ deduplication of the result database would keep spurious duplicates.
 import json
 import numpy as np
 import os
+from onnx import NodeProto
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
-from typing import Any, Optional
+from typing import Any, ClassVar, Literal
 
 import finn.builder.build_dataflow_config as build_cfg
 from finn.benchmarking.bench_base import bench
@@ -73,7 +74,7 @@ def resolve_part(params: dict) -> str:
     return part_map[board]
 
 
-def backend_of(node) -> str:
+def backend_of(node: NodeProto) -> str:
     """``"hls"`` or ``"rtl"`` from a specialized node's op_type."""
     return "hls" if node.op_type.endswith("_hls") else "rtl"
 
@@ -97,10 +98,12 @@ def frame_cycles_ok(cycles: int) -> bool:
 
 
 def output_words_ok(elems: int, bits: int) -> bool:
-    """The instrumentation shell's checksum slices every output word, padded to a byte
-    multiple as on the AXI stream, into ``elems`` equal subwords
-    (``static_assert(T::width % K == 0)`` in instrumentation.template.cpp). So the padded
-    width of the output stream must be a multiple of the number of elements it carries."""
+    """Return whether the instrumentation shell can slice the output words into ``elems`` parts.
+
+    The shell's checksum slices every output word, padded to a byte multiple as on the AXI
+    stream, into ``elems`` equal subwords (``static_assert(T::width % K == 0)`` in
+    instrumentation.template.cpp). So the padded width of the output stream must be a
+    multiple of the number of elements it carries."""
     width = elems * bits
     if elems < 1 or width < 1:
         return False
@@ -108,7 +111,7 @@ def output_words_ok(elems: int, bits: int) -> bool:
     return padded % elems == 0
 
 
-def check_foreign(params: dict, keys: list[str], reason: str) -> Optional[str]:
+def check_foreign(params: dict, keys: list[str], reason: str) -> str | None:
     """Reject parameter sets where inapplicable keys are set (not None/0)."""
     for key in keys:
         value = params.get(key)
@@ -131,17 +134,17 @@ class MicrobenchDUT(bench):
     NAME: str = ""
     OP_TYPES: tuple[str, ...] = ()
     #: parameter name -> short description (documentation for configs and the sampler)
-    PARAMS: dict[str, str] = {}
+    PARAMS: ClassVar[dict[str, str]] = {}
     SEED: int = 123456
 
     @staticmethod
-    def validate(params: dict) -> Optional[str]:
+    def validate(params: dict) -> str | None:  # noqa: ARG004 (overridden per DUT)
         """Return a rejection reason for invalid parameter sets, None if valid."""
         return None
 
     @classmethod
     def param_space(cls) -> ParamSpace:
-        """Declarative parameter space for random sampling (see param_space.py)."""
+        """Return the declarative parameter space for random sampling (see param_space.py)."""
         raise NotImplementedError
 
     @classmethod
@@ -150,13 +153,13 @@ class MicrobenchDUT(bench):
         raise NotImplementedError
 
     @classmethod
-    def build_steps(cls, params: dict) -> list[str]:
+    def build_steps(cls, params: dict) -> list[str]:  # noqa: ARG003 (overridden per DUT)
         """Build steps for this parameter set (default: the full microbenchmark flow)."""
         return list(MICROBENCH_BUILD_STEPS)
 
     @classmethod
     def sample_defaults(cls) -> dict[str, Any]:
-        """Fixed parameters every sampled run of this DUT needs (overridable in configs)."""
+        """Return the fixed parameters every sampled run of this DUT needs (configs override)."""
         return {
             "dut": cls.NAME,
             "instrumentation_no_dma": True,
@@ -182,14 +185,14 @@ class MicrobenchDUT(bench):
             ],
         }
 
-    def _step_export_onnx(self, onnx_export_path):
+    def _step_export_onnx(self, onnx_export_path: str) -> Literal["skipped"] | None:
         """Validate the parameters, build the single-node model and write dut_info.json."""
         reason = self.validate(self._params)
         if reason is not None:
             print(f"Invalid configuration, skipping: {reason}")
             return "skipped"
 
-        np.random.seed(self.SEED)
+        np.random.seed(self.SEED)  # noqa: NPY002 (legacy RNG keeps recorded configs reproducible)
         model, info = self.make_model(self._params, self._part)
         model = model.transform(GiveUniqueNodeNames())
 
@@ -205,6 +208,12 @@ class MicrobenchDUT(bench):
             return "skipped"
 
         inst = getHWCustomOp(node)
+        if "ram_cascade_height" in inst.get_nodeattr_types():
+            # The memstream cascade-height rule (default -1, derived from part and memory
+            # shape) changes the BRAM/URAM mapping of weight memories. The database was
+            # collected before the rule existed, i.e. with the mapping of 0 (left to
+            # synthesis), so every sample keeps that setting to stay comparable.
+            inst.set_nodeattr("ram_cascade_height", 0)
         if is_hls_node(node):
             # HLS modules are limited by AP_INT_MAX_W; the backends raise if a stream or
             # weight tile exceeds it, which validate() should have caught (safety net)
@@ -230,13 +239,13 @@ class MicrobenchDUT(bench):
         info["dut_node_name"] = node.name
         info["dut_op_type"] = node.op_type
         info["dut_backend"] = backend_of(node)
-        with open(self._build_inputs["build_dir"] / "report/dut_info.json", "w") as f:
+        with (self._build_inputs["build_dir"] / "report/dut_info.json").open("w") as f:
             json.dump(info, f, indent=2, default=_jsonable)
 
         model.save(onnx_export_path)
         return None
 
-    def _step_build_setup(self):
+    def _step_build_setup(self) -> build_cfg.DataflowBuildConfig:
         """Build configuration of a microbenchmark: fixed step list, no target fps.
 
         Also arms the per-tool-call time limit (TOOL_TIMEOUT_S, ``tool_timeout_s`` param)
@@ -250,7 +259,7 @@ class MicrobenchDUT(bench):
         return build_cfg.DataflowBuildConfig(target_fps=None, steps=self.build_steps(self._params))
 
 
-def _jsonable(obj):
+def _jsonable(obj: object) -> object:
     """JSON default: numpy scalars/arrays as python values, anything else as str."""
     if isinstance(obj, np.generic):
         return obj.item()

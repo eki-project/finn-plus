@@ -32,9 +32,9 @@ def validate(cls_inst, *args, **kwargs):
     Keyword arguments (beyond the ones shared by all validators):
 
     * ``normalize``: apply :func:`normalize_batch` to the inputs. Defaults to ``True`` for
-      CIFAR-100 and ``False`` for CIFAR-10, because the CIFAR-10 accelerators in use (the
-      BNN-PYNQ CNVs) take raw ``UINT8`` pixels with the scaling folded into the model, while
-      the CIFAR-100 ResNet-18 takes normalized float inputs.
+      accelerators with a float input and to ``False`` for those with an integer input: the
+      BNN-PYNQ CNVs take raw ``UINT8`` pixels with the scaling folded into the model, while
+      the CIFAR-100 ResNet-18 and the CIFAR-10 vision transformer take normalized float inputs.
     * ``norm_mean`` / ``norm_std``: per-channel constants for the normalization, defaulting to
       the CIFAR-10 statistics :data:`CIFAR10_MEAN` / :data:`CIFAR10_STD`.
     """
@@ -44,7 +44,7 @@ def validate(cls_inst, *args, **kwargs):
     dataset_path = kwargs.get("dataset_path", os.path.dirname(os.path.realpath(__file__)))
     # Dataset name "cifar" selects CIFAR-10, "cifar100" selects CIFAR-100 (fine labels)
     cifar10 = kwargs.get("validation_dataset") != "cifar100"
-    normalize = kwargs.get("normalize", not cifar10)
+    normalize = kwargs.get("normalize", not cls_inst.idt().is_integer())
 
     trainx, trainy, testx, testy, valx, valy = cifar.load_cifar_data(
         dataset_path, download=True, one_hot=False, cifar10=cifar10

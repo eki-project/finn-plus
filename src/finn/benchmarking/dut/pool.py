@@ -5,7 +5,7 @@ from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
-from typing import Optional
+from typing import ClassVar
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
@@ -20,7 +20,7 @@ from finn.transformation.fpgadataflow.minimize_accumulator_width import Minimize
 
 def _is_int_type(name: str) -> bool:
     """Whether the datatype name is an INT/UINT type."""
-    return name.startswith("INT") or name.startswith("UINT")
+    return name.startswith(("INT", "UINT"))
 
 
 def quant_avg_pool_accum_bits(ibits: int, k: int) -> int:
@@ -35,7 +35,7 @@ class bench_pool(MicrobenchDUT):
 
     NAME = "pool"
     OP_TYPES = ("Pool_hls",)
-    PARAMS = {
+    PARAMS: ClassVar[dict[str, str]] = {
         "function": "MaxPool or QuantAvgPool",
         "idt": "input datatype (integer)",
         "odt": "QuantAvgPool only: output datatype (None for MaxPool, which keeps idt)",
@@ -46,7 +46,7 @@ class bench_pool(MicrobenchDUT):
     }
 
     @staticmethod
-    def validate(params: dict) -> Optional[str]:
+    def validate(params: dict) -> str | None:
         """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         function = params.get("function")
         if function not in ("MaxPool", "QuantAvgPool"):
@@ -87,7 +87,7 @@ class bench_pool(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
-        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
+        """Return the sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "function": Choice(["MaxPool", "QuantAvgPool"]),
             "idt": Choice(["UINT2", "INT2", "UINT4", "INT4", "UINT8", "INT8"]),
@@ -101,7 +101,7 @@ class bench_pool(MicrobenchDUT):
         }
 
     @classmethod
-    def make_model(cls, params: dict, fpga_part: str):
+    def make_model(cls, params: dict, fpga_part: str) -> tuple[ModelWrapper, dict]:  # noqa: ARG003
         """Build the single-node model for ``params`` and return it with its dut_info."""
         function = params["function"]
         idt = DataType[params["idt"]]

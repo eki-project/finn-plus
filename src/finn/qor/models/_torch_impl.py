@@ -24,7 +24,7 @@ class FTTransformer(nn.Module):
         ffn_mult: int,
         dropout: float,
         pooling: str,
-    ):
+    ) -> None:
         """Build the feature tokenizer, transformer encoder and regression head."""
         super().__init__()
         self.pooling = pooling
@@ -69,7 +69,7 @@ def build_module(n_features: int, hp: dict) -> FTTransformer:
     )
 
 
-def _loss_fn(name: str):
+def _loss_fn(name: str) -> nn.Module:
     """Loss module for the configured loss name (mse, mae or huber)."""
     if name == "mse":
         return nn.MSELoss()
@@ -81,34 +81,34 @@ def _loss_fn(name: str):
 
 
 def train(
-    X: np.ndarray,
+    x: np.ndarray,
     y: np.ndarray,
-    X_val: np.ndarray,
+    x_val: np.ndarray,
     y_val: np.ndarray,
     hp: dict,
     seed: int,
     threads: int,
     verbose: int = 0,
 ) -> tuple[dict, dict]:
-    """Train on (X, y) with early stopping on (X_val, y_val); returns the best state_dict
+    """Train on (x, y) with early stopping on (x_val, y_val); returns the best state_dict
     (as numpy arrays) and training info."""
     torch.manual_seed(seed)
     torch.set_num_threads(max(1, threads))
     device = torch.device("cpu")
-    model = build_module(X.shape[1], hp).to(device)
+    model = build_module(x.shape[1], hp).to(device)
     loss_fn = _loss_fn(hp["loss"])
     optimizer = torch.optim.AdamW(model.parameters(), lr=hp["lr"], weight_decay=hp["weight_decay"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, factor=hp["lr_factor"], patience=hp["lr_patience"]
     )
-    Xt = torch.as_tensor(X, dtype=torch.float32, device=device)
+    xt = torch.as_tensor(x, dtype=torch.float32, device=device)
     yt = torch.as_tensor(y, dtype=torch.float32, device=device)
-    Xv = torch.as_tensor(X_val, dtype=torch.float32, device=device)
+    xv = torch.as_tensor(x_val, dtype=torch.float32, device=device)
     yv = torch.as_tensor(y_val, dtype=torch.float32, device=device)
     generator = torch.Generator().manual_seed(seed)
 
     best_loss, best_state, best_epoch, bad_epochs = float("inf"), None, 0, 0
-    n = len(Xt)
+    n = len(xt)
     batch_size = max(1, min(hp["batch_size"], n))
     for epoch in range(hp["max_epochs"]):
         model.train()
@@ -116,12 +116,12 @@ def train(
         for start in range(0, n, batch_size):
             idx = perm[start : start + batch_size]
             optimizer.zero_grad()
-            loss = loss_fn(model(Xt[idx]), yt[idx])
+            loss = loss_fn(model(xt[idx]), yt[idx])
             loss.backward()
             optimizer.step()
         model.eval()
         with torch.no_grad():
-            val_loss = float(loss_fn(model(Xv), yv))
+            val_loss = float(loss_fn(model(xv), yv))
         scheduler.step(val_loss)
         if verbose and epoch % 10 == 0:
             print(f"epoch {epoch}: val loss {val_loss:.5f}")
@@ -153,9 +153,9 @@ def load_module(n_features: int, hp: dict, state: dict) -> FTTransformer:
     return model
 
 
-def predict(model: FTTransformer, X: np.ndarray, threads: int) -> np.ndarray:
-    """Predict ``X`` with the fitted model."""
+def predict(model: FTTransformer, x: np.ndarray, threads: int) -> np.ndarray:
+    """Predict ``x`` with the fitted model."""
     torch.set_num_threads(max(1, threads))
     with torch.no_grad():
-        out = model(torch.as_tensor(X, dtype=torch.float32))
+        out = model(torch.as_tensor(x, dtype=torch.float32))
     return out.cpu().numpy().astype(float)

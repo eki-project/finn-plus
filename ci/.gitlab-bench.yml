@@ -378,7 +378,9 @@ QoR Model Fitting:
   script:
     # Isolated venv: the runner's system packages are outdated (e.g. jinja2) and the
     # scikit-learn version must match pyproject.toml so the pickled models load in builds.
-    # LOCAL_QOR_PYTHON (project variable) selects the interpreter of the QoR jobs; the
+    # LOCAL_QOR_PYTHON (project variable) selects the interpreter of the QoR jobs: the
+    # runner's system python3.10 cannot be relied on to create a venv (no working ensurepip
+    # since the runner's OS upgrade), so the variable points to a standalone build there. The
     # symbolic regression job needs one with a shared libpython (PySR embeds Julia, which
     # loads it), e.g. a standalone build installed with `uv python install 3.10`.
     # The tabular transformer and symbolic regression run in the separate manual jobs below
@@ -566,6 +568,7 @@ QoR End2End Report:
   needs:
     - job: Result Collection
   script:
+    # Interpreter: see QoR Model Fitting
     - ${LOCAL_QOR_PYTHON:-python3.10} -m venv qor-venv
     - qor-venv/bin/pip install --quiet 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'jinja2>=3.1.2'
     - |

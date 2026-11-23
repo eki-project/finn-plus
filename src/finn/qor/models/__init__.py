@@ -3,11 +3,11 @@
 All models are scikit-learn compatible estimators, so they drop into the existing
 preprocessing pipeline, GridSearchCV selection and pickle persistence unchanged:
 
-* :class:`LogTargetHGBRegressor`, :class:`LogTargetMLPRegressor` – always available.
-* :class:`TabTransformerRegressor` – FT-Transformer style tabular transformer (needs torch).
-* :class:`SymbolicRegressor` – PySR symbolic regression (needs pysr + Julia to fit, only
+* :class:`LogTargetHGBRegressor`, :class:`LogTargetMLPRegressor` - always available.
+* :class:`TabTransformerRegressor` - FT-Transformer style tabular transformer (needs torch).
+* :class:`SymbolicRegressor` - PySR symbolic regression (needs pysr + Julia to fit, only
   sympy to predict).
-* :class:`TabPFNRegressor` – pre-trained TabPFN foundation model (needs tabpfn + torch and
+* :class:`TabPFNRegressor` - pre-trained TabPFN foundation model (needs tabpfn + torch and
   staged weights).
 
 :func:`optional_regressor_grid` lists the grid entries whose runtime dependencies are
@@ -21,7 +21,7 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, OrdinalEncoder, StandardScaler
-from typing import Any, Optional
+from typing import Any
 
 from finn.qor.models.sklearn_extras import (
     RANDOM_STATE,
@@ -37,18 +37,18 @@ from finn.qor.models.tabpfn import TabPFNRegressor
 from finn.qor.models.transformer import TabTransformerRegressor
 
 __all__ = [
+    "OPTIONAL_DEPENDENCIES",
     "LogTargetHGBRegressor",
     "LogTargetMLPRegressor",
     "LogTargetRegressor",
     "SymbolicRegressor",
     "TabPFNRegressor",
     "TabTransformerRegressor",
-    "OPTIONAL_DEPENDENCIES",
     "dependency_status",
-    "optional_regressor_grid",
     "log1p_float",
-    "signed_log1p",
+    "optional_regressor_grid",
     "signed_expm1",
+    "signed_log1p",
 ]
 
 logger = logging.getLogger(__name__)
@@ -61,9 +61,9 @@ OPTIONAL_DEPENDENCIES: dict[str, tuple[str, ...]] = {
 }
 
 
-def dependency_status() -> dict[str, Optional[str]]:
+def dependency_status() -> dict[str, str | None]:
     """Per optional regressor: None if all dependencies are importable, else the reason."""
-    status: dict[str, Optional[str]] = {}
+    status: dict[str, str | None] = {}
     for name, modules in OPTIONAL_DEPENDENCIES.items():
         missing = [m for m in modules if importlib.util.find_spec(m) is None]
         status[name] = None if not missing else "missing: " + ", ".join(missing)

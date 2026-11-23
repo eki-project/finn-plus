@@ -30,9 +30,10 @@ import json
 import os
 import random
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from finn.benchmarking.param_space import (
     Choice,
@@ -70,7 +71,7 @@ class SampleStats:
     rejected_invalid: dict[str, int] = field(default_factory=dict)
     rejected_existing: int = 0
     rejected_duplicate: int = 0
-    database_path: Optional[str] = None
+    database_path: str | None = None
     database: dict = field(default_factory=dict)
     existing_keys: int = 0
     key_names: list[str] = field(default_factory=list)
@@ -142,10 +143,10 @@ def default_seed(entry_index: int = 0) -> int:
 def sample_entry(
     entry: dict,
     space: ParamSpace,
-    validate: Callable[[dict], Optional[str]],
-    existing: Optional[set[tuple]] = None,
-    rng: Optional[random.Random] = None,
-    fixed: Optional[dict] = None,
+    validate: Callable[[dict], str | None],
+    existing: set[tuple] | None = None,
+    rng: random.Random | None = None,
+    fixed: dict | None = None,
     irrelevant: tuple[str, ...] = IRRELEVANT_PARAMS,
 ) -> tuple[list[dict], SampleStats]:
     """Draw ``entry["num_samples"]`` valid, mutually distinct parameter sets that are not in
@@ -188,13 +189,16 @@ def sample_entry(
 
 def _expand_cartesian(entry: dict) -> list[dict]:
     """Cartesian product of a grid config entry (every list value is a dimension)."""
-    return [dict(zip(entry.keys(), values)) for values in itertools.product(*entry.values())]
+    return [
+        dict(zip(entry.keys(), values, strict=True))
+        for values in itertools.product(*entry.values())
+    ]
 
 
 def expand_config(
     config: list[dict],
     dut_registry: dict[str, type],
-    database_path: Optional[str] = None,
+    database_path: str | None = None,
 ) -> tuple[list[dict], list[SampleStats]]:
     """Expand all entries of a benchmark config into the flat list of run parameter sets.
 
@@ -233,7 +237,7 @@ def expand_config(
         db_stats: dict = {}
         skip_existing = entry.get("skip_existing", True)
         if skip_existing:
-            if database_path and os.path.isdir(database_path):
+            if database_path and Path(database_path).is_dir():
                 statuses = None if skip_existing == "all" else ("ok",)
                 existing, db_stats = existing_param_keys(
                     database_path, dut_name, key_names, statuses, irrelevant
@@ -251,29 +255,17 @@ def expand_config(
         entry_stats.database = db_stats
         if entry_stats.produced < entry_stats.requested:
             print(
-                "WARNING: sample entry %d (%s) produced only %d of %d requested configurations "
-                "after %d attempts (invalid: %s, existing: %d, duplicate: %d)"
-                % (
-                    index,
-                    dut_name,
-                    entry_stats.produced,
-                    entry_stats.requested,
-                    entry_stats.attempts,
-                    entry_stats.rejected_invalid,
-                    entry_stats.rejected_existing,
-                    entry_stats.rejected_duplicate,
-                )
+                f"WARNING: sample entry {index} ({dut_name}) produced only "
+                f"{entry_stats.produced} of {entry_stats.requested} requested configurations "
+                f"after {entry_stats.attempts} attempts (invalid: {entry_stats.rejected_invalid}, "
+                f"existing: {entry_stats.rejected_existing}, "
+                f"duplicate: {entry_stats.rejected_duplicate})"
             )
         else:
             print(
-                "Sampled %d configurations for %s (seed %d, %d attempts, %d existing skipped)"
-                % (
-                    entry_stats.produced,
-                    dut_name,
-                    entry_stats.seed,
-                    entry_stats.attempts,
-                    entry_stats.rejected_existing,
-                )
+                f"Sampled {entry_stats.produced} configurations for {dut_name} "
+                f"(seed {entry_stats.seed}, {entry_stats.attempts} attempts, "
+                f"{entry_stats.rejected_existing} existing skipped)"
             )
         for params in samples:
             params["_sampling"] = {"entry": index, "seed": int(entry["seed"])}
@@ -282,7 +274,7 @@ def expand_config(
     return expanded, stats
 
 
-def pop_sampling_info(params: dict) -> Optional[dict]:
+def pop_sampling_info(params: dict) -> dict | None:
     """Remove and return the sampling bookkeeping added by :func:`expand_config`."""
     return params.pop("_sampling", None)
 
@@ -310,9 +302,9 @@ def publish_expanded(
         finally:
             os.close(fd)
         tmp = directory / (EXPANDED_CONFIG_NAME + ".tmp")
-        with open(tmp, "w") as f:
+        with tmp.open("w") as f:
             json.dump(config_expanded, f, indent=2)
-        os.replace(tmp, target)
+        tmp.replace(target)
         return config_expanded
     deadline = time.time() + wait_s
     while not target.is_file():
@@ -320,11 +312,11 @@ def publish_expanded(
             print("WARNING: published expanded config did not appear in time, using own expansion")
             return config_expanded
         time.sleep(1.0)
-    with open(target) as f:
+    with target.open() as f:
         published = json.load(f)
     if published != config_expanded:
         print(
-            "NOTE: using the expanded config published by another task (%d runs, own: %d)"
-            % (len(published), len(config_expanded))
+            "NOTE: using the expanded config published by another task "
+            f"({len(published)} runs, own: {len(config_expanded)})"
         )
     return published

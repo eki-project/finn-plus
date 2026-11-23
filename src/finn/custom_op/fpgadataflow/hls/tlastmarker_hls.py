@@ -36,8 +36,9 @@ from onnx import NodeProto
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp, NodeAttrTypes
 from finn.util.exception import FINNInternalError
 
 if TYPE_CHECKING:
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
 
 
+@register_custom_op
 class TLastMarker_hls(HLSBackend, HWCustomOp):
     """Node that adds/removes AXI stream TLAST signals where needed. Its behavior
     is transparent in node-by-node execution, only visible in IP-stitched rtlsim or
@@ -57,19 +59,9 @@ class TLastMarker_hls(HLSBackend, HWCustomOp):
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(
-        self,
-    ) -> dict[
-        str,
-        tuple[str, bool, int | float | str | bool | npt.NDArray | list]
-        | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
-    ]:
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs: dict[
-            str,
-            tuple[str, bool, int | float | str | bool | npt.NDArray | list]
-            | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
-        ] = {
+        my_attrs: NodeAttrTypes = {
             # normal shape of input/output
             "normal_shape": ("ints", True, []),
             # FINN DataTypes for inputs/outputs
@@ -131,7 +123,7 @@ class TLastMarker_hls(HLSBackend, HWCustomOp):
             elif protocol == "internal":
                 out_stream_dtype = f"ap_axiu<{stream_width},0,0,0>"
             else:
-                raise Exception("Unrecognized Protocol in TLastMarker")
+                raise FINNInternalError("Unrecognized Protocol in TLastMarker")
             in_stream_dtype = f"ap_uint<{stream_width}>"
         elif direction == "in":
             out_stream_dtype = f"ap_uint<{stream_width}>"
@@ -140,9 +132,9 @@ class TLastMarker_hls(HLSBackend, HWCustomOp):
             elif protocol == "internal":
                 in_stream_dtype = f"ap_axiu<{stream_width},0,0,0>"
             else:
-                raise Exception("Unrecognized Protocol in TLastMarker")
+                raise FINNInternalError("Unrecognized Protocol in TLastMarker")
         else:
-            raise Exception("Unrecognized Direction in TLastMarker")
+            raise FINNInternalError("Unrecognized Direction in TLastMarker")
 
         self.code_gen_dict["$DEFINES$"] = [
             f"#define StreamWidth {stream_width}",

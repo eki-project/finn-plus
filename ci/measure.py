@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
@@ -118,17 +119,16 @@ class ManagerProcess:
         self._proc = None
 
 
-def delete_dir_contents(dir):
+def delete_dir_contents(directory: str | Path) -> None:
     """Delete all contents of a directory."""
-    for filename in os.listdir(dir):
-        file_path = os.path.join(dir, filename)
+    for file_path in Path(directory).iterdir():
         try:
-            if os.path.isfile(file_path) or os.path.islink(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
+            if file_path.is_file() or file_path.is_symlink():
+                file_path.unlink()
+            elif file_path.is_dir():
                 shutil.rmtree(file_path)
-        except Exception as e:
-            print("ERROR: Failed to delete %s. Reason: %s" % (file_path, e))
+        except Exception as e:  # noqa: PERF203  (one failure must not stop the cleanup)
+            print(f"ERROR: Failed to delete {file_path}. Reason: {e}")
 
 
 if __name__ == "__main__":

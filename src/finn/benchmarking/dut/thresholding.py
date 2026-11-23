@@ -7,7 +7,7 @@ from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
-from typing import Optional
+from typing import ClassVar
 
 from finn.benchmarking.dut.microbench_base import (
     MicrobenchDUT,
@@ -25,7 +25,7 @@ from finn.util.basic import MAX_ALLOWED_AP_INT_W, is_versal
 
 def _is_int_type(name: str) -> bool:
     """Whether the datatype name is an INT/UINT type."""
-    return name.startswith("INT") or name.startswith("UINT")
+    return name.startswith(("INT", "UINT"))
 
 
 class bench_thresholding(MicrobenchDUT):
@@ -35,7 +35,7 @@ class bench_thresholding(MicrobenchDUT):
 
     NAME = "thresholding"
     OP_TYPES = ("Thresholding_hls", "Thresholding_rtl")
-    PARAMS = {
+    PARAMS: ClassVar[dict[str, str]] = {
         "backend": "hls or rtl",
         "idt": "input datatype (integer)",
         "odt": "output (activation) datatype, INT/UINT 1..8 bit; numSteps = 2^bits - 1",
@@ -49,7 +49,7 @@ class bench_thresholding(MicrobenchDUT):
     }
 
     @staticmethod
-    def validate(params: dict) -> Optional[str]:
+    def validate(params: dict) -> str | None:
         """Reason why ``params`` cannot be built, or None if the configuration is valid."""
         backend = params.get("backend")
         if backend not in ("hls", "rtl"):
@@ -103,7 +103,7 @@ class bench_thresholding(MicrobenchDUT):
 
     @classmethod
     def param_space(cls) -> ParamSpace:
-        """Sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
+        """Return the sampling dimensions of this DUT (see ``finn.benchmarking.param_space``)."""
         return {
             "backend": Choice(["hls", "rtl"]),
             "idt": Choice(
@@ -131,7 +131,7 @@ class bench_thresholding(MicrobenchDUT):
         }
 
     @classmethod
-    def make_model(cls, params: dict, fpga_part: str):
+    def make_model(cls, params: dict, fpga_part: str) -> tuple[ModelWrapper, dict]:
         """Build the single-node model for ``params`` and return it with its dut_info."""
         idt, odt = DataType[params["idt"]], DataType[params["odt"]]
         ch, pe = int(params["ch"]), int(params["pe"])
@@ -140,12 +140,15 @@ class bench_thresholding(MicrobenchDUT):
         actval = int(odt.min())
 
         # random thresholds within the input range, non-decreasing per channel
-        T = np.random.randint(idt.min(), idt.max(), (ch, n_steps)).astype(np.float32)
-        T = np.sort(T, axis=1)
+        # (legacy global RNG: recorded configurations are reproduced from the base class seed)
+        t_mat = np.random.randint(idt.min(), idt.max(), (ch, n_steps)).astype(  # noqa: NPY002
+            np.float32
+        )
+        t_mat = np.sort(t_mat, axis=1)
         tdt = DataType["INT32"]
 
-        inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, nhw + [ch])
-        outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, nhw + [ch])
+        inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [*nhw, ch])
+        outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [*nhw, ch])
         node = helper.make_node(
             "Thresholding",
             ["inp", "thresh"],
@@ -166,7 +169,7 @@ class bench_thresholding(MicrobenchDUT):
         model.set_tensor_datatype("inp", idt)
         model.set_tensor_datatype("outp", odt)
         model.set_tensor_datatype("thresh", tdt)
-        model.set_initializer("thresh", T)
+        model.set_initializer("thresh", t_mat)
 
         model = specialize_single_node(model, params["backend"], fpga_part)
         inst = getCustomOp(model.graph.node[0])

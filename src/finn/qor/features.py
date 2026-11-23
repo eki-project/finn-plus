@@ -15,8 +15,9 @@ that fits the models runs outside of the FINN environment.
 
 import pandas as pd
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Callable, NamedTuple, Optional
+from typing import NamedTuple, cast
 
 _INT_RE = re.compile(r"^(U?)INT(\d+)$")
 _FLOAT_RE = re.compile(r"^FLOAT(\d+)$")
@@ -66,7 +67,7 @@ def parse_datatype(name: str) -> DataTypeInfo:
     return DataTypeInfo(dt.bitwidth(), dt.signed(), kind)
 
 
-def datatype_features(prefix: str, name: Optional[str], with_kind: bool = False) -> dict:
+def datatype_features(prefix: str, name: str | None, with_kind: bool = False) -> dict:
     """Feature columns ``<prefix>_bitwidth``/``<prefix>_sign`` (and ``<prefix>_kind``) for a
     datatype name. ``None`` (e.g. no activation) yields ``None`` values."""
     if name is None:
@@ -116,15 +117,15 @@ def broadcast_kind(rhs_shape: list, out_shape: list) -> str:
 
 
 def _deriver(
-    datatype_cols: Optional[dict[str, str]] = None,
-    split_cols: Optional[dict[str, list[str]]] = None,
+    datatype_cols: dict[str, str] | None = None,
+    split_cols: dict[str, list[str]] | None = None,
     with_kind: tuple[str, ...] = (),
-    extra: Optional[Callable[[pd.DataFrame], pd.DataFrame]] = None,
+    extra: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
 ) -> Callable[[pd.DataFrame], pd.DataFrame]:
     """Build a ``derive_db_columns`` function from declarative column mappings."""
 
     def derive(df: pd.DataFrame) -> pd.DataFrame:
-        """Derived database columns of this operator (see the spec's feature list)."""
+        """Derive the database columns of this operator (see the spec's feature list)."""
         df = df.copy()
         for prefix, col in (datatype_cols or {}).items():
             df = add_datatype_columns(df, col, prefix, with_kind=prefix in with_kind)
@@ -187,11 +188,13 @@ def add_clock_period_column(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def with_clock_period(spec: "OperatorFeatureSpec") -> "OperatorFeatureSpec":
-    """The spec with the clock period appended to its features (and derived if missing)."""
+    """Return the spec with the clock period appended to its features (derived if missing)."""
     derive = spec.derive_db_columns
 
-    def derive_with_clock(df: pd.DataFrame, _derive=derive) -> pd.DataFrame:
-        """The operator's derived columns plus the clock period feature."""
+    def derive_with_clock(
+        df: pd.DataFrame, _derive: Callable[[pd.DataFrame], pd.DataFrame] = derive
+    ) -> pd.DataFrame:
+        """Derive the operator's columns plus the clock period feature."""
         return add_clock_period_column(_derive(df))
 
     return replace(
@@ -220,7 +223,7 @@ def _mvau_drop_broken_runs(df: pd.DataFrame) -> pd.DataFrame:
             & (df["dut_info.pe"] == 1)
             & (collected < MVAU_PE1_FIX_DATE)
         )
-        return df[~broken]
+        return cast("pd.DataFrame", df[~broken])
     return df
 
 
@@ -428,7 +431,7 @@ FMPADDING_SPEC = OperatorFeatureSpec(
 
 
 def _eltwise_extra(df: pd.DataFrame) -> pd.DataFrame:
-    """Derived columns of the elementwise operators (datatypes, output width)."""
+    """Derive the columns of the elementwise operators (datatypes, output width)."""
     df["c"] = df["params.shape"].map(lambda s: s[-1] if s is not None else None)
     return df
 
@@ -500,7 +503,7 @@ SPECS: dict[str, OperatorFeatureSpec] = {
 }
 
 
-def spec_for_op_type(op_type: str) -> Optional[OperatorFeatureSpec]:
+def spec_for_op_type(op_type: str) -> OperatorFeatureSpec | None:
     """Return the spec covering a FINN node op_type, or None if the operator is unsupported."""
     for spec in SPECS.values():
         if op_type in spec.op_types:

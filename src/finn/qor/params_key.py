@@ -7,8 +7,9 @@ database JSON files for the sampler, which runs on the cluster without pandas.
 """
 
 import json
-import os
-from typing import Any, Iterable, Iterator, Optional
+from collections.abc import Iterable, Iterator
+from pathlib import Path
+from typing import Any
 
 #: Run parameters that never influence the implementation (infrastructure switches).
 IRRELEVANT_PARAMS: tuple[str, ...] = (
@@ -37,7 +38,7 @@ def make_hashable(obj: Any) -> Any:
 
 
 def params_key(
-    params: dict, keys: Optional[Iterable[str]] = None, ignore: Iterable[str] = IRRELEVANT_PARAMS
+    params: dict, keys: Iterable[str] | None = None, ignore: Iterable[str] = IRRELEVANT_PARAMS
 ) -> tuple:
     """Hashable key of a parameter set: sorted ``(name, value)`` pairs over ``keys``
     (default: all keys of ``params``) minus ``ignore``. Missing keys count as ``None``."""
@@ -49,20 +50,20 @@ def params_key(
 def iter_database_runs(database_path: str, operator: str) -> Iterator[tuple[dict, dict]]:
     """Yield ``(file metadata, run)`` for every run of an operator in the database
     (``<database>/<operator>/*.json``); nothing if the operator folder does not exist."""
-    operator_dir = os.path.join(database_path, operator)
-    if not os.path.isdir(operator_dir):
+    operator_dir = Path(database_path) / operator
+    if not operator_dir.is_dir():
         return
-    for filename in sorted(os.listdir(operator_dir)):
-        if not filename.endswith(".json"):
+    for path in sorted(operator_dir.iterdir()):
+        if path.suffix != ".json":
             continue
-        with open(os.path.join(operator_dir, filename), "r") as f:
+        with path.open() as f:
             entry = json.load(f)
         metadata = {k: v for k, v in entry.items() if k != "runs"}
         for run in entry.get("runs", []):
             yield metadata, run
 
 
-def run_status(run: dict) -> Optional[str]:
+def run_status(run: dict) -> str | None:
     """Status (``ok``/``skipped``/``failed``) recorded for a database run."""
     return (run.get("metrics") or {}).get("status")
 
@@ -71,7 +72,7 @@ def existing_param_keys(
     database_path: str,
     operator: str,
     keys: Iterable[str],
-    statuses: Optional[Iterable[str]] = ("ok",),
+    statuses: Iterable[str] | None = ("ok",),
     ignore: Iterable[str] = IRRELEVANT_PARAMS,
 ) -> tuple[set[tuple], dict]:
     """Keys (see :func:`params_key`, projected onto ``keys``) of all database runs of an
