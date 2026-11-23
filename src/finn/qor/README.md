@@ -137,8 +137,10 @@ Versal-only backends or two-stream elementwise operations.
   (`/dev/shm`, override with `FINN_BENCH_SCRATCH_DIR`) because single file operations on the
   board's SD card stalled for tens of seconds, loads the overlay once per package for both
   experiments, and writes the power recordings as json only (`PAF.save_xlsx: true` restores
-  the xlsx export). The `[EM +<s>]` and `[DRV +<s>]` stamps in the Measurement trace give the
-  elapsed time per step of a package.
+  the xlsx export). The Measurement trace carries one summary line per package with the
+  durations of its steps (overlay load, phases); the full `[EM +<s>]`/`[DRV +<s>]` stamps are
+  printed for failed packages, or for all with `FINN_BENCH_MEASURE_VERBOSE=1` (GitLab cuts
+  job logs at 4 MB, which the full output of 1800 packages exceeds).
 - Microbenchmarks run no RTL simulation and no Vivado power estimation (both simulated whole
   frames for hours per build): the build steps are codegen, IP generation, stitched IP,
   out-of-context synthesis, bitfile, driver and deployment package.

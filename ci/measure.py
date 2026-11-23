@@ -11,6 +11,7 @@ the working directory for the GitLab artifact.
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -97,16 +98,55 @@ class ManagerProcess:
                 self._proc = None
         else:
             return 1
+        lines: list[str] = []
         for line in self._proc.stdout:
             line = line.rstrip("\n")
             if line.startswith(self.RUN_FINISHED_MARKER):
-                return int(line.split()[1])
-            print("[%s] %s" % (prefix, line), flush=True)
+                rc = int(line.split()[1])
+                self._report(prefix, lines, rc)
+                return rc
+            lines.append(line)
         # EOF without marker: the manager died (e.g. a segfault in the driver)
         rc = self._proc.wait()
+        self._report(prefix, lines, rc if rc != 0 else 1)
         print("ERROR: EXPERIMENT MANAGER PROCESS DIED (exit code %d)" % rc, flush=True)
         self._proc = None
         return rc if rc != 0 else 1
+
+    @staticmethod
+    def _report(prefix: str, lines: list[str], rc: int) -> None:
+        """Print the manager output of one package.
+
+        The full output (about 2.5 KB per package with the [EM]/[DRV] stamps) would exceed
+        GitLab's 4 MB job log after ~1500 packages, so a successful package is summarized in
+        one line (its step durations from the stamps) unless FINN_BENCH_MEASURE_VERBOSE is
+        set; failed packages are always printed in full.
+        """
+        if rc != 0 or os.environ.get("FINN_BENCH_MEASURE_VERBOSE"):
+            for line in lines:
+                print("[%s] %s" % (prefix, line), flush=True)
+            return
+        stamps = []
+        for line in lines:
+            m = re.match(r"\[EM \+\s*([\d.]+)s\] (.*)", line)
+            if m:
+                stamps.append((float(m.group(1)), m.group(2)))
+        steps = []
+        prev = 0.0
+        for ts, msg in stamps:
+            key = None
+            if msg.startswith("OVERLAY LOADED"):
+                key = "overlay"
+            elif msg.startswith("FINISHED ITERATION"):
+                key = msg.split("FUNCTION ")[-1][:12]
+            elif msg.startswith("ALL EXPERIMENTS DONE"):
+                key = "total"
+            if key == "total":
+                steps.append("total %.1f s" % ts)
+            elif key:
+                steps.append("%s %.1f s" % (key, ts - prev))
+            prev = ts
+        print("[%s] EM ok: %s" % (prefix, ", ".join(steps) or "no stamps"), flush=True)
 
     def close(self):
         """End the manager process (EOF on its stdin)."""
