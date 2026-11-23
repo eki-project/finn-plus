@@ -52,6 +52,50 @@ variables:
   MANUAL_CFG_PATH:
     description: "Name (in ci/cfg/) or path (relative to LOCAL_CFG_DIR) of benchmarking config to run"
     value: ""
+  # NAS experiments (ci/.gitlab-nas.yml, see ci/nas/README.md). Setting NAS_CFG runs them in
+  # place of the test suite and the benchmarks.
+  NAS_CFG:
+    description: "Run the NAS experiments: name of a search space config in ci/nas/ (e.g. default); leave empty for the regular pipeline"
+    value: ""
+  NAS_SAMPLE_COUNT:
+    description: "NAS: random samples to draw through the oracle"
+    value: "1000"
+  NAS_BUDGET:
+    description: "NAS: trials per search variant"
+    value: "1000"
+  NAS_POPULATION:
+    description: "NAS: trials per generation"
+    value: "50"
+  NAS_PROXY:
+    description: "NAS: zero-cost proxy used as search objective"
+    value: "synflow"
+  NAS_OBJECTIVES:
+    description: "NAS: search objectives (proxy, LUT, BRAM, URAM, DSP, cycles)"
+    value: "proxy,LUT,BRAM,cycles"
+  NAS_GT_COUNT:
+    description: "NAS: candidates trained for the proxy ground truth"
+    value: "50"
+  NAS_GT_EPOCHS:
+    description: "NAS: training epochs per candidate"
+    value: "10"
+  NAS_BOARD:
+    description: "NAS: oracle target board"
+    value: "Pynq-Z1"
+  NAS_CLK_PERIOD_NS:
+    description: "NAS: oracle clock period in ns"
+    value: "10"
+  NAS_TARGET_FPS:
+    description: "NAS: folding target (frames per second)"
+    value: "1000"
+  NAS_EVAL_TIMEOUT:
+    description: "NAS: time limit per candidate evaluation in seconds"
+    value: "300"
+  NAS_SEED:
+    description: "NAS: random seed of sampling, search and training"
+    value: "0"
+  NAS_WORKERS:
+    description: "NAS: parallel oracle worker processes per sampling/search job (about 2 GB each)"
+    value: "48"
 
 workflow:
   name: '$PIPELINE_NAME'
@@ -147,6 +191,9 @@ FINN Test Suite 2024.2:
     # Do not run if test suite has been deselected
     - if: $TEST_SUITE == "none"
       when: never
+    # Do not run for NAS experiment pipelines
+    - if: $NAS_CFG != ""
+      when: never
     # Always run, as long as there was no prior failure
     - when: on_success
   cache:
@@ -205,7 +252,7 @@ Bench (Basic):
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
-    - if: $MANUAL_CFG_PATH == ""
+    - if: $MANUAL_CFG_PATH == "" && $NAS_CFG == ""
   trigger:
     include: ci/.gitlab-bench.yml
     strategy: depend
@@ -235,7 +282,7 @@ Bench (Extended):
     # Do not run for PRs to dev (run only for pushes)
     - if: $CI_PIPELINE_SOURCE == "external_pull_request_event" && $CI_EXTERNAL_PULL_REQUEST_TARGET_BRANCH_NAME == "dev"
       when: never
-    - if: $MANUAL_CFG_PATH == ""
+    - if: $MANUAL_CFG_PATH == "" && $NAS_CFG == ""
   trigger:
     include: ci/.gitlab-bench.yml
     strategy: depend
@@ -247,3 +294,18 @@ Bench (Extended):
   parallel:
     matrix:
       - BENCH_CFG: [microbenchmark_basic]
+
+NAS (Manual):
+  stage: test
+  rules:
+    # Do not run on a schedule
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $NAS_CFG != ""
+  trigger:
+    include: ci/.gitlab-nas.yml
+    strategy: depend
+    forward:
+      pipeline_variables: true
+  variables:
+    PARENT_PIPELINE_ID: $CI_PIPELINE_ID

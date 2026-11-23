@@ -1,0 +1,33 @@
+# Build flow for NAS candidates exported by `finn nas export` (see src/finn/nas/experiments/README.md)
+
+# The exported bench config sets model_path, board/part, clock, folding target and the step list
+# per candidate: the oracle's estimate flow (StreamlinePlus instead of the default streamlining)
+# followed by the rest of the default flow, so that the synthesized design is the one the oracle
+# estimated. The values here are the defaults for a candidate built by hand.
+
+steps:
+  - step_qonnx_to_finn
+  - step_tidy_up
+  - finn.nas.streamline.step_streamline_plus
+  - step_convert_to_hw
+  - step_minimize_bit_width_initial
+  - step_create_dataflow_partition
+  - step_specialize_layers
+  - step_target_fps_parallelization
+  - step_apply_folding_config
+  - step_minimize_bit_width
+  - step_transpose_decomposition
+  - step_generate_estimate_reports
+  - step_assign_ddr_weight_offsets
+  - step_generate_hardware
+  - step_create_stitched_ip
+  - step_measure_rtlsim_performance
+  - step_out_of_context_synthesis
+  - step_prepare_synthesis
+  - step_synthesize_bitfile
+  - step_make_driver
+  - step_deployment_package
+
+# Automatic folding (the oracle's defaults):
+target_fps: 1000
+mvau_wwidth_max: 36

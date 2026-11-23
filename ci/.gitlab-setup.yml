@@ -72,3 +72,16 @@
     - !reference [.n2_setup_general, before_script]
     - !reference [.n2_setup_xilinx_2024_2, before_script]
     - !reference [.setup_venv_from_whl, before_script]
+
+.setup_nas_venv:
+  before_script:
+    # The NAS experiments (ci/.gitlab-nas.yml) need the "nas" extra (optuna, torchvision) on
+    # top of the test venv; the wheel is already installed, so only the extra's packages are added
+    - finn-plus-venv/bin/pip install "finn-plus[nas] @ file://$(pwd)/$(ls dist/*.whl)"
+
+.setup_nas_2024_2:
+  before_script:
+    - !reference [.n2_setup_general, before_script]
+    - !reference [.n2_setup_xilinx_2024_2, before_script]
+    - !reference [.setup_venv_from_whl, before_script]
+    - !reference [.setup_nas_venv, before_script]

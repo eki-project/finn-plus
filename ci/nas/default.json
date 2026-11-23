@@ -1,0 +1,120 @@
+{
+  "input_shape": [
+    3,
+    32,
+    32
+  ],
+  "num_classes": 10,
+  "max_depth": 6,
+  "max_nodes": 40,
+  "max_params": 2000000,
+  "module_weights": {
+    "sequential": 0.3,
+    "branching": 0.15,
+    "terminal": 0.55
+  },
+  "sequential_lengths": [
+    2,
+    3,
+    4
+  ],
+  "branch_counts": [
+    2,
+    3
+  ],
+  "agg_weights": {
+    "add": 1.0,
+    "concat": 1.0
+  },
+  "terminal_weights": {
+    "conv": 3.0,
+    "linear": 3.0,
+    "quant_act": 3.0,
+    "batchnorm": 2.0,
+    "relu_float": 1.0,
+    "maxpool": 1.0,
+    "avgpool": 1.0,
+    "flatten": 0.5,
+    "identity": 1.0
+  },
+  "conv_kernels": [
+    1,
+    3,
+    5
+  ],
+  "conv_strides": [
+    1,
+    2
+  ],
+  "conv_out_channels": [
+    8,
+    16,
+    32,
+    64,
+    128
+  ],
+  "conv_paddings": [
+    "same",
+    "valid"
+  ],
+  "conv_depthwise_prob": 0.25,
+  "linear_out_features": [
+    16,
+    32,
+    64,
+    128,
+    256,
+    512
+  ],
+  "weight_bits": [
+    1,
+    2,
+    3,
+    4,
+    8
+  ],
+  "act_bits": [
+    1,
+    2,
+    3,
+    4,
+    8
+  ],
+  "join_bits": [
+    2,
+    3,
+    4,
+    5,
+    8
+  ],
+  "maxpool_kernels": [
+    2,
+    3
+  ],
+  "maxpool_strides": [
+    1,
+    2
+  ],
+  "avgpool_kernels": [
+    2,
+    3
+  ],
+  "input_bits": [
+    8
+  ],
+  "head_kinds": [
+    "gap",
+    "flatten"
+  ],
+  "head_weight_bits": [
+    1,
+    2,
+    3,
+    4,
+    8
+  ],
+  "max_sample_attempts": 100,
+  "branch_match_attempts": 20,
+  "max_variation_attempts": 100,
+  "subtree_mutation_prob": 0.5
+}

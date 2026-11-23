@@ -1,0 +1,287 @@
+# NAS experiments on the cluster (child pipeline of "NAS (Manual)" in .gitlab-ci.yml, triggered
+# when NAS_CFG names a search space config in ci/nas/). See ci/nas/README.md.
+#
+# Stages: the random-sampling baseline and the four search variants run in parallel on CPU
+# nodes, the Pareto fronts and a slice of the feasible samples are exported for full builds, the
+# proxy ground truth trains candidates on a GPU node, and the report renders the figures and
+# copies everything to the persistent result store ($OTUS_NAS_RESULT_DIR_STORE).
+include: ci/.gitlab-setup.yml
+
+stages:
+  - evaluate
+  - export
+  - groundtruth
+  - report
+
+variables:
+  NAS_CFG:
+    description: "Search space config (ci/nas/<NAS_CFG>.json), usually provided by parent pipeline"
+    value: ""
+  # Slurm sizing of the jobs (overridable as pipeline variables when triggering)
+  NAS_CPU_CORES: "64" # sampling and search: one oracle worker process per core (NAS_WORKERS)
+  NAS_MEM: "160G" # about 2 GB per worker
+  NAS_SMALL_CPU_CORES: "8" # export and report
+  NAS_SMALL_MEM: "32G"
+  NAS_GPU_PARTITION: "gpu"
+  NAS_GPU_GRES: "gpu:a100:1"
+  NAS_GPU_CPU_CORES: "16"
+  NAS_GPU_MEM: "64G"
+  # Search variants (keep in sync with the parallel:matrix of "NAS Search" below)
+  NAS_SEARCH_VARIANTS: "nsga2_graded nsga2_binary nsga2_discard random"
+  # The variant whose Pareto front is trained for the outcome comparison in the report
+  NAS_OUTCOME_VARIANT: "nsga2_graded"
+  # Feasible random samples exported for full builds (estimate-vs-synthesis fidelity)
+  NAS_EXPORT_SAMPLES: "30"
+
+workflow:
+  name: "nas_$NAS_CFG"
+
+.nas_job:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  tags:
+    - otus
+  needs:
+    - job: Build
+      pipeline: $PARENT_PIPELINE_ID
+  extends: .setup_nas_2024_2
+  cache:
+    key:
+      files:
+        - src/finn/interface/external_dependencies.yaml
+    policy: pull
+    paths:
+      - deps
+  variables:
+    # Avoid fork-based multiprocessing (see "FINN Test Suite" in .gitlab-ci.yml)
+    FINN_MP_START_METHOD: "spawn"
+
+# Common preamble of every job: environment checks and the shared command line pieces.
+# Runs are written to the node-local work directory ($PATH_WORKDIR, where the setup moved the
+# checkout) and collected without their per-candidate build directories into
+# $CI_PROJECT_DIR/nas_artifacts, the only place GitLab collects artifacts from.
+.nas_env:
+  script:
+    - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
+    - |
+      source finn-plus-venv/bin/activate
+      : "${OTUS_NAS_CIFAR10_DIR:?project variable OTUS_NAS_CIFAR10_DIR is not set (CIFAR-10 directory on the cluster, see ci/nas/README.md)}"
+      : "${OTUS_NAS_RESULT_DIR_STORE:?project variable OTUS_NAS_RESULT_DIR_STORE is not set (persistent result directory on the cluster, see ci/nas/README.md)}"
+      if [ ! -f "ci/nas/$NAS_CFG.json" ]; then
+        echo "ERROR: search space config ci/nas/$NAS_CFG.json not found (NAS_CFG=$NAS_CFG)"
+        exit 1
+      fi
+      NAS_OUT="$CI_PROJECT_DIR/nas_artifacts"
+      NAS_RUN="$PATH_WORKDIR/nas_runs"
+      NAS_RESULT_NAME="${CI_PIPELINE_CREATED_AT:0:10}_${CI_COMMIT_SHORT_SHA}_${PARENT_PIPELINE_ID}_${NAS_CFG}"
+      NAS_STORE="$OTUS_NAS_RESULT_DIR_STORE/$NAS_RESULT_NAME"
+      NAS_COMMON="--batch --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers 1"
+      NAS_ORACLE="--board $NAS_BOARD --clk-period-ns $NAS_CLK_PERIOD_NS --target-fps $NAS_TARGET_FPS --eval-timeout $NAS_EVAL_TIMEOUT"
+      NAS_DATA="--data-root $OTUS_NAS_CIFAR10_DIR"
+      NAS_SPACE="--space-config ci/nas/$NAS_CFG.json"
+      mkdir -p "$NAS_OUT" "$NAS_RUN"
+      # nas_collect <run name>: copy a finished run to the artifacts without its work directory
+      nas_collect() {
+        rm -rf "${NAS_RUN:?}/${1:?}/work"
+        mkdir -p "$NAS_OUT/$1"
+        cp -r "$NAS_RUN/$1/." "$NAS_OUT/$1/"
+      }
+      echo "Results of this pipeline are stored under $NAS_STORE"
+
+NAS Sample:
+  extends: .nas_job
+  stage: evaluate
+  variables:
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $NAS_CPU_CORES --mem $NAS_MEM"
+  script:
+    - !reference [.nas_env, script]
+    - |
+      status=0
+      finn nas sample $NAS_COMMON $NAS_ORACLE $NAS_DATA $NAS_SPACE \
+        --count $NAS_SAMPLE_COUNT --seed $NAS_SEED --workers $NAS_WORKERS \
+        "$NAS_RUN/sampling" || status=$?
+      nas_collect sampling
+      exit $status
+  artifacts:
+    name: "nas_sampling"
+    when: always
+    paths:
+      - nas_artifacts/
+
+NAS Search:
+  extends: .nas_job
+  stage: evaluate
+  variables:
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $NAS_CPU_CORES --mem $NAS_MEM"
+  parallel:
+    matrix:
+      - NAS_VARIANT: "nsga2_graded"
+        NAS_VARIANT_ARGS: "--algorithm nsga2 --feasibility constraint --violation graded"
+      - NAS_VARIANT: "nsga2_binary"
+        NAS_VARIANT_ARGS: "--algorithm nsga2 --feasibility constraint --violation binary"
+      - NAS_VARIANT: "nsga2_discard"
+        NAS_VARIANT_ARGS: "--algorithm nsga2 --feasibility discard"
+      - NAS_VARIANT: "random"
+        NAS_VARIANT_ARGS: "--algorithm random"
+  script:
+    - !reference [.nas_env, script]
+    - |
+      status=0
+      finn nas search $NAS_COMMON $NAS_ORACLE $NAS_DATA $NAS_SPACE $NAS_VARIANT_ARGS \
+        --budget $NAS_BUDGET --population $NAS_POPULATION --seed $NAS_SEED --workers $NAS_WORKERS \
+        --proxy $NAS_PROXY --objectives $NAS_OBJECTIVES \
+        "$NAS_RUN/search_$NAS_VARIANT" || status=$?
+      nas_collect "search_$NAS_VARIANT"
+      exit $status
+  artifacts:
+    name: "nas_search_$NAS_VARIANT"
+    when: always
+    paths:
+      - nas_artifacts/
+
+# QONNX exports of the Pareto fronts and of a slice of the feasible samples, with bench configs
+# that build them through to synthesis (dut nas_candidate). The configs refer to the models at
+# their final place in the result store, so a manual bench pipeline can use them directly.
+NAS Export:
+  extends: .nas_job
+  stage: export
+  needs:
+    - job: Build
+      pipeline: $PARENT_PIPELINE_ID
+    - job: NAS Sample
+    - job: NAS Search
+  rules:
+    # Also run on failure of previous jobs to export partial results
+    - when: always
+  variables:
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $NAS_SMALL_CPU_CORES --mem $NAS_SMALL_MEM"
+  script:
+    - !reference [.nas_env, script]
+    - |
+      status=0
+      if [ -f "$NAS_OUT/sampling/samples.jsonl" ]; then
+        finn nas export $NAS_COMMON --select feasible --limit $NAS_EXPORT_SAMPLES --seed $NAS_SEED \
+          --model-path-prefix "$NAS_STORE/export/sampling" \
+          "$NAS_OUT/sampling" "$NAS_OUT/export/sampling" || status=$?
+      else
+        echo "No sampling results, nothing to export"
+      fi
+      for variant in $NAS_SEARCH_VARIANTS; do
+        if [ -f "$NAS_OUT/search_$variant/summary.json" ]; then
+          finn nas export $NAS_COMMON --select front --seed $NAS_SEED \
+            --model-path-prefix "$NAS_STORE/export/$variant" \
+            "$NAS_OUT/search_$variant" "$NAS_OUT/export/$variant" || status=$?
+        else
+          echo "No results for search variant $variant, nothing to export"
+        fi
+      done
+      exit $status
+  artifacts:
+    name: "nas_export"
+    when: always
+    paths:
+      - nas_artifacts/export/
+
+# Proxy ground truth: short training of the feasible random samples on a GPU node and rank
+# correlation of every zero-cost proxy with the validation accuracy.
+NAS Ground Truth:
+  extends: .nas_job
+  stage: groundtruth
+  needs:
+    - job: Build
+      pipeline: $PARENT_PIPELINE_ID
+    - job: NAS Sample
+  variables:
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $NAS_GPU_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --gres $NAS_GPU_GRES --cpus-per-task $NAS_GPU_CPU_CORES --mem $NAS_GPU_MEM"
+  script:
+    - !reference [.nas_env, script]
+    - |
+      status=0
+      finn nas groundtruth $NAS_COMMON $NAS_DATA --device cuda \
+        --count $NAS_GT_COUNT --epochs $NAS_GT_EPOCHS --seed $NAS_SEED \
+        "$NAS_OUT/sampling" "$NAS_RUN/groundtruth" || status=$?
+      nas_collect groundtruth
+      exit $status
+  artifacts:
+    name: "nas_groundtruth"
+    when: always
+    paths:
+      - nas_artifacts/groundtruth/
+
+# The same training for the Pareto front of one search variant, for the outcome comparison
+# (accuracy of the front versus random feasible candidates) in the report.
+NAS Ground Truth (Front):
+  extends: .nas_job
+  stage: groundtruth
+  needs:
+    - job: Build
+      pipeline: $PARENT_PIPELINE_ID
+    - job: NAS Export
+  variables:
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $NAS_GPU_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --gres $NAS_GPU_GRES --cpus-per-task $NAS_GPU_CPU_CORES --mem $NAS_GPU_MEM"
+  script:
+    - !reference [.nas_env, script]
+    - |
+      front="$NAS_OUT/export/$NAS_OUTCOME_VARIANT"
+      if [ ! -f "$front/samples.jsonl" ]; then
+        echo "No exported front for $NAS_OUTCOME_VARIANT, skipping"
+        exit 0
+      fi
+      status=0
+      finn nas groundtruth $NAS_COMMON $NAS_DATA --device cuda \
+        --selection first --count $NAS_GT_COUNT --epochs $NAS_GT_EPOCHS --seed $NAS_SEED \
+        "$front" "$NAS_RUN/groundtruth_front" || status=$?
+      nas_collect groundtruth_front
+      exit $status
+  artifacts:
+    name: "nas_groundtruth_front"
+    when: always
+    paths:
+      - nas_artifacts/groundtruth_front/
+
+# Figures and tables from whatever finished, then everything goes to the result store.
+NAS Report:
+  extends: .nas_job
+  stage: report
+  needs:
+    - job: Build
+      pipeline: $PARENT_PIPELINE_ID
+    - job: NAS Sample
+    - job: NAS Search
+    - job: NAS Export
+    - job: NAS Ground Truth
+    - job: NAS Ground Truth (Front)
+  rules:
+    # Also run on failure of previous jobs to report partial results
+    - when: always
+  variables:
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $NAS_SMALL_CPU_CORES --mem $NAS_SMALL_MEM"
+  script:
+    - !reference [.nas_env, script]
+    - |
+      args=""
+      [ -f "$NAS_OUT/sampling/samples.jsonl" ] && args="$args --sampling $NAS_OUT/sampling"
+      for variant in $NAS_SEARCH_VARIANTS; do
+        [ -f "$NAS_OUT/search_$variant/records.jsonl" ] && args="$args --search $NAS_OUT/search_$variant"
+      done
+      [ -d "$NAS_OUT/groundtruth" ] && args="$args --groundtruth $NAS_OUT/groundtruth"
+      if [ -d "$NAS_OUT/groundtruth" ] && [ -d "$NAS_OUT/groundtruth_front" ]; then
+        args="$args --outcome-random $NAS_OUT/groundtruth --outcome-front $NAS_OUT/groundtruth_front"
+      fi
+      status=0
+      if [ -n "$args" ]; then
+        finn nas report $args "$NAS_OUT/report" || status=$?
+      else
+        echo "No results to report"
+        status=1
+      fi
+      mkdir -p "$NAS_STORE"
+      cp -r "$NAS_OUT/." "$NAS_STORE/"
+      echo "Results stored under $NAS_STORE"
+      exit $status
+  artifacts:
+    name: "nas_results"
+    when: always
+    paths:
+      - nas_artifacts/

@@ -48,6 +48,33 @@ when it is an objective, `--no-proxies` otherwise skips the proxy computation),
 every NSGA-II variant and the first generation of the random run then draw the same
 genotypes, so differences only come from the feedback.
 
+## Full builds of exported candidates
+
+The oracle estimates; whether the estimates and verdicts hold up in hardware is measured by
+building a few candidates for real. `finn nas export` rebuilds, calibrates and exports them as
+QONNX models and writes a `finn bench` config next to them:
+
+```bash
+# the Pareto front of a search run (--select front; auto picks the front when the run has one)
+finn nas export runs/nsga2_graded exports/nsga2_graded
+# 30 feasible random samples spread over the size range
+finn nas export runs/sampling exports/sampling --select feasible --limit 30
+# the bench config refers to the models under this prefix (when the exports are moved first)
+finn nas export runs/nsga2_graded exports/front --model-path-prefix /share/nas/front
+```
+
+The output directory holds `<hash>.onnx` per candidate (with its `<hash>.onnx.data` weight file,
+which has to stay next to it), `samples.jsonl` with their records (so
+`finn nas groundtruth exports/front ...` trains exactly the front), `bench_config.yml` and
+`export_summary.json`. The bench config uses the `nas_candidate` DUT
+(`src/finn/benchmarking/dut/nas_candidate.yml`) and sets, per candidate, the model path, the
+oracle's board, clock and folding target and the step list (the oracle's flow, StreamlinePlus
+included, followed by the rest of the default flow), so the synthesized design is the one the
+oracle estimated. Build locally with `finn bench --bench_config exports/front/bench_config.yml`
+or on the CI as a manual bench run ([ci/nas/README.md](../../../../ci/nas/README.md)). The
+exported weights are random (as during the evaluation), which only matters for the
+weight-dependent part of the bit-width minimization.
+
 ## The variants
 
 | Variant | Algorithm | Infeasible candidates |

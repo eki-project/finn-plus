@@ -51,6 +51,19 @@ misconfiguration, internal error), so the command can gate scripts.
 Experiment scripts that use the Python API should also be started through the CLI
 (`finn run script.py`), so that the environment and external dependencies are set up.
 
+`finn nas export RUN_DIR OUTPUT_DIR` turns the candidates of a sampling or search run (the Pareto
+front, or feasible samples) into QONNX models plus a `finn bench` config that builds them with
+the oracle's flow through to synthesis, and `finn nas report` renders the figures; see the
+[experiments README](experiments/README.md).
+
+### Running the experiments on the CI
+
+A complete study (sampling baseline, the four search variants, export of the fronts, proxy
+ground truth on a GPU node, report) runs on the cluster as the `NAS (Manual)` child pipeline of
+the GitLab CI: trigger a pipeline with `NAS_CFG=<search space config in ci/nas/>`. Set-up,
+knobs, jobs and how to synthesize the exported fronts are described in
+[ci/nas/README.md](../../../ci/nas/README.md).
+
 ## Result (`EvalResult`)
 
 | Field | Meaning |

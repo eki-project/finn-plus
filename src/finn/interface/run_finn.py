@@ -1967,6 +1967,103 @@ def nas_groundtruth(
 
 
 @click.command(
+    name="export",
+    help="Export candidates of a `finn nas sample` or `finn nas search` run (RUN_DIR) as QONNX "
+    "models into OUTPUT_DIR for full FINN+ builds: the Pareto front of a search run or the "
+    "feasible samples of a sampling run, each rebuilt and calibrated as the evaluator did, with "
+    "a `finn bench` config (dut nas_candidate, the oracle's flow through to synthesis) and their "
+    "records for `finn nas groundtruth`.",
+)
+@finn_deps
+@finn_deps_definitions
+@finn_build_dir
+@num_default_workers
+@skip_dep_update
+@batch
+@click.option(
+    "--select",
+    "selection",
+    type=click.Choice(["auto", "front", "feasible"]),
+    default="auto",
+    show_default=True,
+    help="The Pareto front (search runs), the feasible records spread over the size range, or "
+    "the front when the run has one and the feasible records otherwise.",
+)
+@click.option("--limit", type=int, default=0, show_default=True, help="At most this many (0: all).")
+@click.option("--seed", type=int, default=0, show_default=True, help="Weight/calibration seed.")
+@click.option(
+    "--model-path-prefix",
+    default=None,
+    help="Directory the bench config refers to for the models instead of OUTPUT_DIR (when the "
+    "exports are moved to a share before the builds run).",
+)
+@click.option(
+    "--generate-outputs",
+    default=",".join(("estimate_reports", "bitfile")),
+    show_default=True,
+    help="Comma separated build outputs (DataflowOutputType names) for the bench config.",
+)
+@click.argument("run_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("output_dir", type=click.Path(file_okay=False, path_type=Path))
+def nas_export(
+    finn_deps: Path | None,
+    finn_deps_definitions: Path | None,
+    finn_build_dir: Path | None,
+    num_default_workers: int,
+    skip_dep_update: bool,
+    batch: bool,
+    selection: str,
+    limit: int,
+    seed: int,
+    model_path_prefix: str | None,
+    generate_outputs: str,
+    run_dir: Path,
+    output_dir: Path,
+) -> None:
+    """Export run candidates as QONNX models plus a bench config."""
+    output_dir = output_dir.expanduser().absolute()
+    run_dir = run_dir.expanduser().absolute()
+    if finn_build_dir is not None:
+        finn_build_dir = finn_build_dir.expanduser().absolute()
+        finn_build_dir.mkdir(parents=True, exist_ok=True)
+    if finn_deps is not None:
+        finn_deps = finn_deps.expanduser().absolute()
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
+    outputs = [o.strip() for o in generate_outputs.split(",") if o.strip()]
+    if not outputs:
+        raise click.UsageError("--generate-outputs needs at least one output type.")
+    settings = FINNSettings.init(
+        auto_set_environment_vars=True,
+        automatic_dependency_updates=not skip_dep_update,
+        flow_config=output_dir / "dummy.yaml",
+        **get_function_args(),
+    )
+    prepare_finn(settings, True, batch)
+    Console().rule("[bold cyan]Exporting NAS candidates[/bold cyan]")
+
+    # Late import because we need prepare_finn to setup remaining dependencies first
+    from finn.nas.experiments.export import export_run
+
+    try:
+        summary = export_run(
+            run_dir,
+            output_dir,
+            selection=selection,
+            limit=limit,
+            seed=seed,
+            model_path_prefix=model_path_prefix,
+            generate_outputs=outputs,
+            progress=status,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    rich.print({k: v for k, v in summary.items() if k != "candidates"})
+    status(f"{summary['count']} candidates written to {output_dir}")
+    sys.exit(0)
+
+
+@click.command(
     name="report",
     help="Render the figures (PDF and PNG) and markdown tables of the NAS experiments into "
     "OUTPUT_DIR from any subset of a sampling run, search runs and a ground-truth run. The "
@@ -2068,6 +2165,7 @@ def main() -> None:
     nas.add_command(nas_sample)
     nas.add_command(nas_search)
     nas.add_command(nas_groundtruth)
+    nas.add_command(nas_export)
     nas.add_command(nas_report)
     main_group.add_command(nas)
     try:
