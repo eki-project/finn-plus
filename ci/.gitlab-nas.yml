@@ -22,7 +22,7 @@ variables:
   NAS_MEM: "160G" # about 2 GB per worker
   NAS_SMALL_CPU_CORES: "8" # export and report
   NAS_SMALL_MEM: "32G"
-  NAS_GPU_PARTITION: "gpu"
+  NAS_GPU_PARTITION: "gpu_a40" # the plain "gpu" partition is deprecated on Otus (redirects to gpu_h100)
   NAS_GPU_GRES: "gpu:a40:1"
   NAS_GPU_CPU_CORES: "16"
   NAS_GPU_MEM: "64G"

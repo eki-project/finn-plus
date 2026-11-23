@@ -18,7 +18,7 @@ Slurm nodes (nothing here is tracked with DVC):
 
 The jobs install the `nas` extra of the wheel (optuna, torchvision) on top of the regular CI
 venv (`.setup_nas_2024_2` in `ci/.gitlab-setup.yml`). Ground-truth training needs a GPU node of the
-Otus cluster (`NAS_GPU_PARTITION`, default `gpu`, and `NAS_GPU_GRES`, default `gpu:a40:1`).
+Otus cluster (`NAS_GPU_PARTITION`, default `gpu_a40`, and `NAS_GPU_GRES`, default `gpu:a40:1`; the plain `gpu` partition is deprecated).
 
 ## Launching a study
 
