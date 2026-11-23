@@ -65,9 +65,11 @@ from typing import TYPE_CHECKING, Any, cast
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.analysis.fpgadataflow.empirical_qor_estimation import (
+    NODE_FEATURES_REPORT,
     QoRModelSet,
     empirical_power_estimation,
     empirical_res_estimation,
+    node_feature_report,
 )
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.folding_violations import folding_violations
@@ -1546,7 +1548,13 @@ def generate_empirical_estimate_reports(
 ) -> None:
     """Write empirical (learned) resource and power estimate reports next to the analytical
     ones, if fitted QoR models are available via the FINN_QOR_MODEL_DIR environment variable.
+
+    The feature rows of the hardware nodes (``qor_node_features.json``) are written in any
+    case: they let ci/qor/end2end_models.py evaluate any set of QoR models on the design
+    offline, without the models or their dependencies being present at build time.
     """
+    with (report_dir / f"{NODE_FEATURES_REPORT}{suffix}.json").open("w") as f:
+        json.dump(node_feature_report(model, cfg.synth_clk_period_ns), f, indent=2)
     models = QoRModelSet.load_from_env()
     if models is None:
         log.info("No empirical QoR models available (FINN_QOR_MODEL_DIR), skipping")

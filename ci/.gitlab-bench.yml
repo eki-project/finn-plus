@@ -421,16 +421,18 @@ QoR Transformer:
     - qor-venv/bin/pip install --quiet 'torch==2.12.0+cpu' --extra-index-url https://download.pytorch.org/whl/cpu
     - |
       export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
-      qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_transformer_artifacts --regressors TabTransformerRegressor --no-store
+      # stored in its own model set (never read by builds, see QoR End2End Models)
+      qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_transformer_artifacts --regressors TabTransformerRegressor --model-dir $LOCAL_QOR_MODEL_DIR_STORE/$QOR_MODEL_SUBDIR/transformer --force
   artifacts:
     name: "qor_transformer_artifacts"
     when: always
     paths:
       - qor_transformer_artifacts/
 
-# Symbolic regression (PySR) of the QoR targets: interpretable formulas for the paper, not
-# stored as models. Manual because of the runtime (hours) and the Julia dependency; the Julia
-# depot is kept on the runner (LOCAL_QOR_JULIA_DEPOT) so only the first run installs it.
+# Symbolic regression (PySR) of the QoR targets: interpretable formulas for the paper, stored
+# as their own model set (predicting needs only sympy). Manual because of the runtime (hours)
+# and the Julia dependency; the Julia depot is kept on the runner (LOCAL_QOR_JULIA_DEPOT) so
+# only the first run installs it.
 QoR Symbolic Regression:
   id_tokens:
     CI_JOB_JWT:
@@ -473,7 +475,7 @@ QoR Symbolic Regression:
       # libraries ("GLIBCXX_x.y.z not found"). Preload the libstdc++ bundled with Julia.
       JULIA_LIBSTDCXX=$PYTHON_JULIAPKG_PROJECT/pyjuliapkg/install/lib/julia/libstdc++.so.6
       if [ -f "$JULIA_LIBSTDCXX" ]; then export LD_PRELOAD=$JULIA_LIBSTDCXX${LD_PRELOAD:+:$LD_PRELOAD}; fi
-      qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_symbolic_artifacts --regressors SymbolicRegressor --no-store
+      qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_symbolic_artifacts --regressors SymbolicRegressor --model-dir $LOCAL_QOR_MODEL_DIR_STORE/$QOR_MODEL_SUBDIR/symbolic --force
       for backend in hls rtl; do
         qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_symbolic_artifacts --regressors SymbolicRegressor --operators mvau --targets metrics.synth.resources.LUT --subset params.backend=$backend || true
       done
@@ -484,10 +486,10 @@ QoR Symbolic Regression:
       - qor_symbolic_artifacts/
 
 # Pre-trained TabPFN-3.5 (Prior Labs tabular foundation model) as a further QoR regressor:
-# evaluated for the model comparison, not stored as a model (the 3.5 weights are licensed for
-# research only, and predicting needs the 876 MB checkpoint on every machine that loads the
-# model). Manual, and the only QoR job that runs on the cluster: a CPU evaluation takes a day,
-# one GPU does it in well under an hour. The weights are staged by hand in TABPFN_MODEL_DIR
+# stored as its own model set for the model comparison only (the pickles hold the context
+# rows, predicting needs the 876 MB checkpoint, whose 3.5 weights are licensed for research
+# only, so builds never load this set). Manual, and runs on the cluster: a CPU evaluation
+# takes a day, one GPU does it in well under an hour. The weights are staged by hand in TABPFN_MODEL_DIR
 # (see src/finn/qor/README.md); the job refuses to run without them and never downloads.
 QoR TabPFN:
   id_tokens:
@@ -546,7 +548,7 @@ QoR TabPFN:
       if path is None:
           sys.exit(f"ERROR: {DEFAULT_MODEL_FILE} not staged in $TABPFN_MODEL_CACHE_DIR (TABPFN_MODEL_DIR)")
       PY
-      "$VENV"/bin/python ci/qor/fit_estimators.py --output-dir qor_tabpfn_artifacts --regressors TabPFNRegressor --no-store
+      "$VENV"/bin/python ci/qor/fit_estimators.py --output-dir qor_tabpfn_artifacts --regressors TabPFNRegressor --model-dir $OTUS_QOR_MODEL_DIR_STORE/$QOR_MODEL_SUBDIR/tabpfn --force
   artifacts:
     name: "qor_tabpfn_artifacts"
     when: always
@@ -581,6 +583,59 @@ QoR End2End Report:
     paths:
       - qor_e2e_artifacts/
 
+# Offline evaluation of every QoR model set on the end2end builds of a regression pipeline:
+# the default set builds use ($QOR_MODEL_SUBDIR) and the transformer / symbolic / TabPFN sets
+# of the manual fitting jobs, predicted from the node feature rows the builds wrote
+# (qor_node_features.json). Manual: play it after the fitting jobs of interest have finished,
+# it evaluates whatever the model store holds at that moment (the report lists the fit date
+# of every model). Runs on the cluster like QoR TabPFN because the TabPFN checkpoint lives
+# there; works on re-collection pipelines (COLLECT_PIPELINE_ID) for older builds.
+QoR End2End Models:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: qor
+  tags:
+    - otus
+  rules:
+    - if: $BENCH_CFG =~ /^regression/ || $MANUAL_CFG_PATH =~ /regression/
+      when: manual
+      allow_failure: true
+  needs:
+    - job: Result Collection
+  timeout: 3h
+  variables:
+    QOR_GPU_SLURM_TIMEOUT: "2:00:00"
+    QOR_GPU_CPU_CORES: "16"
+    QOR_GPU_MEM: "64G"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $QOR_GPU_SLURM_PARTITION --gres=$QOR_GPU_SLURM_GRES -t $QOR_GPU_SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $QOR_GPU_CPU_CORES --mem $QOR_GPU_MEM --open-mode=append"
+  extends: .n2_setup_general
+  script:
+    - 'nvidia-smi || echo "WARNING - nvidia-smi not found, TabPFN will run on the CPU"'
+    # venv like QoR TabPFN (torch for the transformer and TabPFN sets, sympy for the symbolic one)
+    - |
+      VENV=$PATH_WORKDIR/qor-e2e-venv
+      rm -rf "$VENV"
+      trap 'rm -rf "$VENV"' EXIT
+      python3 -m venv "$VENV"
+      "$VENV"/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'sympy~=1.14' 'jinja2>=3.1.2'
+      "$VENV"/bin/pip install --quiet 'torch==2.12.1+cu126' --extra-index-url https://download.pytorch.org/whl/cu126
+      "$VENV"/bin/pip install --quiet 'tabpfn~=9.2.0'
+      export FINN_BENCH_EXCHANGE_DIR=$OTUS_EXCHANGE_DIR
+      if [ -n "$COLLECT_PIPELINE_ID" ]; then
+        export FINN_BENCH_EXCHANGE_PIPELINE=CI_$COLLECT_PIPELINE_ID
+      fi
+      export TABPFN_MODEL_CACHE_DIR=$TABPFN_MODEL_DIR
+      export TABPFN_NO_BROWSER=1
+      MODELS=$OTUS_QOR_MODEL_DIR_STORE/$QOR_MODEL_SUBDIR
+      "$VENV"/bin/python ci/qor/end2end_models.py --output-dir qor_e2e_models_artifacts \
+        --model-sets default=$MODELS,transformer=$MODELS/transformer,symbolic=$MODELS/symbolic,tabpfn=$MODELS/tabpfn \
+        --persist-to $OTUS_BENCHMARK_DIR_STORE/end2end_models/$(date +%Y-%m-%d)_${CI_COMMIT_SHORT_SHA}_${CI_PIPELINE_ID}_${MANUAL_CFG_PATH:-$BENCH_CFG}
+  artifacts:
+    name: "qor_e2e_models_artifacts"
+    when: always
+    paths:
+      - qor_e2e_models_artifacts/
 # Retention for the exchange directory: remove this pipeline's deployment packages (the
 # reports are kept) and pipeline directories older than EXCHANGE_RETENTION_DAYS. Runs as the
 # cluster user, which owns the large files. The packages are only removed once the

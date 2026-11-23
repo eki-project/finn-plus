@@ -147,7 +147,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="store the new model even if the stored one scores better",
+        help="always store the new model (no comparison with the stored one)",
     )
     parser.add_argument(
         "--no-store", action="store_true", help="evaluate only, do not store models"
@@ -404,18 +404,22 @@ def main() -> int:
 
             if not args.no_store:
                 # compare on the current data: the stored model's recorded score belongs to
-                # the database it was fitted on (see rescore_stored_model)
-                previous = rescore_stored_model(
-                    args.model_dir,
-                    operator,
-                    target,
-                    estimator,
-                    df,
-                    result.scoring,
-                    args.cv,
-                    args.n_repeats,
-                    args.n_jobs,
-                )
+                # the database it was fitted on (see rescore_stored_model). --force stores
+                # unconditionally (the model sets of the advanced regressors are always the
+                # latest fit), so the re-scoring is skipped then.
+                previous = None
+                if not args.force:
+                    previous = rescore_stored_model(
+                        args.model_dir,
+                        operator,
+                        target,
+                        estimator,
+                        df,
+                        result.scoring,
+                        args.cv,
+                        args.n_repeats,
+                        args.n_jobs,
+                    )
                 entry["previous_cv_score_recorded"] = stored_score(
                     args.model_dir, operator, target, result.scoring
                 )

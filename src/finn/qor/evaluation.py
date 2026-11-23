@@ -264,6 +264,14 @@ def _aggregate_resources(src: dict[str, Any], dst: dict[str, float]) -> None:
         dst[k] = dst.get(k, 0) + v
 
 
+def normalize_resources(resources: dict[str, Any]) -> dict[str, float]:
+    """Return a per-layer resource dict with the key variants merged (see _aggregate_resources):
+    DSP48E/DSP58E* -> DSP, BRAM_18K -> BRAM, BRAM_36K -> 2 BRAM; non-numeric entries dropped."""
+    result: dict[str, float] = {}
+    _aggregate_resources(resources, result)
+    return result
+
+
 def breakdown_resources(
     report: dict[str, dict[str, Any]], categories: dict[str, list[str]] | None = None
 ) -> dict[str, dict[str, float]] | None:

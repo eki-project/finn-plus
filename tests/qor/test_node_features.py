@@ -527,3 +527,29 @@ def test_microbenchmarks_keep_local_artifacts_only_on_failure():
     """Successful microbenchmark runs leave no build output / tmp zip in the local artifact dir."""
     for dut_cls in MICROBENCH_DUTS.values():
         assert dut_cls.sample_defaults()["save_local_artifacts"] == "on_failure"
+
+
+def test_node_feature_report_matches_node_features():
+    """The per-node report a build writes carries the same feature row as node_features."""
+    import json
+
+    from finn.analysis.fpgadataflow.empirical_qor_estimation import node_feature_report
+
+    dut, params, part, op_type = CASES[0]
+    model, _ = MICROBENCH_DUTS[dut].make_model(params, part)
+    model = model.transform(GiveUniqueNodeNames())
+    node = _single_hw_node(model)
+    report = node_feature_report(model)
+    assert node.name in report
+    entry = report[node.name]
+    assert entry["op_type"] == op_type
+    assert entry["operator"] == dut
+    assert entry["backend"] == backend_of(node)
+    assert set(entry["features"]) == set(SPECS[dut].feature_cols)
+    # JSON-serializable, and the row re-created from it feeds the models unchanged
+    restored = pd.DataFrame([json.loads(json.dumps(entry["features"]))])
+    expected = node_features(model, node, getHWCustomOp(node))
+    for col in SPECS[dut].feature_cols:
+        assert restored[col].iloc[0] == expected[col].iloc[0] or (
+            pd.isna(restored[col].iloc[0]) and pd.isna(expected[col].iloc[0])
+        ), col

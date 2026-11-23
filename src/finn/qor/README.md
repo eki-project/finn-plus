@@ -185,9 +185,10 @@ shows what is available, `--set REGRESSOR.param=JSON` overrides a grid list.
 Symbolic regression runs in the separate manual CI job `QoR Symbolic Regression` (hours;
 Julia depot cached on the runner in `LOCAL_QOR_JULIA_DEPOT`; the interpreter selected by
 `LOCAL_QOR_PYTHON` must have a shared `libpython`, which PySR's embedded Julia loads), overall and per backend
-(`--subset params.backend=hls`), without storing models. The tabular transformer runs in the
-manual job `QoR Transformer`, also without storing models: a single fit on ~6000 MVAU samples
-takes 3 to 9 minutes on one CPU core, and its grid needs 80 fits per target. The regular
+(`--subset params.backend=hls`); the overall fit is stored as the model set `symbolic/`
+(see below). The tabular transformer runs in the manual job `QoR Transformer`, stored as the
+set `transformer/`: a single fit on ~6000 MVAU samples takes 3 to 9 minutes on one CPU core,
+and its grid needs 80 fits per target. The regular
 `QoR Model Fitting` job therefore skips both and needs neither torch nor PySR; all jobs use
 the same cross-validation splits, so their `*_selection.csv` tables are comparable.
 
@@ -195,10 +196,11 @@ TabPFN runs in the manual job `QoR TabPFN`, the only QoR job on the cluster: a S
 one GPU (pipeline variables `QOR_GPU_SLURM_PARTITION`/`QOR_GPU_SLURM_GRES`, default one
 NVIDIA A40; the job prints `nvidia-smi` and the resolved device). Inference cost grows with
 the square of the context size, so the cross-validated grid over all targets takes a day on
-CPUs but well under an hour on one GPU. The job stores no models and only produces the
-selection tables, for two reasons: the TabPFN-3.5 weights are licensed by Prior Labs for
-non-commercial research only (the TabPFN-2 weights are Apache-licensed with attribution),
-and a stored model would need the checkpoint on every machine that loads it. The weights are
+CPUs but well under an hour on one GPU. The job stores its models as the set `tabpfn/`,
+which builds never load, for two reasons: the TabPFN-3.5 weights are licensed by Prior Labs
+for non-commercial research only (the TabPFN-2 weights are Apache-licensed with attribution),
+and the pickles hold only the context rows, so predicting needs the checkpoint on every
+machine that loads them. The weights are
 never downloaded by CI: obtain the checkpoint `tabpfn-v3.5-20260909.safetensors` from Prior
 Labs (their license flow) and copy it into the directory named by the pipeline variable
 `TABPFN_MODEL_DIR` (default: a `tabpfn_models/` subdirectory of the microbenchmark database,
@@ -207,6 +209,24 @@ package's own setting, and fails early if the file is missing. Locally, set
 `TABPFN_MODEL_CACHE_DIR` and `pip install tabpfn` to run the same evaluation
 (`--regressors TabPFNRegressor --no-store`) or the smoke tests in `tests/qor/test_tabpfn.py`
 (skipped without the package or the weights).
+
+**Model sets and the offline end2end evaluation.** Builds load the models of the base model
+directory only (`FINN_QOR_MODEL_DIR`, the `v2/` subdirectory of the model store in CI), which
+the `QoR Model Fitting` job fills with the best tree-based model per operator and target
+under the store rule above. The advanced regressors live in their own subdirectories,
+`transformer/`, `symbolic/` and `tabpfn/`, which their manual jobs overwrite with the latest
+fit (`--model-dir ... --force`, no comparison), so each set is always one fit per operator
+and target and never reaches a build. To compare them on real designs, every build writes
+`qor_node_features.json` next to its estimate reports: the op_type, backend, operator and the
+feature row of every hardware node, exactly as the models see it. The manual job
+`QoR End2End Models` of a regression pipeline (on the cluster, where the TabPFN checkpoint is)
+loads all four sets, predicts the resources and power of every node from those rows and
+compares them with the post-synthesis resources and the measured power, per node grouped by
+operator (`node_errors_<RES>.md`) and per design (`results_table.md`, the same layout as the
+build-time report), together with the provenance of every model (`model_sets.md`: regressor,
+fit date, samples). It evaluates whatever the store holds when it is played, so play it after
+the fitting jobs of interest; on a re-collection pipeline it evaluates older builds. The
+automatic `QoR End2End Report` keeps showing what a build actually got from the base set.
 
 Future work: a graph neural network over the whole dataflow graph (cross-layer effects,
 shell overhead) needs graph-level ground truth beyond the handful of end2end builds and is

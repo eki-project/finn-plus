@@ -20,6 +20,7 @@ from onnx import NodeProto
 from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
+from typing import Any
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.qor.database import POWER_TARGET_COL
@@ -352,6 +353,50 @@ class QoRModelSet:
         if spec is None:
             return None
         return self._by_operator.get(spec.name, {}).get(target)
+
+
+#: Basename of the per-node feature report a build writes next to its estimate reports
+NODE_FEATURES_REPORT = "qor_node_features"
+
+
+def _json_value(value: object) -> object:
+    """Convert a feature value to a JSON-serializable Python scalar."""
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    return value
+
+
+def node_feature_report(
+    model: ModelWrapper, clk_period_ns: float = DEFAULT_CLOCK_PERIOD_NS
+) -> dict[str, dict[str, Any]]:
+    """Return the feature row of every hardware node, keyed by node name.
+
+    Each entry carries the node's op_type, backend, operator (feature spec name) and the
+    feature dict exactly as :func:`node_features` hands it to the models, so that any QoR
+    model can be evaluated on the node offline (ci/qor/end2end_models.py) without rebuilding
+    the design. Nodes of unsupported operators are listed with ``"operator": None`` and no
+    features; nodes whose features cannot be extracted carry the error message instead.
+    """
+    report: dict[str, dict[str, Any]] = {}
+    for node in model.graph.node:
+        if not (is_hls_node(node) or is_rtl_node(node)):
+            continue
+        spec = spec_for_op_type(node.op_type)
+        entry: dict[str, Any] = {
+            "op_type": node.op_type,
+            "backend": backend_of(node),
+            "operator": spec.name if spec is not None else None,
+        }
+        if spec is not None:
+            try:
+                row = node_features(model, node, getHWCustomOp(node), clk_period_ns)
+                entry["features"] = {c: _json_value(row[c].iloc[0]) for c in row.columns}
+            except Exception as e:  # one node must not lose the report
+                entry["error"] = str(e)
+        report[node.name] = entry
+    return report
 
 
 def empirical_res_estimation(
