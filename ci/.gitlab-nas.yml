@@ -23,7 +23,7 @@ variables:
   NAS_SMALL_CPU_CORES: "8" # export and report
   NAS_SMALL_MEM: "32G"
   NAS_GPU_PARTITION: "gpu"
-  NAS_GPU_GRES: "gpu:a100:1"
+  NAS_GPU_GRES: "gpu:a40:1"
   NAS_GPU_CPU_CORES: "16"
   NAS_GPU_MEM: "64G"
   # Search variants (keep in sync with the parallel:matrix of "NAS Search" below)
@@ -66,7 +66,7 @@ workflow:
     - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
     - |
       source finn-plus-venv/bin/activate
-      : "${OTUS_NAS_CIFAR10_DIR:?project variable OTUS_NAS_CIFAR10_DIR is not set (CIFAR-10 directory on the cluster, see ci/nas/README.md)}"
+      : "${OTUS_NAS_DATASET_DIR:?project variable OTUS_NAS_DATASET_DIR is not set (dataset directory on the cluster, see ci/nas/README.md)}"
       : "${OTUS_NAS_RESULT_DIR_STORE:?project variable OTUS_NAS_RESULT_DIR_STORE is not set (persistent result directory on the cluster, see ci/nas/README.md)}"
       if [ ! -f "ci/nas/$NAS_CFG.json" ]; then
         echo "ERROR: search space config ci/nas/$NAS_CFG.json not found (NAS_CFG=$NAS_CFG)"
@@ -78,7 +78,7 @@ workflow:
       NAS_STORE="$OTUS_NAS_RESULT_DIR_STORE/$NAS_RESULT_NAME"
       NAS_COMMON="--batch --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers 1"
       NAS_ORACLE="--board $NAS_BOARD --clk-period-ns $NAS_CLK_PERIOD_NS --target-fps $NAS_TARGET_FPS --eval-timeout $NAS_EVAL_TIMEOUT"
-      NAS_DATA="--data-root $OTUS_NAS_CIFAR10_DIR"
+      NAS_DATA="--data-root $OTUS_NAS_DATASET_DIR/cifar10"
       NAS_SPACE="--space-config ci/nas/$NAS_CFG.json"
       mkdir -p "$NAS_OUT" "$NAS_RUN"
       # nas_collect <run name>: copy a finished run to the artifacts without its work directory

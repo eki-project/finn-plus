@@ -13,12 +13,12 @@ Slurm nodes (nothing here is tracked with DVC):
 
 | Variable | Content |
 |---|---|
-| `OTUS_NAS_CIFAR10_DIR` | CIFAR-10 as torchvision lays it out: the directory containing `cifar-10-batches-py/` (what `torchvision.datasets.CIFAR10(root)` downloads; copy it there once, the jobs do not rely on the download working on the nodes) |
+| `OTUS_NAS_DATASET_DIR` | Dataset directory on the cluster: `cifar10/` holds CIFAR-10 as torchvision lays it out (`cifar-10-batches-py/`, what `torchvision.datasets.CIFAR10(root)` downloads; the jobs do not rely on the download working on the nodes) and `radioml/data.hdf5` the RadioML 2018 dataset for a later extension of the search space |
 | `OTUS_NAS_RESULT_DIR_STORE` | Persistent result directory; every pipeline writes a subdirectory `<date>_<sha>_<parent pipeline id>_<config>` with all records, exports, figures and tables (the GitLab artifacts expire, this copy does not) |
 
 The jobs install the `nas` extra of the wheel (optuna, torchvision) on top of the regular CI
-venv (`.setup_nas_2024_2` in `ci/.gitlab-setup.yml`). Ground-truth training needs a GPU node;
-the partition and GRES are variables (`NAS_GPU_PARTITION`, `NAS_GPU_GRES`).
+venv (`.setup_nas_2024_2` in `ci/.gitlab-setup.yml`). Ground-truth training needs a GPU node of the
+Otus cluster (`NAS_GPU_PARTITION`, default `gpu`, and `NAS_GPU_GRES`, default `gpu:a40:1`).
 
 ## Launching a study
 
