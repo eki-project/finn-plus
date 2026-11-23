@@ -31,9 +31,15 @@ pipelines with the NAS child pipeline, so nothing else needs to be deselected:
 # dry run first (prints the ref, the plan and the variables), then --yes
 python3 scripts/gitlab_ci.py trigger --ref feature/nas_oracle --name "nas baseline" \
     --var NAS_CFG=default
+# smoke test of the pipeline itself: small counts and small Slurm allocations (they queue faster)
 python3 scripts/gitlab_ci.py trigger --ref feature/nas_oracle --name "nas smoke" \
-    --var NAS_CFG=default --var NAS_SAMPLE_COUNT=50 --var NAS_BUDGET=100 --var NAS_GT_COUNT=5
+    --var NAS_CFG=default --var NAS_SAMPLE_COUNT=50 --var NAS_BUDGET=100 --var NAS_GT_COUNT=5 \
+    --var NAS_CPU_CORES=16 --var NAS_MEM=48G --var NAS_WORKERS=12
 ```
+
+The first smoke run (pipeline 164363) waited about two hours in the Slurm queue for its five
+64-core allocations and then needed one minute of venv setup and five minutes of search per
+job, so the queue is the dominant cost of a study.
 
 Knobs (all pipeline variables with defaults in `.gitlab-ci.yml`; sizing of the Slurm jobs in
 `ci/.gitlab-nas.yml`):
