@@ -109,6 +109,16 @@ namespace lsp {
 
         };
 
+        template <int W>
+        ap_uint<clog2(W + 1)> popcount(const ap_uint<W>& x) {
+#pragma HLS inline
+            ap_uint<clog2(W + 1)> count = 0;
+            for (int i = 0; i < W; ++i) {
+#pragma HLS UNROLL
+                count += x[i];
+            }
+            return count;
+        }
 
         /** Reverse the byte order of `value`. Converts a multi-byte field between wire order (most
         * significant byte first, so in the lowest bits of an AXI Stream beat) and its numeric value,

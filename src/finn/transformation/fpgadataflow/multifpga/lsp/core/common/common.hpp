@@ -60,7 +60,7 @@ namespace lsp {
         }
 
         /** Bit offset of the LSP header in beat 0 for a known EtherType or TPID. Constexpr, so that the
-        result can be used as a template argument. */
+        result can be used as a template argument. The result is padded to the next 64 bit multiple. */
         constexpr int getOffsetFromEthertype(ethertype_or_tag tag) {
             switch (tag) {
                 case IEEE_802_1_Q:
