@@ -194,11 +194,19 @@ NAS Ground Truth:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
     - job: NAS Sample
+  rules:
+    # Also run on failure of the sampling job (partial records), and never leave this job
+    # skipped: GitLab starts the report as soon as one of its needs is skipped
+    - when: always
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $NAS_GPU_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --gres $NAS_GPU_GRES --cpus-per-task $NAS_GPU_CPU_CORES --mem $NAS_GPU_MEM"
   script:
     - !reference [.nas_env, script]
     - |
+      if [ ! -f "$NAS_OUT/sampling/samples.jsonl" ]; then
+        echo "No sampling records, skipping"
+        exit 0
+      fi
       status=0
       finn nas groundtruth $NAS_COMMON $NAS_DATA --device cuda \
         --count $NAS_GT_COUNT --epochs $NAS_GT_EPOCHS --seed $NAS_SEED \
@@ -220,6 +228,8 @@ NAS Ground Truth (Front):
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
     - job: NAS Export
+  rules:
+    - when: always
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $NAS_GPU_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --gres $NAS_GPU_GRES --cpus-per-task $NAS_GPU_CPU_CORES --mem $NAS_GPU_MEM"
   script:

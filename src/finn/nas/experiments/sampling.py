@@ -84,6 +84,28 @@ def summarize(evaluations: list[CandidateEvaluation]) -> dict[str, Any]:
     return summary
 
 
+def draw_genotypes(
+    space: SearchSpace, count: int, rng: random.Random, done: set[str]
+) -> tuple[list[tuple[int, dict[str, Any]]], int]:
+    """Draw ``count`` genotypes and return the ``(index, genotype)`` pairs still to evaluate.
+
+    Genotypes whose hash is in ``done`` (evaluated in an earlier run) and genotypes drawn a
+    second time are skipped, so every genotype is evaluated once; ``done`` is extended. The
+    second return value is the number of skipped draws.
+    """
+    pending: list[tuple[int, dict[str, Any]]] = []
+    skipped = 0
+    for index in range(count):
+        genotype = space.sample(rng)
+        ghash = genotype_hash(genotype)
+        if ghash in done:
+            skipped += 1
+            continue
+        done.add(ghash)
+        pending.append((index, genotype))
+    return pending, skipped
+
+
 def run_sampling(
     space_config: SpaceConfig,
     evaluator_config: EvaluatorConfig,
@@ -116,16 +138,13 @@ def run_sampling(
         )
     )
     existing = read_records(records_path)
-    done = {e.hash for e in existing}
     space = SearchSpace(space_config)
-    rng = random.Random(seed)
-    pending: list[tuple[int, dict[str, Any]]] = []
-    for index in range(count):
-        genotype = space.sample(rng)
-        if genotype_hash(genotype) not in done:
-            pending.append((index, genotype))
+    pending, skipped = draw_genotypes(space, count, random.Random(seed), {e.hash for e in existing})
     say = progress or (lambda _msg: None)
-    say(f"{len(existing)} records exist, {len(pending)} of {count} genotypes to evaluate")
+    say(
+        f"{len(existing)} records exist, {len(pending)} of {count} genotypes to evaluate "
+        f"({skipped} draws skipped: already evaluated or drawn twice)"
+    )
     chunk = chunk_size or max(1, 4 * max(1, n_workers))
     t_start = time.perf_counter()
     evaluated = 0
@@ -148,5 +167,6 @@ def run_sampling(
                 f"this chunk, {elapsed / evaluated:.2f} s per candidate"
             )
     summary = summarize(read_records(records_path))
+    summary["skipped_draws"] = skipped
     (out_dir / SUMMARY_FILE).write_text(json.dumps(summary, indent=2))
     return summary

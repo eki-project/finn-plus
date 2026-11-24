@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import signal
+import tempfile
 import time
 import torch
 from concurrent.futures import ProcessPoolExecutor
@@ -124,6 +125,16 @@ def _alarm(signum: int, frame: Any) -> None:  # noqa: ARG001
     raise _TimeoutError
 
 
+def candidate_dir(work_dir: Path, ghash: str) -> Path:
+    """Create a fresh directory for one evaluation of the genotype with hash ``ghash``.
+
+    Named after the hash so that kept artifacts are easy to find, and unique so that concurrent
+    evaluations of the same genotype (duplicate draws, re-evaluations) never share files.
+    """
+    work_dir.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f"{ghash[:16]}-", dir=work_dir))
+
+
 def evaluate_genotype(
     genotype: Genotype,
     config: EvaluatorConfig,
@@ -154,8 +165,7 @@ def evaluate_genotype(
         params=count_params(genotype),
         nodes=len(info.nodes),
     )
-    cand_dir = work_dir / ghash[:16]
-    cand_dir.mkdir(parents=True, exist_ok=True)
+    cand_dir = candidate_dir(work_dir, ghash)
     torch.manual_seed(seed)
     use_alarm = hasattr(signal, "SIGALRM") and config.timeout_s > 0
     if use_alarm:
@@ -204,6 +214,10 @@ def evaluate_genotype(
             "worker",
             FailureCategory.TIMEOUT,
             f"Evaluation exceeded {config.timeout_s:.0f} s.",
+        )
+    except Exception as exc:  # one broken candidate must not end a run of thousands
+        evaluation.result = EvalResult.failed(
+            "worker", FailureCategory.INTERNAL_ERROR, f"{type(exc).__name__}: {exc}"[:500]
         )
     finally:
         if use_alarm:
