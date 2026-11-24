@@ -198,8 +198,9 @@ TabPFN runs in the manual job `QoR TabPFN`, the only QoR job on the cluster: a S
 one GPU (pipeline variables `QOR_GPU_SLURM_PARTITION`/`QOR_GPU_SLURM_GRES`, default one
 NVIDIA A40; the job prints `nvidia-smi` and the resolved device). Inference cost grows with
 the square of the context size, so the cross-validated grid over all targets takes a day on
-CPUs but well under an hour on one GPU. The job stores its models as the set `tabpfn/`,
-which builds never load, for two reasons: the TabPFN-3.5 weights are licensed by Prior Labs
+CPUs but well under an hour on one GPU. The job leaves its models in its artifacts and the
+follow-up job `QoR TabPFN Store` copies them into the set `tabpfn/` from a login node, because
+the model store is read-only on the compute nodes. Builds never load that set, for two reasons: the TabPFN-3.5 weights are licensed by Prior Labs
 for non-commercial research only (the TabPFN-2 weights are Apache-licensed with attribution),
 and the pickles hold only the context rows, so predicting needs the checkpoint on every
 machine that loads them. The weights are
@@ -221,8 +222,9 @@ fit (`--model-dir ... --force`, no comparison), so each set is always one fit pe
 and target and never reaches a build. To compare them on real designs, every build writes
 `qor_node_features.json` next to its estimate reports: the op_type, backend, operator and the
 feature row of every hardware node, exactly as the models see it. The manual job
-`QoR End2End Models` of a regression pipeline (on the cluster, where the TabPFN checkpoint is)
-loads all four sets, predicts the resources and power of every node from those rows and
+`QoR End2End Models` of a regression pipeline (on the cluster, where the TabPFN checkpoint is;
+`QoR End2End Models Store` then copies the report to the benchmark data store from a login
+node) loads all four sets, predicts the resources and power of every node from those rows and
 compares them with the post-synthesis resources and the measured power, per node grouped by
 operator (`node_errors_<RES>.md`) and per design (`results_table.md`, the same layout as the
 build-time report), together with the provenance of every model (`model_sets.md`: regressor,

@@ -550,12 +550,43 @@ QoR TabPFN:
       if path is None:
           sys.exit(f"ERROR: {DEFAULT_MODEL_FILE} not staged in $TABPFN_MODEL_CACHE_DIR (TABPFN_MODEL_DIR)")
       PY
-      "$VENV"/bin/python ci/qor/fit_estimators.py --output-dir qor_tabpfn_artifacts --regressors TabPFNRegressor --model-dir $OTUS_QOR_MODEL_DIR_STORE/$QOR_MODEL_SUBDIR/tabpfn --force
+      # The model store is read-only on the compute nodes: the models go into the job
+      # artifacts and QoR TabPFN Store copies them into the set tabpfn/ from the login node.
+      "$VENV"/bin/python ci/qor/fit_estimators.py --output-dir qor_tabpfn_artifacts --regressors TabPFNRegressor --model-dir qor_tabpfn_artifacts/model_set --force
   artifacts:
     name: "qor_tabpfn_artifacts"
     when: always
     paths:
       - qor_tabpfn_artifacts/
+
+# The group share is mounted read-only on the compute nodes (like the NAS result store), so
+# the GPU jobs leave their outputs in job artifacts and these login-node jobs store them.
+.qor_login_store:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: qor
+  tags:
+    - otus_login
+
+QoR TabPFN Store:
+  extends: .qor_login_store
+  rules:
+    - if: $BENCH_CFG =~ /^microbenchmark/ || $MANUAL_CFG_PATH =~ /microbenchmark/
+      when: on_success
+  needs:
+    - job: QoR TabPFN
+  script:
+    - |
+      TARGET=$OTUS_QOR_MODEL_DIR_STORE/$QOR_MODEL_SUBDIR/tabpfn
+      if [ ! -d qor_tabpfn_artifacts/model_set ]; then
+        echo "No TabPFN models to store"
+        exit 1
+      fi
+      mkdir -p "$TARGET"
+      cp -r qor_tabpfn_artifacts/model_set/. "$TARGET/"
+      echo "TabPFN model set stored under $TARGET"
+      ls -la "$TARGET"
 
 QoR End2End Report:
   id_tokens:
@@ -631,14 +662,33 @@ QoR End2End Models:
       export TABPFN_MODEL_CACHE_DIR=$TABPFN_MODEL_DIR
       export TABPFN_NO_BROWSER=1
       MODELS=$OTUS_QOR_MODEL_DIR_STORE/$QOR_MODEL_SUBDIR
+      # the report is persisted by QoR End2End Models Store (the data store is read-only here)
       "$VENV"/bin/python ci/qor/end2end_models.py --output-dir qor_e2e_models_artifacts \
-        --model-sets default=$MODELS,transformer=$MODELS/transformer,symbolic=$MODELS/symbolic,tabpfn=$MODELS/tabpfn \
-        --persist-to $OTUS_BENCHMARK_DIR_STORE/end2end_models/$(date +%Y-%m-%d)_${CI_COMMIT_SHORT_SHA}_${CI_PIPELINE_ID}_${MANUAL_CFG_PATH:-$BENCH_CFG}
+        --model-sets default=$MODELS,transformer=$MODELS/transformer,symbolic=$MODELS/symbolic,tabpfn=$MODELS/tabpfn
   artifacts:
     name: "qor_e2e_models_artifacts"
     when: always
     paths:
       - qor_e2e_models_artifacts/
+
+QoR End2End Models Store:
+  extends: .qor_login_store
+  rules:
+    - if: $BENCH_CFG =~ /^regression/ || $MANUAL_CFG_PATH =~ /regression/
+      when: on_success
+  needs:
+    - job: QoR End2End Models
+  script:
+    - |
+      TARGET=$OTUS_BENCHMARK_DIR_STORE/end2end_models/${CI_PIPELINE_CREATED_AT:0:10}_${CI_COMMIT_SHORT_SHA}_${CI_PIPELINE_ID}_${MANUAL_CFG_PATH:-$BENCH_CFG}
+      if [ ! -f qor_e2e_models_artifacts/summary.json ]; then
+        echo "No evaluation report to store"
+        exit 1
+      fi
+      mkdir -p "$TARGET"
+      cp -r qor_e2e_models_artifacts/. "$TARGET/"
+      echo "Evaluation report stored under $TARGET"
+      du -sh "$TARGET"
 # Retention for the exchange directory: remove this pipeline's deployment packages (the
 # reports are kept) and pipeline directories older than EXCHANGE_RETENTION_DAYS. Runs as the
 # cluster user, which owns the large files. The packages are only removed once the
