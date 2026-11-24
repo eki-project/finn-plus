@@ -15,7 +15,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.model_selection import train_test_split
 from sklearn.utils import Tags
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
-from typing import Any, Self
+from typing import Any
 
 from finn.qor.models.sklearn_extras import RANDOM_STATE, signed_expm1, signed_log1p
 
@@ -138,7 +138,7 @@ class TabTransformerRegressor(BaseEstimator, RegressorMixin):
         return y
 
     # -- sklearn API -----------------------------------------------------------------------
-    def fit(self, X: Any, y: Any) -> Self:  # noqa: N803
+    def fit(self, X: Any, y: Any) -> "TabTransformerRegressor":  # noqa: N803
         """Fit the model on ``X``/``y`` (see the class docstring)."""
         self.check_runtime()
         from finn.qor.models import _torch_impl

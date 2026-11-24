@@ -22,7 +22,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.utils import Tags
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 from types import ModuleType
-from typing import Any, Self
+from typing import Any
 
 from finn.qor.models.sklearn_extras import RANDOM_STATE
 
@@ -219,7 +219,7 @@ class SymbolicRegressor(BaseEstimator, RegressorMixin):
         return fn
 
     # -- sklearn API -----------------------------------------------------------------------
-    def fit(self, X: Any, y: Any) -> Self:  # noqa: N803
+    def fit(self, X: Any, y: Any) -> "SymbolicRegressor":  # noqa: N803
         """Fit the model on ``X``/``y`` (see the class docstring)."""
         if not pysr_available():
             raise ImportError("SymbolicRegressor.fit requires pysr (and Julia)")

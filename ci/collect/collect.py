@@ -74,7 +74,7 @@ def retry(fn: Callable[[], Any], description: str, attempts: int = 4, base_delay
 def open_json_report(run_id: int, report_name: str, is_followup: bool = False) -> dict | None:
     """Open JSON report from build or measurement artifacts."""
     for kind in ("build", "measurement"):
-        path = artifact_reports_dir(kind, id, is_followup) / report_name
+        path = artifact_reports_dir(kind, run_id, is_followup) / report_name
         if path.is_file():
             with open(path, "r") as f:
                 return json.load(f)

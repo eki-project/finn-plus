@@ -65,7 +65,6 @@ from typing import TYPE_CHECKING, Any, cast
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.analysis.fpgadataflow.empirical_qor_estimation import (
-    NODE_FEATURES_REPORT,
     QoRModelSet,
     empirical_power_estimation,
     empirical_res_estimation,
@@ -88,6 +87,7 @@ from finn.builder.build_dataflow_config import (
 )
 from finn.builder.passes import step_passes_frontend
 from finn.core.onnx_exec import execute_onnx
+from finn.qor.model_set import NODE_FEATURES_REPORT
 from finn.transformation.fpgadataflow.absorb_into_requant import AbsorbElementwiseOpsIntoRequant
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.transformation.fpgadataflow.assign_ddr_weight_offsets import AssignMemoryOffset

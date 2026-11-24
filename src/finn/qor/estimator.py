@@ -18,7 +18,7 @@ import pickle
 import sklearn
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from joblib import Parallel, delayed
 from pathlib import Path
 from sklearn.base import BaseEstimator, clone
@@ -374,7 +374,9 @@ class QoREstimator:
             "regressor_params": _jsonable(regressor.get_params()),
             "n_samples": len(df),
             "target_signal": target_signal(df[self.target].values),
-            "fitted_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "fitted_at": datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            ),  # timezone.utc: the QoR CI venv is Python 3.10
             "sklearn_version": sklearn.__version__,
             "database_commits": sorted(df["commit"].dropna().unique().tolist())
             if "commit" in df.columns

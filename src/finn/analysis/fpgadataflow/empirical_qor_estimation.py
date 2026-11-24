@@ -13,18 +13,16 @@ the database side (:mod:`finn.qor.features`) for derived values.
 
 import logging
 import numpy as np
-import os
 import pandas as pd
 from collections.abc import Callable
 from onnx import NodeProto
-from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import Any
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.qor.database import POWER_TARGET_COL
-from finn.qor.estimator import MODEL_DIR_ENV_VAR, QoREstimator, resource_target
+from finn.qor.estimator import resource_target
 from finn.qor.features import (
     CLOCK_PERIOD_COL,
     DEFAULT_CLOCK_PERIOD_NS,
@@ -33,6 +31,7 @@ from finn.qor.features import (
     datatype_features,
     spec_for_op_type,
 )
+from finn.qor.model_set import QoRModelSet
 from finn.util.basic import getHWCustomOp
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
@@ -306,57 +305,6 @@ def _eltwise_features(
         "params.mem_mode": inst.get_nodeattr("mem_mode"),
         "params.ram_style": inst.get_nodeattr("ram_style"),
     }
-
-
-class QoRModelSet:
-    """All fitted QoR estimators found in a model directory, addressable by node op_type."""
-
-    def __init__(self, estimators: list[QoREstimator] | None = None, model_dir: str = "") -> None:
-        """Index the given estimators by operator name and target column."""
-        self.model_dir = model_dir
-        self._by_operator: dict[str, dict[str, QoREstimator]] = {}
-        for est in estimators or []:
-            self._by_operator.setdefault(est.operator, {})[est.target] = est
-
-    @classmethod
-    def load(cls, model_dir: str) -> "QoRModelSet":
-        """Load every model with a JSON sidecar in ``model_dir`` (models whose runtime
-        dependencies are missing are skipped with a warning)."""
-        estimators = []
-        for op, target in QoREstimator.available_models(model_dir):
-            try:
-                estimators.append(QoREstimator.load(model_dir, op, target))
-            except Exception as e:  # one broken model must not disable all  # noqa: PERF203
-                logger.warning("Skipping QoR model %s/%s: %s", op, target, e)
-        logger.info("Loaded %d QoR models from %s", len(estimators), model_dir)
-        return cls(estimators, model_dir)
-
-    @classmethod
-    def load_from_env(cls) -> "QoRModelSet | None":
-        """Load models from ``$FINN_QOR_MODEL_DIR``; None if unset, missing or empty."""
-        model_dir = os.environ.get(MODEL_DIR_ENV_VAR)
-        if not model_dir:
-            return None
-        if not Path(model_dir).is_dir():
-            logger.warning("%s=%s is not a directory", MODEL_DIR_ENV_VAR, model_dir)
-            return None
-        models = cls.load(model_dir)
-        return models if len(models) > 0 else None
-
-    def __len__(self) -> int:
-        """Return the number of loaded estimators (over all operators and targets)."""
-        return sum(len(targets) for targets in self._by_operator.values())
-
-    def get(self, op_type: str, target: str) -> QoREstimator | None:
-        """Estimator for a node op_type and target column, or None if not available."""
-        spec = spec_for_op_type(op_type)
-        if spec is None:
-            return None
-        return self._by_operator.get(spec.name, {}).get(target)
-
-
-#: Basename of the per-node feature report a build writes next to its estimate reports
-NODE_FEATURES_REPORT = "qor_node_features"
 
 
 def _json_value(value: object) -> object:

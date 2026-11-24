@@ -44,7 +44,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from end2end_report import model_name, read_json, run_ids
 
-from finn.analysis.fpgadataflow.empirical_qor_estimation import NODE_FEATURES_REPORT, QoRModelSet
 from finn.benchmarking import exchange  # noqa: E402
 from finn.qor.database import POWER_TARGET_COL  # noqa: E402
 from finn.qor.estimator import QoREstimator, model_basename, resource_target
@@ -59,6 +58,7 @@ from finn.qor.evaluation import (
     plot_estimates_vs_measured,
     plot_mean_relative_error,
 )
+from finn.qor.model_set import NODE_FEATURES_REPORT, QoRModelSet
 
 logger = logging.getLogger("end2end_models")
 
