@@ -1115,7 +1115,8 @@ class RunLayerParallelSimulation(Transformation):
         access/minimize `fifo_depths` for that order. For example, NODE_ORDER would return
         [0,1,2,...] and NODE_ORDER_REVERSED [N, N-1, N-2, ..., 0].
         """
-        assert len(model.graph.node) == len(bitwidths)
+        if len(model.graph.node) != len(bitwidths):
+            raise FINNInternalError("Number of nodes does not match number of bitwidth entries")
         match min_order:
             case MinimizationOrder.NODE_ORDER:
                 return list(range(len(model.graph.node)))
@@ -1211,8 +1212,17 @@ class RunLayerParallelSimulation(Transformation):
         # List of list of fifo depths
         fifo_depths, fifo_first_valid_cycles = self.create_starting_fifo_depths(initial_fifo_depths)
 
-        # Max cycles for any simulation
-        sim_cycles: int = cast("int", max([val["cycles"] for val in initial_fifo_depths]))
+        # Length of the simulation. Only the output nodes end the run by themselves, all other
+        # nodes run until the controller stops them, so their cycle counts depend on when the
+        # stop reached them and are not reproducible. The cycle limit is enforced by the output
+        # nodes only, so it is derived from them as well.
+        output_nodes = {
+            node.name for node in model.graph.node if model.find_direct_successors(node) is None
+        }
+        sim_cycles: int = cast(
+            "int",
+            max([val["cycles"] for val in initial_fifo_depths if val["name"] in output_nodes]),
+        )
 
         # Extract bitwidths from outstream widths of hw nodes
         bit_widths = []
@@ -1381,7 +1391,10 @@ class RunLayerParallelSimulation(Transformation):
 
         # Set the result fifo depths
         fifo_depths = self.final_depths[smallest_order]
-        assert fifo_depths is not None
+        if fifo_depths is None:
+            raise FINNInternalError(
+                f"Expected FIFO sizes for minimization order {smallest_order.name}, but found None."
+            )
 
         # Make sure that all FIFOs with depth > 256 use a full BRAM block,
         # since partial blocks are not supported by Vivado HLS

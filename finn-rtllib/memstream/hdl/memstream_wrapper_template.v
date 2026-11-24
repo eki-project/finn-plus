@@ -36,6 +36,7 @@ module $MODULE_NAME$_memstream_wrapper #(
 
 	parameter  INIT_FILE = "$INIT_FILE$",
 	parameter  RAM_STYLE = "$RAM_STYLE$",
+	parameter  CASCADE_HEIGHT = $CASCADE_HEIGHT$,
 	parameter  PUMPED_MEMORY = $PUMPED_MEMORY$,
 
 	parameter  AXILITE_ADDR_WIDTH = $clog2(SETS * DEPTH * (2**$clog2((WIDTH+31)/32))) + 2,
@@ -92,6 +93,7 @@ module $MODULE_NAME$_memstream_wrapper #(
 		.DEPTH(DEPTH), .WIDTH(WIDTH),
 		.INIT_FILE(INIT_FILE),
 		.RAM_STYLE(RAM_STYLE),
+		.CASCADE_HEIGHT(CASCADE_HEIGHT),
 		.PUMPED_MEMORY(PUMPED_MEMORY)
 	) core (
 		.clk(ap_clk), .clk2x(ap_clk2x), .rst(!ap_rst_n),

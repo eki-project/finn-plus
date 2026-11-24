@@ -20,17 +20,23 @@ from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueParameterTensors, SortGraph
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.remove import RemoveIdentityOps
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
 
 
 class ExtractMultiThresholdScaleBias(Transformation):
-    """Extract MultiThreshold out_scale and out_bias into separate nodes
-    and reset attributes to 1.0 and 0.0 respectively."""
+    """Extract MultiThreshold out_scale and out_bias into separate nodes.
 
-    def __init__(self):
+    The attributes are reset to 1.0 and 0.0 respectively.
+    """
+
+    def __init__(self) -> None:
         """Initialize instance."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: "ModelWrapper") -> tuple["ModelWrapper", bool]:
         """Move non-trivial out_scale/out_bias of MultiThreshold nodes into Mul/Add nodes."""
         graph = model.graph
         graph_modified = False

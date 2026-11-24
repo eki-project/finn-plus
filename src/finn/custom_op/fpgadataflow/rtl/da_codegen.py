@@ -59,7 +59,8 @@ import re
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from finn.util.exception import FINNUserError
 
@@ -141,7 +142,7 @@ def _require(cond: bool, msg: str) -> None:
         raise FINNUserError(msg)
 
 
-def _import_alkaid():
+def _import_alkaid() -> dict[str, Any]:
     """Import the alkaid package lazily so that FINN itself does not depend on it
     at import time and a missing wheel yields an actionable error."""
     try:
@@ -171,9 +172,8 @@ def _import_alkaid():
 
 def _primitive_source_dir() -> str:
     import alkaid.codegen.rtl.verilog as vpkg
-    import os
 
-    return os.path.join(os.path.dirname(vpkg.__file__), "source")
+    return str(Path(vpkg.__file__).parent / "source")
 
 
 def latency_cutoff_from_clk(clk_ns: float) -> float:
@@ -226,24 +226,24 @@ def clear_da_solution_cache() -> None:
 
 
 def _solve_adder_graph(
-    W: np.ndarray,
+    weights: np.ndarray,
     idt: "BaseDataType",
     hard_dc: int,
     ternary_fuse: bool,
     search_all_decompose_dc: bool,
-):
-    """Run the alkaid solver on ``y = x @ W`` for FINN-encoded inputs of type
+) -> Any:
+    """Run the alkaid solver on ``y = x @ weights`` for FINN-encoded inputs of type
     ``idt`` and return the combinational adder graph (alkaid ``CombLogic``)."""
     ak = _import_alkaid()
-    mw = W.shape[0]
+    mw = weights.shape[0]
     # FINN encodes BIPOLAR activations as a single bit b (0 -> -1, 1 -> +1).
-    # Substitute x = 2b - 1: y = x @ W = b @ (2W) - sum(W, axis=0).
+    # Substitute x = 2b - 1: y = x @ weights = b @ (2W) - sum(weights, axis=0).
     k, i, f = _input_kif(idt, mw)
     if idt.get_canonical_name() == "BIPOLAR":
-        matrix = 2.0 * W.astype(np.float64)
-        bias = -W.astype(np.float64).sum(axis=0)
+        matrix = 2.0 * weights.astype(np.float64)
+        bias = -weights.astype(np.float64).sum(axis=0)
     else:
-        matrix = W.astype(np.float64)
+        matrix = weights.astype(np.float64)
         bias = None
 
     digest = hashlib.sha256()
@@ -280,7 +280,7 @@ def _solve_adder_graph(
     return comb
 
 
-def _padded_precision(precisions) -> tuple[bool, int, int]:
+def _padded_precision(precisions: Iterable[tuple[bool, int, int]]) -> tuple[bool, int, int]:
     """Element-wise maximum of (signed, integer bits, fractional bits), mirroring
     alkaid's io wrapper slot layout."""
     arr = np.array([(int(p[0]), int(p[1]), int(p[2])) for p in precisions], dtype=int)
@@ -314,7 +314,7 @@ def unpack_output_beat(
 
 
 def build_da_core(
-    W: np.ndarray,
+    weights: np.ndarray,
     idt: "BaseDataType",
     wdt: "BaseDataType",
     odt: "BaseDataType",
@@ -325,11 +325,11 @@ def build_da_core(
     ternary_fuse: bool = True,
     search_all_decompose_dc: bool = True,
 ) -> DACore:
-    """Compile the constant matrix ``W`` (shape ``(MW, MH)``, FINN initializer
-    layout, ``y = x @ W``) into a pipelined adder graph.
+    """Compile the constant matrix ``weights`` (shape ``(MW, MH)``, FINN initializer
+    layout, ``y = x @ weights``) into a pipelined adder graph.
 
     Args:
-        W: weight matrix as stored in the ONNX initializer (BIPOLAR weights as +-1).
+        weights: weight matrix as stored in the ONNX initializer (BIPOLAR weights as +-1).
         idt: FINN datatype of the activations (integer types incl. BIPOLAR/BINARY).
         wdt: FINN datatype of the weights (integer types, at most 24 bits).
         odt: FINN datatype of the accumulator/output stream (``ACCU_WIDTH``).
@@ -342,10 +342,13 @@ def build_da_core(
     """
     ak = _import_alkaid()
 
-    W = np.asarray(W)
-    _require(W.ndim == 2, f"{top_name}: weight matrix must be 2-dimensional, got shape {W.shape}.")
-    mw, mh = W.shape
-    _require(mw > 0 and mh > 0, f"{top_name}: empty weight matrix {W.shape}.")
+    weights = np.asarray(weights)
+    _require(
+        weights.ndim == 2,
+        f"{top_name}: weight matrix must be 2-dimensional, got shape {weights.shape}.",
+    )
+    mw, mh = weights.shape
+    _require(mw > 0 and mh > 0, f"{top_name}: empty weight matrix {weights.shape}.")
     _require(
         idt.is_integer() and wdt.is_integer() and odt.is_integer(),
         f"{top_name}: the distributed-arithmetic MVAU supports integer datatypes only "
@@ -357,20 +360,20 @@ def build_da_core(
         f"(got {wdt.name}).",
     )
     _require(
-        np.all(np.isfinite(W)) and np.array_equal(W, np.round(W)),
+        np.all(np.isfinite(weights)) and np.array_equal(weights, np.round(weights)),
         f"{top_name}: weight matrix contains non-integer values.",
     )
     _require(
-        bool(np.vectorize(wdt.allowed)(W).all()),
+        bool(np.vectorize(wdt.allowed)(weights).all()),
         f"{top_name}: weight matrix contains values outside of {wdt.name}.",
     )
     _require(
-        bool(np.any(W != 0)),
+        bool(np.any(weights != 0)),
         f"{top_name}: the weight matrix is all-zero; a constant-weight compute core "
         "for it would have no inputs and no outputs. Remove the layer instead.",
     )
     _require(
-        not (hard_dc == 0),
+        hard_dc != 0,
         f"{top_name}: da_hard_dc must be -1 (unconstrained) or a positive depth.",
     )
 
@@ -381,7 +384,7 @@ def build_da_core(
         )
         latency_cutoff = latency_cutoff_from_clk(clk_ns)
 
-    comb = _solve_adder_graph(W, idt, hard_dc, ternary_fuse, search_all_decompose_dc)
+    comb = _solve_adder_graph(weights, idt, hard_dc, ternary_fuse, search_all_decompose_dc)
 
     opcodes = {op.opcode for op in comb.ops}
     _require(
@@ -446,8 +449,7 @@ def build_da_core(
     ]
     src_dir = _primitive_source_dir()
     for p in used_primitives:
-        with open(f"{src_dir}/{p}.v") as fh:
-            codes[p] = fh.read()
+        codes[p] = (Path(src_dir) / f"{p}.v").read_text()
     prefix = f"{top_name}_"
     to_rename = [
         n for text in codes.values() for n in module_names_in(text) if not n.startswith(top_name)
@@ -491,14 +493,14 @@ def build_da_core(
 
 
 def da_cost_estimate(
-    W: np.ndarray, idt: "BaseDataType", hard_dc: int = 2, ternary_fuse: bool = True
+    weights: np.ndarray, idt: "BaseDataType", hard_dc: int = 2, ternary_fuse: bool = True
 ) -> dict:
     """Run only the alkaid solver (no Verilog) and return the cost figures.
     Used by the microbenchmark DUT to log the DA numbers next to HLS builds."""
-    comb = _solve_adder_graph(np.asarray(W), idt, hard_dc, ternary_fuse, True)
+    comb = _solve_adder_graph(np.asarray(weights), idt, hard_dc, ternary_fuse, True)
     return {
         "da_cost": float(comb.cost),
         "da_adders": int(sum(op.opcode in (0, 1, 4, 11) for op in comb.ops)),
         "da_depth": float(comb.latency[1]),
-        "da_ops": int(len(comb.ops)),
+        "da_ops": len(comb.ops),
     }

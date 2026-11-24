@@ -1,3 +1,5 @@
+"""General-purpose custom build steps usable across different model families."""
+
 import numpy as np
 import qonnx.core.data_layout as dl
 from onnx import helper as oh
@@ -11,10 +13,13 @@ from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.util.logging import log
 
 
-# Insert Div node to divide input by 255
-# This is used when raw uint8 pixel data is divided by 255 prior to training (e.g., GTSRB example).
-# We want to reflect this in the model, so inference can be performed directly on raw uint8 data.
-def add_preproc_divide_by_255(model: ModelWrapper, cfg: DataflowBuildConfig):
+def add_preproc_divide_by_255(model: ModelWrapper, _cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Insert a Div node to divide the raw uint8 input by 255.
+
+    This is used when raw uint8 pixel data is divided by 255 prior to training (e.g., GTSRB
+    example). We want to reflect this in the model, so inference can be performed directly on
+    raw uint8 data.
+    """
     in_name = model.graph.input[0].name
     new_in_name = model.make_new_valueinfo_name()
     new_param_name = model.make_new_valueinfo_name()
@@ -34,20 +39,22 @@ def add_preproc_divide_by_255(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
-# Insert TopK node to get predicted Top-1 class
-def add_postproc_top1(model: ModelWrapper, cfg: DataflowBuildConfig):
-    model = model.transform(InsertTopK(k=1))
-    return model
+def add_postproc_top1(model: ModelWrapper, _cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Insert a TopK node to get the predicted Top-1 class."""
+    return model.transform(InsertTopK(k=1))
 
 
-# Remove a Reshape or Flatten that directly consumes the graph input and give the graph the
-# flattened [N, C] input instead.
-# Reshaping the input is free in software (the driver reshapes its input to the accelerator's
-# input shape anyway), while the hardware Reshape folds along the last axis of its input and
-# so limits a [N, 1, H, W] image to W elements per cycle. Without it the first layer sees all
-# H*W elements as channels and can be parallelized up to one frame per cycle (e.g. the MLPs of
-# the BNN-PYNQ examples). To be run after streamlining and before the conversion to HW layers.
-def flatten_global_input(model: ModelWrapper, cfg: DataflowBuildConfig):
+def flatten_global_input(model: ModelWrapper, _cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Remove a Reshape or Flatten that directly consumes the graph input and give the graph
+    the flattened [N, C] input instead.
+
+    Reshaping the input is free in software (the driver reshapes its input to the
+    accelerator's input shape anyway), while the hardware Reshape folds along the last axis
+    of its input and so limits a [N, 1, H, W] image to W elements per cycle. Without it the
+    first layer sees all H*W elements as channels and can be parallelized up to one frame
+    per cycle (e.g. the MLPs of the BNN-PYNQ examples). To be run after streamlining and
+    before the conversion to HW layers.
+    """
     in_name = model.graph.input[0].name
     consumers = model.find_consumers(in_name)
     if len(consumers) != 1 or consumers[0].op_type not in ["Reshape", "Flatten"]:
@@ -75,5 +82,4 @@ def flatten_global_input(model: ModelWrapper, cfg: DataflowBuildConfig):
     model.set_tensor_datatype(in_name, idt)
     model.set_tensor_layout(in_name, dl.NC)
     model = model.transform(RemoveUnusedTensors())
-    model = model.transform(InferShapes())
-    return model
+    return model.transform(InferShapes())

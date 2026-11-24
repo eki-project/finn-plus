@@ -27,16 +27,20 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import contextlib
 from onnx import NodeProto
 from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp, is_custom_op
 from qonnx.util.basic import get_by_name
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 def is_mlo(model: ModelWrapper) -> bool:
@@ -93,12 +97,12 @@ def get_submodel(node: NodeProto) -> tuple[ModelWrapper, Path]:
     p = getCustomOp(node).get_nodeattr("model")
     if p is None:
         raise FINNInternalError(
-            f"SDP node {node.name} has no 'model' metadata prop. " f"Cannot get model."
+            f"SDP node {node.name} has no 'model' metadata prop. Cannot get model."
         )
     p = Path(str(p))
     if not p.exists():
         raise FINNInternalError(
-            f"Cannot open model of SDP node {node.name}: " f"No file found at path: {p}"
+            f"Cannot open model of SDP node {node.name}: No file found at path: {p}"
         )
     return ModelWrapper(str(p)), p
 
@@ -196,7 +200,7 @@ def detect_hls_rtl_dsp_conflict(
     hls_fp_ops: list[str] = []
     rtl_dsp_ops: list[str] = []
 
-    def check_nodes(nodes: list[NodeProto], prefix: str = "") -> None:
+    def check_nodes(nodes: "Iterable[NodeProto]", prefix: str = "") -> None:
         """Classify nodes into HLS floating-point and RTL DSPFP32
         users, recursing into loop bodies.
         """
@@ -211,7 +215,7 @@ def detect_hls_rtl_dsp_conflict(
                 try:
                     node_inst = getCustomOp(node)
                     dtypes = [
-                        DataType[node_inst.get_nodeattr(attr)]
+                        DataType[cast("str", node_inst.get_nodeattr(attr))]
                         for attr in ("lhs_dtype", "rhs_dtype", "out_dtype")
                     ]
                     if any(dt.get_canonical_name().startswith("FLOAT") for dt in dtypes):
@@ -225,7 +229,7 @@ def detect_hls_rtl_dsp_conflict(
             # Check inside FINNLoop bodies
             if check_subgraphs and node.op_type == "FINNLoop":
                 try:
-                    loop_body = getCustomOp(node).get_nodeattr("body")
+                    loop_body = cast("ModelWrapper", getCustomOp(node).get_nodeattr("body"))
                     check_nodes(loop_body.graph.node, prefix=f"{full_name}/")
                 except (KeyError, AttributeError):
                     pass
@@ -260,8 +264,7 @@ def warn_hls_rtl_dsp_conflict(
     # Also save warning to file in output directory
     if output_dir is not None:
         log_file = Path(output_dir) / f"{verification_type}_SKIPPED_DSP_CONFLICT.txt"
-        try:
+        # Don't fail if we can't write the log file
+        with contextlib.suppress(OSError):
             log_file.write_text(warning_msg + "\n")
-        except OSError:
-            pass  # Don't fail if we can't write the log file
     return True

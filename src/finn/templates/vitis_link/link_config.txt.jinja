@@ -20,3 +20,8 @@ connect={{ a }}:{{ b }}
 
 [vivado]
 {{ vivado_extras }}
+{%- if advanced_extras %}
+
+[advanced]
+{{ advanced_extras }}
+{%- endif %}

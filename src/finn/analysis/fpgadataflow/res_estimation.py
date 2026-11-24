@@ -28,12 +28,17 @@
 
 """Analysis passes for estimating FPGA resource usage of dataflow models."""
 from itertools import product
-from qonnx.core.modelwrapper import ModelWrapper
+from typing import TYPE_CHECKING
 
 from finn.util.basic import getHWCustomOp
 from finn.util.exception import FINNUserError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
+
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 RESOURCE_ATTR_VALUES = {
     "resType": ["dsp", "lut"],
@@ -41,7 +46,7 @@ RESOURCE_ATTR_VALUES = {
 }
 
 
-def res_estimation(model: ModelWrapper, fpgapart: str) -> dict[str, dict[str, int | float]]:
+def res_estimation(model: "ModelWrapper", fpgapart: str) -> dict[str, dict[str, int | float]]:
     """Estimates the resources needed for the given model.
     Ensure that all nodes have unique names (by calling the GiveUniqueNodeNames
     transformation) prior to calling this analysis pass to ensure all nodes are
@@ -52,7 +57,6 @@ def res_estimation(model: ModelWrapper, fpgapart: str) -> dict[str, dict[str, in
         `dict[str, dict[str, int | float]]`: Maps node names to resource dicts.
             Result example: `res_estimation(...)["MVAU_hls_0"]["LUT"]`
     """
-
     res_dict = {}
     for node in model.graph.node:
         if is_hls_node(node) or is_rtl_node(node):
@@ -63,10 +67,10 @@ def res_estimation(model: ModelWrapper, fpgapart: str) -> dict[str, dict[str, in
     return res_dict
 
 
-def _prepare_da_solution(inst, model):
-    """The LUT estimate of the distributed-arithmetic MVAU (MVAU_rtl with embedded
-    weights) is derived from the adder graph of its weights, which only the model
-    holds: run the solver here if it has not run yet for this node."""
+def _prepare_da_solution(inst: "HWCustomOp", model: "ModelWrapper") -> None:
+    """Run the solver of a distributed-arithmetic MVAU (MVAU_rtl with embedded weights)
+    if it has not run yet for this node: its LUT estimate is derived from the adder
+    graph of its weights, which only the model holds."""
     is_da = getattr(inst, "_is_da_mode", None)
     if is_da is None or not is_da() or inst.get_nodeattr("da_cost") > 0:
         return
@@ -78,7 +82,7 @@ def _prepare_da_solution(inst, model):
         log.warning(f"{inst.onnx_node.name}: DA solver skipped for the estimate: {e}")
 
 
-def _resource_attr_variants(inst):
+def _resource_attr_variants(inst: "HWCustomOp") -> list[tuple[str, list[str]]]:
     """Return resource-related node attribute variants supported by inst."""
     attr_types = inst.get_nodeattr_types()
     variants = []
@@ -101,7 +105,9 @@ def _resource_attr_variants(inst):
     return variants
 
 
-def _estimate_all_resource_variants(inst, fpgapart):
+def _estimate_all_resource_variants(
+    inst: "HWCustomOp", fpgapart: str
+) -> list[dict[str, int | float]]:
     """Return the resource estimates of inst for every supported resource attribute variant."""
     variants = _resource_attr_variants(inst)
     if not variants:
@@ -113,7 +119,7 @@ def _estimate_all_resource_variants(inst, fpgapart):
         attr_names = [attr_name for attr_name, _ in variants]
         variant_values = [values for _, values in variants]
         for values in product(*variant_values):
-            for attr_name, value in zip(attr_names, values):
+            for attr_name, value in zip(attr_names, values, strict=True):
                 inst.set_nodeattr(attr_name, value)
             ret.append(inst.node_res_estimation(fpgapart))
     finally:
@@ -122,7 +128,9 @@ def _estimate_all_resource_variants(inst, fpgapart):
     return ret
 
 
-def res_estimation_complete(model, fpgapart):
+def res_estimation_complete(
+    model: "ModelWrapper", fpgapart: str
+) -> dict[str, list[dict[str, int | float]]]:
     """Estimates the resources needed for the given model and all values for
     resource-related switches.
     Ensure that all nodes have unique names (by calling the GiveUniqueNodeNames
@@ -130,7 +138,6 @@ def res_estimation_complete(model, fpgapart):
     visible in the results.
 
     Returns {node name : [resource estimation(s)]}."""
-
     res_dict = {}
     for node in model.graph.node:
         if is_hls_node(node) or is_rtl_node(node):

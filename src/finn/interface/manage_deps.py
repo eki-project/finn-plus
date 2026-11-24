@@ -30,6 +30,7 @@ from finn.interface.interface_utils import debug, error
 from finn.util.exception import (
     FINNConfigurationError,
     FINNDependencyInstallationError,
+    FINNInternalError,
     FINNUserError,
 )
 
@@ -132,7 +133,10 @@ class DependencyData(BaseModel):
         """Assert that all dependencies across categories have unique names.
         Raise AssertionError otherwise.
         """
-        assert self.get_dependency_count() == len(set(self.get_all_dependencies()))
+        if not (self.get_dependency_count() == len(set(self.get_all_dependencies()))):
+            raise FINNInternalError(
+                "Dependency count does not match the number of distinct dependencies"
+            )
 
     def dependency_type_str(self, package_name: str) -> str:
         """Return a string to tell which type this dependency is."""
@@ -209,7 +213,7 @@ class _StatusTracker:
             if name in self.data:
                 self.data[name] = (self.data[name][0], status, color)
 
-    def _generate_renderable(self) -> Table:
+    def _generate_renderable(self) -> Table | None:
         """Generate a renderable for rich to display in a live context."""
         if self.non_interactive:
             return None
@@ -234,7 +238,9 @@ class _StatusTracker:
         if self.non_interactive:
             return
         with self.datalock:
-            self.live.update(self._generate_renderable(), refresh=True)
+            # self.non_interactive already confirms self.live is a real Live instance
+            # here, and _generate_renderable() only returns None in the non-interactive case
+            cast("Live", self.live).update(cast("Table", self._generate_renderable()), refresh=True)
 
     def set_updating(self, name: str) -> None:
         """Set the package to updating and update the live display.
@@ -548,7 +554,7 @@ class DependencyUpdater:
             shutil.rmtree(unzipped)
 
         # Unpack
-        if do_unzip:  # noqa
+        if do_unzip:
             debug(f"[{package_name}] Unpacking..", False)
             if not self._unpack(target / Path(url).name):
                 return False

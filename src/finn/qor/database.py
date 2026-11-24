@@ -16,7 +16,8 @@ import numpy as np
 import os
 import pandas as pd
 from dataclasses import dataclass
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, cast
 
 from finn.qor.features import SPECS, OperatorFeatureSpec
 
@@ -71,12 +72,12 @@ class LoadStats:
         )
 
 
-def resolve_database_path(database_path: Optional[str] = None) -> str:
+def resolve_database_path(database_path: str | None = None) -> str:
     """Return the given path or fall back to ``$FINN_MICROBENCHMARK_DATABASE``."""
     path = database_path or os.environ.get(DATABASE_ENV_VAR)
     if not path:
         raise ValueError(f"Database path not given and {DATABASE_ENV_VAR} is not set")
-    if not os.path.isdir(path):
+    if not Path(path).is_dir():
         raise FileNotFoundError(f"Database path does not exist: {path}")
     return path
 
@@ -96,13 +97,13 @@ def read_operator_runs(database_path: str, operator: str) -> tuple[pd.DataFrame,
     Returns the DataFrame and the number of files read. File-level metadata (date, commit,
     pipeline_id, ...) is repeated on every run row.
     """
-    operator_dir = os.path.join(database_path, operator)
-    if not os.path.isdir(operator_dir):
+    operator_dir = Path(database_path) / operator
+    if not operator_dir.is_dir():
         raise FileNotFoundError(f"No database folder for operator '{operator}' in {database_path}")
-    files = sorted(f for f in os.listdir(operator_dir) if f.endswith(".json"))
+    files = sorted(f.name for f in operator_dir.iterdir() if f.name.endswith(".json"))
     rows = []
     for filename in files:
-        with open(os.path.join(operator_dir, filename), "r") as f:
+        with (operator_dir / filename).open() as f:
             entry = json.load(f)
         metadata = {k: v for k, v in entry.items() if k != "runs"}
         for run in entry.get("runs", []):
@@ -112,7 +113,7 @@ def read_operator_runs(database_path: str, operator: str) -> tuple[pd.DataFrame,
 
 def derive_power_target(
     df: pd.DataFrame,
-    power_cols: Optional[list[tuple[str, float]]] = None,
+    power_cols: list[tuple[str, float]] | None = None,
     out_col: str = POWER_TARGET_COL,
 ) -> pd.DataFrame:
     """Add a power target column in mW: measured power minus the (minimum observed) baseline.
@@ -150,13 +151,13 @@ def derive_power_target(
 
 def load_microbenchmark_database(
     operator: str,
-    database_path: Optional[str] = None,
-    include_commit: Optional[list[str]] = None,
-    exclude_commit: Optional[list[str]] = None,
-    include_pipeline_id: Optional[list[int]] = None,
-    exclude_pipeline_id: Optional[list[int]] = None,
+    database_path: str | None = None,
+    include_commit: list[str] | None = None,
+    exclude_commit: list[str] | None = None,
+    include_pipeline_id: list[int] | None = None,
+    exclude_pipeline_id: list[int] | None = None,
     derive_power: bool = True,
-    spec: Optional[OperatorFeatureSpec] = None,
+    spec: OperatorFeatureSpec | None = None,
     **column_filters: Any,
 ) -> tuple[pd.DataFrame, LoadStats]:
     """Load, filter and deduplicate the microbenchmark runs of one operator.
@@ -184,23 +185,23 @@ def load_microbenchmark_database(
     df = df.drop(columns=[c for c in _IRRELEVANT_PARAM_COLS if c in df.columns])
 
     if include_commit:
-        df = df[df["commit"].str.startswith(tuple(include_commit))]
+        df = cast("pd.DataFrame", df[df["commit"].str.startswith(tuple(include_commit))])
     if exclude_commit:
-        df = df[~df["commit"].str.startswith(tuple(exclude_commit))]
+        df = cast("pd.DataFrame", df[~df["commit"].str.startswith(tuple(exclude_commit))])
     if include_pipeline_id:
-        df = df[df["pipeline_id"].isin(include_pipeline_id)]
+        df = cast("pd.DataFrame", df[df["pipeline_id"].isin(include_pipeline_id)])
     if exclude_pipeline_id:
-        df = df[~df["pipeline_id"].isin(exclude_pipeline_id)]
+        df = cast("pd.DataFrame", df[~df["pipeline_id"].isin(exclude_pipeline_id)])
     for key, value in column_filters.items():
         if key not in df.columns:
             raise KeyError(f"Filter column '{key}' not found in database")
-        df = df[df[key] == value]
+        df = cast("pd.DataFrame", df[df[key] == value])
     stats.after_filters = len(df)
 
     status = df["metrics.status"]
     stats.skipped = int((status == "skipped").sum())
     stats.failed = int((status == "failed").sum())
-    df = df[(status != "skipped") & (status != "failed")]
+    df = cast("pd.DataFrame", df[(status != "skipped") & (status != "failed")])
     n_before = len(df)
     df = spec.drop_broken_runs(df)
     stats.broken = n_before - len(df)

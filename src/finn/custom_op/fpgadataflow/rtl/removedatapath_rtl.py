@@ -14,12 +14,14 @@ from pathlib import Path
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import Any, cast
 
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
 
+@register_custom_op
 class RemoveDataPath_rtl(RTLBackend):
     """RTL implementation for RemoveDataPath custom op."""
 
@@ -159,8 +161,10 @@ class RemoveDataPath_rtl(RTLBackend):
         for f in sourcefiles:
             cmd += [f"add_files -norecurse {f}"]
         cmd += [
-            "create_bd_cell -type module -reference "
-            f"{self.get_nodeattr('gen_top_module')} {self.onnx_node.name}"
+            (
+                "create_bd_cell -type module -reference "
+                f"{self.get_nodeattr('gen_top_module')} {self.onnx_node.name}"
+            )
         ]
         return cmd
 

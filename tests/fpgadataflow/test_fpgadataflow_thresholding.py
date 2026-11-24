@@ -28,6 +28,8 @@
 
 import pytest
 
+import itertools
+
 import numpy as np
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
@@ -211,33 +213,101 @@ def make_single_multithresholding_modelwrapper(
     return model
 
 
-@pytest.mark.parametrize("num_input_channels", [6, 16])
-@pytest.mark.parametrize(
-    "num_input_vecs",
-    [
-        [1],
-        [1, 2, 2],
-    ],
-)
-@pytest.mark.parametrize("activation", [DataType["UINT4"], DataType["INT4"], DataType["BIPOLAR"]])
-@pytest.mark.parametrize(
-    "idt_tdt_cfg",
-    [
+# The full grid of test_fpgadataflow_thresholding has 13824 combinations (7200 after the skips
+# inside the test). The HLS variant in rtlsim synthesizes the operator for every case and takes
+# one to three minutes each, which made this the most expensive test of the CI suite (about
+# 80 worker-hours). By default, the HLS rtlsim cases therefore sweep only the data types, the
+# activation and the memory mode in full, while the secondary axes (folding, narrow range,
+# per-tensor thresholds, threshold rounding, channel count and input shape) are varied one at a
+# time from _THRESHOLDING_BASE. cppsim and the RTL variant are cheap and keep the full grid. The
+# deselected combinations are marked xslow, which the CI test variants deselect
+# (finn test ... --variant full_ci), and can be run explicitly with ``pytest -m xslow``.
+_THRESHOLDING_BASE = {
+    "fold": 2,
+    "narrow": False,
+    "per_tensor": False,
+    "round_thresh": False,
+    "num_input_channels": 6,
+    "num_input_vecs": [1, 2, 2],
+}
+
+
+def _thresholding_cases():
+    """The full grid of test_fpgadataflow_thresholding; HLS rtlsim cases that differ from
+    _THRESHOLDING_BASE in more than one secondary axis are marked xslow."""
+    idt_tdt_cfgs = [
         (DataType["INT8"], DataType["INT25"]),
         (DataType["UINT5"], DataType["UINT8"]),
         (DataType["INT8"], DataType["INT7"]),
         (DataType["FLOAT32"], DataType["FLOAT32"]),
         (DataType["FLOAT16"], DataType["FLOAT16"]),
         (DataType["FIXED<6,2>"], DataType["FIXED<8,4>"]),
-    ],
+    ]
+    activations = [DataType["UINT4"], DataType["INT4"], DataType["BIPOLAR"]]
+    cases = []
+    for (
+        num_input_channels,
+        (vecs_idx, num_input_vecs),
+        (act_idx, activation),
+        (cfg_idx, idt_tdt_cfg),
+        fold,
+        narrow,
+        per_tensor,
+        impl_style,
+        exec_mode,
+        mem_mode,
+        round_thresh,
+    ) in itertools.product(
+        [6, 16],
+        enumerate([[1], [1, 2, 2]]),
+        enumerate(activations),
+        enumerate(idt_tdt_cfgs),
+        [-1, 1, 2],
+        [True, False],
+        [True, False],
+        ["hls", "rtl"],
+        ["cppsim", "rtlsim"],
+        ["internal_embedded", "internal_decoupled"],
+        [True, False],
+    ):
+        secondary = {
+            "fold": fold,
+            "narrow": narrow,
+            "per_tensor": per_tensor,
+            "round_thresh": round_thresh,
+            "num_input_channels": num_input_channels,
+            "num_input_vecs": num_input_vecs,
+        }
+        deviations = sum(secondary[axis] != value for axis, value in _THRESHOLDING_BASE.items())
+        xslow = impl_style == "hls" and exec_mode == "rtlsim" and deviations > 1
+        cases.append(
+            pytest.param(
+                num_input_channels,
+                num_input_vecs,
+                activation,
+                idt_tdt_cfg,
+                fold,
+                narrow,
+                per_tensor,
+                impl_style,
+                exec_mode,
+                mem_mode,
+                round_thresh,
+                marks=[pytest.mark.xslow] if xslow else [],
+                # same ids as pytest generated for the stacked parametrize decorators before
+                id=f"{round_thresh}-{mem_mode}-{exec_mode}-{impl_style}-{per_tensor}-{narrow}-"
+                f"{fold}-idt_tdt_cfg{cfg_idx}-activation{act_idx}-num_input_vecs{vecs_idx}-"
+                f"{num_input_channels}",
+            )
+        )
+    return cases
+
+
+@pytest.mark.parametrize(
+    "num_input_channels, num_input_vecs, activation, idt_tdt_cfg, fold, narrow, per_tensor, "
+    "impl_style, exec_mode, mem_mode, round_thresh",
+    _thresholding_cases(),
 )
-@pytest.mark.parametrize("fold", [-1, 1, 2])
-@pytest.mark.parametrize("narrow", [True, False])
-@pytest.mark.parametrize("per_tensor", [True, False])
-@pytest.mark.parametrize("impl_style", ["hls", "rtl"])
-@pytest.mark.parametrize("exec_mode", ["cppsim", "rtlsim"])
-@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
-@pytest.mark.parametrize("round_thresh", [True, False])
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 @pytest.mark.slow

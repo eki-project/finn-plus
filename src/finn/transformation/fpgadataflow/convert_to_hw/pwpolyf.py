@@ -28,30 +28,39 @@
 
 """Convert activation functions (GELU, SiLU, Sigmoid, Tanh, Erf-GELU) into PWPolyF HW layers."""
 
-from onnx import helper
-from qonnx.core.datatype import DataType
+from onnx import AttributeProto, NodeProto, helper
+from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name
+from typing import TYPE_CHECKING, ClassVar, cast
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 class InferPWPolyFLayer(Transformation):
     """Convert activations to piecewise polynomial HW layers."""
 
-    _SINGLE_OP_MAP = {"Gelu": "gelu", "Tanh": "tanh"}
+    _SINGLE_OP_MAP: ClassVar[dict[str, str]] = {"Gelu": "gelu", "Tanh": "tanh"}
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize instance."""
         super().__init__()
 
     @staticmethod
-    def _is_const_scalar(model, tensor_name, value, tol=1e-3):
+    def _is_const_scalar(
+        model: ModelWrapper, tensor_name: str, value: float, tol: float = 1e-3
+    ) -> bool:
         """Check if *tensor_name* is a constant initializer equal to *value*."""
-        init = model.get_initializer(tensor_name)
+        init = cast("np.ndarray | None", model.get_initializer(tensor_name))
         if init is None:
             return False
         return init.size == 1 and abs(float(init.flat[0]) - value) < tol
 
-    def _match_erf_gelu(self, model, erf_node):
+    def _match_erf_gelu(
+        self, model: ModelWrapper, erf_node: NodeProto
+    ) -> tuple[str, str, list[NodeProto]] | None:
         """Match Erf-based GELU: Div(x,sqrt(2))→Erf→Add(_,1)→Mul(0.5,_)→Mul(x,_).
         Returns (pwp_input, pwp_output, nodes_to_remove) or None."""
         # backward: Erf input must come from Div(x, sqrt(2))
@@ -96,7 +105,16 @@ class InferPWPolyFLayer(Transformation):
         return (gelu_input, mul_x.output[0], nodes_to_remove)
 
     @staticmethod
-    def _make_pwpolyf_node(pwp_input, pwp_output, func, in_shape, idt, name, K=3, degree=2):
+    def _make_pwpolyf_node(
+        pwp_input: str,
+        pwp_output: str,
+        func: str,
+        in_shape: list[int],
+        idt: BaseDataType,
+        name: str,
+        k: int = 3,
+        degree: int = 2,
+    ) -> NodeProto:
         """Create a PWPolyF node with PE=1 for the given function, shape and datatype."""
         num_channels = in_shape[-1]
         return helper.make_node(
@@ -106,7 +124,7 @@ class InferPWPolyFLayer(Transformation):
             domain="finn.custom_op.fpgadataflow",
             backend="fpgadataflow",
             func=func,
-            K=K,
+            K=k,
             degree=degree,
             NumChannels=num_channels,
             PE=1,
@@ -116,7 +134,7 @@ class InferPWPolyFLayer(Transformation):
             name=name,
         )
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Replace PWPolyFunction ops and matched activation patterns by PWPolyF nodes."""
         graph = model.graph
         node_ind = 0
@@ -128,12 +146,12 @@ class InferPWPolyFLayer(Transformation):
             if node.op_type == "PWPolyFunction":
                 pwp_input = node.input[0]
                 pwp_output = node.output[0]
-                pwp_in_shape = model.get_tensor_shape(pwp_input)
+                pwp_in_shape = cast("list[int]", model.get_tensor_shape(pwp_input))
                 idt = model.get_tensor_datatype(pwp_input)
 
-                func = get_by_name(node.attribute, "func").s.decode("utf-8")
-                K_attr = get_by_name(node.attribute, "K")
-                K = K_attr.i if K_attr is not None else 3
+                func = cast("AttributeProto", get_by_name(node.attribute, "func")).s.decode("utf-8")
+                k_attr = get_by_name(node.attribute, "K")
+                k = k_attr.i if k_attr is not None else 3
                 degree_attr = get_by_name(node.attribute, "degree")
                 degree = degree_attr.i if degree_attr is not None else 2
 
@@ -144,7 +162,7 @@ class InferPWPolyFLayer(Transformation):
                     pwp_in_shape,
                     idt,
                     "PWPolyF_" + node.name,
-                    K,
+                    k,
                     degree,
                 )
                 graph.node.insert(node_ind, new_node)

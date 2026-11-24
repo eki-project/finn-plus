@@ -34,6 +34,7 @@ import onnx
 from onnx import helper as oh
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.util.basic import qonnx_make_model
 
@@ -73,26 +74,44 @@ def make_split_model(IN_SHAPE, IN_DTYPE, SPLIT, AXIS):
     model = ModelWrapper(model)
     for out in outputs:
         model.set_tensor_datatype(out.name, IN_DTYPE)
-        model.set_tensor_layout(out.name, ["N", "H", "W", "C"])
     model.set_tensor_datatype(inp.name, IN_DTYPE)
-    model.set_tensor_layout(inp.name, ["N", "H", "W", "C"])
+    # The NHWC layout annotation only applies to 4D tensors
+    if len(IN_SHAPE) == 4:
+        for name in [inp.name] + [out.name for out in outputs]:
+            model.set_tensor_layout(name, ["N", "H", "W", "C"])
     model.set_initializer(split_init.name, np.array(SPLIT, dtype=np.int64))
     model = model.transform(GiveUniqueNodeNames())
 
     return model
 
 
+# input shape: image with batch 1, and a shape whose first dimension is not 1
+@pytest.mark.parametrize("i_shape", [[1, 5, 5, 10], [2, 5, 10]])
+@pytest.mark.parametrize("split", [[2, 2, 6]])
+@pytest.mark.fpgadataflow
+def test_fpgadataflow_split_number_output_values(i_shape, split):
+    """Each output stream is expected to produce its share of every input vector."""
+    model = make_split_model(i_shape, DataType["INT3"], split, len(i_shape) - 1)
+    model = model.transform(InferSplitLayer())
+    inst = getCustomOp(model.graph.node[0])
+    num_vecs = int(np.prod(i_shape[:-1]))
+    # SIMD is 1 after the conversion, i.e. one word per element
+    assert inst.get_number_output_values() == {f"out{i}": num_vecs * s for i, s in enumerate(split)}
+    assert inst.get_exp_cycles() == num_vecs * sum(split)
+
+
 @pytest.mark.parametrize("exec_mode", ["cppsim", "rtlsim", "stitched_rtlsim"])
 @pytest.mark.parametrize("idt", [DataType["INT3"]])
+# input shape: image with batch 1, and a shape whose first dimension is not 1
+@pytest.mark.parametrize("i_shape", [[1, 5, 5, 10], [2, 5, 10]])
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 @pytest.mark.slow
-def test_fpgadataflow_split(exec_mode, idt):
+def test_fpgadataflow_split(exec_mode, idt, i_shape):
     fpga_part = "xc7z020clg400-1"
     clk_ns = 10
-    i_shape = [1, 5, 5, 10]
     split = [2, 2, 6]
-    split_axis = 3
+    split_axis = len(i_shape) - 1
     model = make_split_model(i_shape, idt, split, split_axis)
     assert len(model.graph.output) == len(split)
     exp_oshapes = []

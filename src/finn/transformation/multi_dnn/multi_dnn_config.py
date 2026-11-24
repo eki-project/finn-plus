@@ -1,30 +1,34 @@
 """Configuration loader for multi-DNN build flows."""
+
 import json
 import os
 from copy import deepcopy
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
+from typing import ClassVar
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.util.exception import FINNUserError
 
 
 class MultiDNNConfig:
     """Parses and provides access to a multi-DNN JSON configuration file."""
 
-    virtual_keywords = {"output_dir"}
+    virtual_keywords: ClassVar[set[str]] = {"output_dir"}
 
-    def __init__(self, multi_dnn_config_path):
+    def __init__(self, multi_dnn_config_path: str | Path) -> None:
         """Load and parse the multi-DNN config JSON from the given path."""
-        with open(multi_dnn_config_path, "r") as fp_json:
+        with Path(multi_dnn_config_path).open() as fp_json:
             self.multi_dnn_config = json.load(fp_json)
             self.submodel_names = list(self.multi_dnn_config["Submodels"].keys())
 
-    def get_submodel_model(self, model_name):
+    def get_submodel_model(self, model_name: str) -> ModelWrapper:
         """Return the ModelWrapper for the named submodel."""
         return ModelWrapper(
             self.multi_dnn_config["Submodels"][model_name].get("model_path", None), True
         )
 
-    def get_steps(self):
+    def get_steps(self) -> list[tuple[str, list[str]]] | None:
         """Return the list of (step_name, target_names) tuples from the config."""
         steps = self.multi_dnn_config.get("Steps", None)
         if steps is None:
@@ -32,9 +36,9 @@ class MultiDNNConfig:
         tuple_list = []
         for step_dict in steps:
             if len(step_dict) != 1:
-                raise ValueError(
-                    f"Each step dict must have exactly one entry, found {len(step_dict)} ",
-                    f"entries in {step_dict}",
+                raise FINNUserError(
+                    f"Each step dict must have exactly one entry, found {len(step_dict)} "
+                    f"entries in {step_dict}"
                 )
             key, value = next(iter(step_dict.items()))
             if isinstance(value, str):
@@ -59,9 +63,8 @@ class MultiDNNConfig:
                 value = getattr(cfg, k)
                 if value is None:
                     continue
-                normalized_path = os.path.normpath(value)
-                directory, original_file = os.path.split(normalized_path)
-                new_path = os.path.join(os.path.dirname(directory), model_name, original_file)
+                normalized_path = Path(os.path.normpath(value))
+                new_path = str(normalized_path.parent.parent / model_name / normalized_path.name)
                 setattr(copied_cfg, k, new_path)
 
             for k, v in self.multi_dnn_config["Submodels"][model_name].items():

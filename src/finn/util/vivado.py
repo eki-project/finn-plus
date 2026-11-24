@@ -54,10 +54,10 @@ def _parse_vivado_utilization_report(report_path: str | Path) -> dict[str, int]:
     Returns:
         Dictionary with resource counts (LUT, FF, DSP, BRAM, BRAM_18K, BRAM_36K, URAM, SRL)
     """
-    if not os.path.exists(report_path):
+    if not Path(report_path).exists():
         return {}
 
-    with open(report_path, "r") as f:
+    with Path(report_path).open() as f:
         content = f.read()
 
     ret = {}
@@ -129,10 +129,10 @@ def _parse_vivado_timing_report(report_path: str | Path) -> dict[str, float]:
     Returns:
         Dictionary with timing metrics (WNS)
     """
-    if not os.path.exists(report_path):
+    if not Path(report_path).exists():
         return {}
 
-    with open(report_path, "r") as f:
+    with Path(report_path).open() as f:
         content = f.read()
 
     ret = {}
@@ -167,10 +167,10 @@ def _parse_vivado_power_report(report_path: str | Path) -> dict[str, float]:
     Returns:
         Dictionary with power metrics (total_power_W)
     """
-    if not os.path.exists(report_path):
+    if not Path(report_path).exists():
         return {}
 
-    with open(report_path, "r") as f:
+    with Path(report_path).open() as f:
         content = f.read()
 
     ret = {}
@@ -203,11 +203,11 @@ def _parse_ooc_metadata(metadata_path: str | Path) -> dict[str, Any]:
     Returns:
         Dictionary with metadata (clk_period_ns, vivado_version)
     """
-    if not os.path.exists(metadata_path):
+    if not Path(metadata_path).exists():
         return {}
 
     ret = {}
-    with open(metadata_path, "r") as f:
+    with Path(metadata_path).open() as f:
         for line in f:
             if "=" in line:
                 key, value = line.strip().split("=", 1)
@@ -234,13 +234,13 @@ def parse_ooc_synth_results(report_dir: str | Path) -> dict[str, Any] | None:
         Dictionary with resource utilization, timing, and power metrics
         including calculated fmax_mhz, or None if the report files don't exist.
     """
-    util_path = os.path.join(report_dir, "ooc_utilization.rpt")
-    timing_path = os.path.join(report_dir, "ooc_timing.rpt")
-    power_path = os.path.join(report_dir, "ooc_power.rpt")
-    metadata_path = os.path.join(report_dir, "ooc_metadata.txt")
+    util_path = Path(report_dir) / "ooc_utilization.rpt"
+    timing_path = Path(report_dir) / "ooc_timing.rpt"
+    power_path = Path(report_dir) / "ooc_power.rpt"
+    metadata_path = Path(report_dir) / "ooc_metadata.txt"
 
     # Check if at least the utilization report exists
-    if not os.path.exists(util_path):
+    if not util_path.exists():
         return None
 
     # Parse all reports
@@ -283,11 +283,15 @@ def run_ooc_pnr(
     tcl = [
         f"open_project {proj_dir}/{prjname}.xpr",
         "# synthesize (out-of-context) if not done already",
-        'if {[get_property PROGRESS [get_runs synth_1]] != "100%" || '
-        "[get_property NEEDS_REFRESH [get_runs synth_1]]} {",
+        (
+            'if {[get_property PROGRESS [get_runs synth_1]] != "100%" || '
+            "[get_property NEEDS_REFRESH [get_runs synth_1]]} {"
+        ),
         "    reset_run synth_1",
-        "    set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} "
-        "-value {-mode out_of_context} -objects [get_runs synth_1]",
+        (
+            "    set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} "
+            "-value {-mode out_of_context} -objects [get_runs synth_1]"
+        ),
         f"    launch_runs synth_1 -jobs {num_workers}",
         "    wait_on_run [get_runs synth_1]",
         "}",

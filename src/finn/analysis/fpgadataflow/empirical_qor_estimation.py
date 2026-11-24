@@ -9,17 +9,23 @@ fall back to the analytical FINN estimate (resources) or are reported as 0 (powe
 import logging
 import os
 import pandas as pd
-from onnx import NodeProto
+from pathlib import Path
 from qonnx.core.datatype import DataType
-from qonnx.core.modelwrapper import ModelWrapper
-from typing import Optional
+from typing import TYPE_CHECKING, cast
 
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.qor.database import POWER_TARGET_COL
 from finn.qor.estimator import MODEL_DIR_ENV_VAR, RESOURCE_TARGET_PREFIX, QoREstimator
 from finn.qor.features import spec_for_op_type
 from finn.util.basic import getHWCustomOp
+from finn.util.exception import FINNInternalError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+
+if TYPE_CHECKING:
+    import numpy as np
+    from onnx import NodeProto
+    from qonnx.core.modelwrapper import ModelWrapper
+
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +33,11 @@ logger = logging.getLogger(__name__)
 RESOURCE_TYPES = ("LUT", "DSP", "BRAM_18K", "URAM")
 
 
-def node_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> pd.DataFrame:
+def node_features(model: "ModelWrapper", node: "NodeProto", inst: "HWCustomOp") -> pd.DataFrame:
     """Map a hardware node to the feature row expected by the QoR estimators of its operator.
 
     The columns must match ``OperatorFeatureSpec.feature_cols`` of the operator exactly, which
-    is asserted, so that a model fitted on the microbenchmark database applies to the node.
+    is checked, so that a model fitted on the microbenchmark database applies to the node.
     Raises ValueError for unsupported node types.
     """
     spec = spec_for_op_type(node.op_type)
@@ -40,9 +46,9 @@ def node_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> pd.
 
     features: dict[str, object] = {}
     if spec.name == "mvau":
-        idt = DataType[inst.get_nodeattr("inputDataType")]
-        wdt = DataType[inst.get_nodeattr("weightDataType")]
-        weights = model.get_initializer(node.input[1])
+        idt = DataType[cast("str", inst.get_nodeattr("inputDataType"))]
+        wdt = DataType[cast("str", inst.get_nodeattr("weightDataType"))]
+        weights = cast("np.ndarray", model.get_initializer(node.input[1]))
         features = {
             "params.backend": "hls" if node.op_type.endswith("_hls") else "rtl",
             "params.mem_mode": inst.get_nodeattr("mem_mode"),
@@ -62,14 +68,15 @@ def node_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> pd.
             "dut_info.zero_weights": round(float((weights == 0).sum()) / weights.size, 2),
         }
 
-    assert sorted(features) == sorted(spec.feature_cols), "feature mapping out of sync with spec"
-    return pd.DataFrame([features])[spec.feature_cols]
+    if sorted(features) != sorted(spec.feature_cols):
+        raise FINNInternalError("feature mapping out of sync with spec")
+    return cast("pd.DataFrame", pd.DataFrame([features])[spec.feature_cols])
 
 
 class QoRModelSet:
     """All fitted QoR estimators found in a model directory, addressable by node op_type."""
 
-    def __init__(self, estimators: Optional[list[QoREstimator]] = None, model_dir: str = ""):
+    def __init__(self, estimators: list[QoREstimator] | None = None, model_dir: str = "") -> None:
         """Index the given estimators by operator name and target column."""
         self.model_dir = model_dir
         self._by_operator: dict[str, dict[str, QoREstimator]] = {}
@@ -87,22 +94,22 @@ class QoRModelSet:
         return cls(estimators, model_dir)
 
     @classmethod
-    def load_from_env(cls) -> Optional["QoRModelSet"]:
+    def load_from_env(cls) -> "QoRModelSet | None":
         """Load models from ``$FINN_QOR_MODEL_DIR``; None if unset, missing or empty."""
         model_dir = os.environ.get(MODEL_DIR_ENV_VAR)
         if not model_dir:
             return None
-        if not os.path.isdir(model_dir):
+        if not Path(model_dir).is_dir():
             logger.warning("%s=%s is not a directory", MODEL_DIR_ENV_VAR, model_dir)
             return None
         models = cls.load(model_dir)
         return models if len(models) > 0 else None
 
     def __len__(self) -> int:
-        """Number of loaded estimators (over all operators and targets)."""
+        """Return the number of loaded estimators (over all operators and targets)."""
         return sum(len(targets) for targets in self._by_operator.values())
 
-    def get(self, op_type: str, target: str) -> Optional[QoREstimator]:
+    def get(self, op_type: str, target: str) -> QoREstimator | None:
         """Estimator for a node op_type and target column, or None if not available."""
         spec = spec_for_op_type(op_type)
         if spec is None:
@@ -111,7 +118,7 @@ class QoRModelSet:
 
 
 def empirical_res_estimation(
-    model: ModelWrapper, fpgapart: str, models: QoRModelSet
+    model: "ModelWrapper", fpgapart: str, models: QoRModelSet
 ) -> dict[str, dict[str, int | float]]:
     """Estimate the resources of every hardware node using the fitted QoR models.
 
@@ -141,7 +148,7 @@ def empirical_res_estimation(
 
 
 def empirical_power_estimation(
-    model: ModelWrapper, models: QoRModelSet
+    model: "ModelWrapper", models: QoRModelSet
 ) -> dict[str, dict[str, float]]:
     """Estimate the (dynamic) power of every hardware node using the fitted QoR models.
 
