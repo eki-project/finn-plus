@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from finn.nas.config import OracleConfig
 from finn.nas.result import EvalResult, FailureCategory
+from finn.nas.threads import single_threaded_environment
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -223,9 +224,11 @@ def _worker_init(
     proxy_batch: tuple[torch.Tensor, torch.Tensor] | None,
     calibration_inputs: torch.Tensor | None,
 ) -> None:
-    """Prepare a worker process: own FINN build directory, data batches kept in memory."""
+    """Prepare a worker process: own FINN build directory, one thread, data batches in memory."""
+    from finn.nas.threads import limit_to_single_thread
+
     os.environ["FINN_BUILD_DIR"] = build_dir
-    torch.set_num_threads(1)
+    limit_to_single_thread()
     _WORKER_STATE["proxy_batch"] = proxy_batch
     _WORKER_STATE["calibration_inputs"] = calibration_inputs
 
@@ -281,8 +284,9 @@ class GenotypeEvaluator:
         self._pool: ProcessPoolExecutor | None = None
 
     def __enter__(self) -> Self:
-        """Start the worker pool."""
+        """Start the worker pool (its processes are single-threaded, see ``finn.nas.threads``)."""
         if self.n_workers > 0:
+            single_threaded_environment()
             self._pool = ProcessPoolExecutor(
                 max_workers=self.n_workers,
                 mp_context=get_context("spawn"),

@@ -20,7 +20,10 @@ def _child_main(conn: Connection, onnx_path: str, oc_dict: dict[str, Any], cand_
     """Entry point of the worker process."""
     import os
 
+    from finn.nas.threads import limit_to_single_thread
+
     os.environ["FINN_BUILD_DIR"] = str(Path(cand_dir) / "tmp")
+    limit_to_single_thread()
     try:
         from finn.nas.config import OracleConfig
         from finn.nas.pipeline import run_pipeline
