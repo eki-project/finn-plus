@@ -13,9 +13,21 @@ variables:
   BENCH_CFG:
     description: "Select config, usually provided by parent pipeline"
     value: ""
+  MEASUREMENT_RUNNER_TAG:
+    description: "Runner tag of the board that runs the Measurement jobs"
+    value: "board"
 
 workflow:
   name: "bench_$BENCH_CFG"
+  rules:
+    # Multi-DNN experiments use dynamic partial reconfiguration, which needs the modified
+    # PYNQ image of the board behind the "rfsoc4x2" runner. The regular "board" runner(s)
+    # lack it. Manual launches carry the config name in MANUAL_CFG_PATH. A MEASUREMENT_RUNNER_TAG
+    # passed in by the parent pipeline takes precedence over this rule.
+    - if: $BENCH_CFG =~ /multi_dnn/ || $MANUAL_CFG_PATH =~ /multi_dnn/
+      variables:
+        MEASUREMENT_RUNNER_TAG: "rfsoc4x2"
+    - when: always
 
 FINN Build:
   id_tokens:
@@ -62,7 +74,7 @@ Measurement:
       aud: https://git.uni-paderborn.de
   stage: measure
   tags:
-    - board
+    - $MEASUREMENT_RUNNER_TAG
   rules:
     # Also run on failure of previous tasks to measure partial results
     - when: always
@@ -197,7 +209,7 @@ Measurement (Follow-up):
   needs:
     - job: FINN Build (Follow-up)
   tags:
-    - board
+    - $MEASUREMENT_RUNNER_TAG
   script:
     # Check if follow-up build artifacts exist, exit gracefully if not
     - |

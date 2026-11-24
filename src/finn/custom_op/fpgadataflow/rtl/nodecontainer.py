@@ -399,7 +399,11 @@ class NodeContainer(RTLBackend, MemStreamOp):
                 f"{self.onnx_node.name}: HDL generation is only supported for multi_dnn_type "
                 f"'selectable_weights', got {multi_dnn_type!r}"
             )
-        self.generate_hdl_memstream(fpgapart)
+        # Only reference nodes with a memstream (MVAU, VVAU, Thresholding_hls, ...) get the
+        # shared memstream wrapper. Thresholding_rtl keeps its thresholds in its own RTL
+        # memories, whose parameter files generate_params concatenates for all bodies.
+        if isinstance(getCustomOp(self._get_reference_node()), MemStreamOp):
+            self.generate_hdl_memstream(fpgapart)
         self.generate_params(model, self.code_gen_dir_ipgen)
         self.generate_hdl_stream_tap()
 
