@@ -1203,9 +1203,7 @@ if __name__ == "__main__":
             )
 
             # power measurement
-            experiment_reports_path = str(
-                artifact_reports_dir("measurement", run_id, args.followup)
-            )
+            experiment_reports_path = artifact_reports_dir("measurement", run_id, args.followup)
             # rails as recorded (ci/experiments/*.json: 0V85 + 1V2_PL plus their total)
             power = collect_fn.generate_power_report(None, experiment_reports_path)
             if power:
