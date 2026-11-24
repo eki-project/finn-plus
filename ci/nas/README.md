@@ -14,7 +14,7 @@ Slurm nodes (nothing here is tracked with DVC):
 | Variable | Content |
 |---|---|
 | `OTUS_NAS_DATASET_DIR` | Dataset directory on the cluster: `cifar10/` holds CIFAR-10 as torchvision lays it out (`cifar-10-batches-py/`, what `torchvision.datasets.CIFAR10(root)` downloads; the jobs do not rely on the download working on the nodes) and `radioml/data.hdf5` the RadioML 2018 dataset for a later extension of the search space |
-| `OTUS_NAS_RESULT_DIR_STORE` | Persistent result directory, writable from the login node; every pipeline writes a subdirectory `<date>_<sha>_<parent pipeline id>_<config>` with all records, exports, figures and tables (the GitLab artifacts expire, this copy does not) |
+| `OTUS_NAS_RESULT_DIR_STORE` | Persistent result directory on a file system that is writable from the compute nodes (scratch); every pipeline writes a subdirectory `<date>_<sha>_<parent pipeline id>_<config>` with all records, exported models, figures and tables (the GitLab artifacts expire, this copy does not; the models are only kept here) |
 
 The jobs install the `nas` extra of the wheel (optuna, torchvision) on top of the regular CI
 venv (`.setup_nas_2024_2` in `ci/.gitlab-setup.yml`). Ground-truth training needs a GPU node of the
@@ -63,16 +63,13 @@ Knobs (all pipeline variables with defaults in `.gitlab-ci.yml`; sizing of the S
 |---|---|---|---|
 | `NAS Sample` | CPU, `NAS_CPU_CORES` cores | `finn nas sample` | `sampling/` (`samples.jsonl`, `summary.json`, `config.json`) |
 | `NAS Search: [<variant>]` | CPU, one job per variant | `finn nas search` | `search_<variant>/` (`records.jsonl`, `study.journal`, `summary.json`) |
-| `NAS Export` | CPU, small | `finn nas export` | `export/<variant>/` (Pareto front) and `export/sampling/` (feasible samples): `<hash>.onnx` (+ `.onnx.data`), `samples.jsonl`, `bench_config.yml`, `export_summary.json` |
+| `NAS Export` | CPU, small | `finn nas export` | `export/<variant>/` (Pareto front) and `export/sampling/` (feasible samples): `samples.jsonl`, `bench_config.yml`, `export_summary.json`; the models `<hash>.onnx` (+ `.onnx.data`) go to the result store only (hundreds of MB per front) |
 | `NAS Ground Truth` | GPU | `finn nas groundtruth` on the sampling run | `groundtruth/` |
 | `NAS Ground Truth (Front)` | GPU | the same on the exported front of `NAS_OUTCOME_VARIANT` | `groundtruth_front/` |
-| `NAS Report` | CPU, small | `finn nas report` on whatever finished | `report/` (figures, `summary.md`) |
-| `NAS Store` | login node, no Slurm | copies the collected `nas_artifacts/` to the result store | the result store directory |
+| `NAS Report` | CPU, small | `finn nas report` on whatever finished, then copies `nas_artifacts/` to the result store | `report/` (figures, `summary.md`) and the result store directory |
 
-Export, report and store run even when earlier jobs failed (partial results are still reported
-and kept). The store job runs on the login node because the group directory is read-only on the
-compute nodes. The
-per-candidate build directories (`work/`) of a run are not kept. Sampling and search are
+Export, ground truth and report run even when earlier jobs failed (partial results are still
+reported and kept). The per-candidate build directories (`work/`) of a run are not kept. Sampling and search are
 independent, so they run in parallel; a 1000-sample baseline and four 1000-trial searches take
 well under an hour each on one node.
 
