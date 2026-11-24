@@ -138,6 +138,7 @@ class DACore:
 
 
 def _require(cond: bool, msg: str) -> None:
+    """Raise a ``FINNUserError`` with ``msg`` unless ``cond`` holds."""
     if not cond:
         raise FINNUserError(msg)
 
@@ -171,6 +172,7 @@ def _import_alkaid() -> dict[str, Any]:
 
 
 def _primitive_source_dir() -> str:
+    """Return the directory holding alkaid's Verilog primitive modules."""
     import alkaid.codegen.rtl.verilog as vpkg
 
     return str(Path(vpkg.__file__).parent / "source")
@@ -466,6 +468,7 @@ def build_da_core(
     n_adders = sum(op.opcode in (0, 1, 4, 11) for op in comb.ops)
 
     def golden(x: np.ndarray) -> np.ndarray:
+        """Evaluate the adder graph on integer inputs of shape ``(N, MW)``."""
         x = np.asarray(x, dtype=np.float64).reshape(-1, mw)
         return np.asarray(comb.predict(x), dtype=np.float64).reshape(-1, mh)
 
