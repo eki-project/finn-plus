@@ -58,6 +58,11 @@
  *	   accepts input while its fill count is at most `c`, i.e. holds up to
  *	   `c+1` elements). The central control can test candidate capacity
  *	   configurations this way, observing the resulting pipeline performance.
+ *	   In the paced and bounded modes, an accepted item becomes available on
+ *	   the output after the `LATENCY` of the gauge (default 2 cycles, the
+ *	   pass-through latency of the synthesizable `fifo.sv`), so that the
+ *	   measured latencies and the sized capacities carry over to the real
+ *	   FIFO implementation.
  *	 - After a bounded run, `READ_FILL` returns the peak occupancy the FIFO
  *	   reached under its bounded capacity (not the capacity itself) and
  *	   `READ_STALL` returns the stall flags. Both are cleared by every `RUN_*`

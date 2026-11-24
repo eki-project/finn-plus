@@ -9,7 +9,8 @@
 module fifo_gauge #(
 	bit [15:0]  ID,
 	int unsigned  DATA_WIDTH,
-	int unsigned  FM_SIZE
+	int unsigned  FM_SIZE,
+	int unsigned  LATENCY = 2	// cycles from input acceptance to output validity
 )(
 	// Global Control
 	input	logic  clk,
@@ -30,6 +31,13 @@ module fifo_gauge #(
 	input	logic  ordy
 );
 	import  fifo_gauge_pkg::*;
+
+	initial begin
+		if(LATENCY < 1) begin
+			$error("%m: LATENCY of %0d must be 1 or above.", LATENCY);
+			$finish;
+		end
+	end
 
 	//-----------------------------------------------------------------------
 	// Control & Status Regs
@@ -378,10 +386,39 @@ module fifo_gauge #(
 	//-----------------------------------------------------------------------
 	// Virtual FIFO
 
+	// Output Latency
+	//	An item accepted on the input becomes available on the output LATENCY
+	//	cycles later, matching the pass-through latency of the synthesizable
+	//	fifo.sv (2 cycles on its shift and distributed paths, which first
+	//	write the storage and load the output register one cycle later). The
+	//	items in flight count towards the occupancy, as the output register
+	//	of fifo.sv counts towards its DEPTH, but not towards the availability.
+	localparam int unsigned  PEND_STAGES = LATENCY - 1;
+	uwire [$clog2(PEND_STAGES+2)-1:0]  pend_cnt_nxt;	// items in flight after this cycle
+	if(PEND_STAGES == 0)  assign  pend_cnt_nxt = 0;
+	else begin : genPend
+		logic  Pend[PEND_STAGES] = '{ default: 0 };	// Pend[0] accepted last cycle, ...
+		uwire  pend_nxt[PEND_STAGES];
+		assign	pend_nxt[0] = itxn;
+		for(genvar  k = 1; k < PEND_STAGES; k++)  assign  pend_nxt[k] = Pend[k-1];
+		always_ff @(posedge clk) begin
+			if(rst)  Pend <= '{ default: 0 };
+			else     Pend <= pend_nxt;
+		end
+
+		logic [$clog2(PEND_STAGES+2)-1:0]  cnt;
+		always_comb begin
+			cnt = 0;
+			for(int unsigned  k = 0; k < PEND_STAGES; k++)  cnt += pend_nxt[k];
+		end
+		assign	pend_cnt_nxt = cnt;
+	end : genPend
+
 	// FIFO Pacing & Tracking
 	logic [31:0]  FillCnt = 0;
 	logic  Avl = 0;
 	uwire  cap = FillCnt <= FillMax;
+	uwire [31:0]  fill_nxt = FillCnt + (itxn == otxn? 0 : itxn? 1 : -1);
 	always_ff @(posedge clk) begin
 		if(rst) begin
 			FillCnt <= 0;
@@ -390,8 +427,8 @@ module fifo_gauge #(
 			FillPeak <= 0;
 		end
 		else begin
-			FillCnt <= FillCnt + (itxn == otxn? 0 : itxn? 1 : -1);
-			Avl <= itxn || (FillCnt[0] && !otxn) || |FillCnt[31:1];
+			FillCnt <= fill_nxt;
+			Avl <= fill_nxt > pend_cnt_nxt;
 
 			if(!cap && (iflow !=? fifo))  FillMax <= FillCnt;
 			if(fill_put)  FillMax <= fill_val;
