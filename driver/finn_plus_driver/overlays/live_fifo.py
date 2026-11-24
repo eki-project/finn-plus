@@ -51,23 +51,32 @@ STRATEGY_KWARGS = (
 )
 
 
-#: Minimum observation of the fixed-runtime heuristic in cycles (1 ms at the 10 ns clock it
-#: assumed) and the smallest frame horizon of the steady-state detection.
-STEADY_STATE_MIN_CYCLES = 100000
-STEADY_STATE_MIN_FRAMES = 4
+#: Defaults of the steady-state detection: frames of a clean window that count as steady
+#: state, the safety factor of the evaluation time cap on the frames a clean window can take,
+#: and the fixed share of the cap covering the AXI-lite polling of short-frame designs.
+DEFAULT_WINDOW_FRAMES = 4
+DEFAULT_CAP_FACTOR = 4.0
+DEFAULT_CAP_FLOOR_S = 0.002
+#: Largest window the instrumentation wrapper is built with by default
+#: (``instrumentation_avg_n``); the hardware clamps a larger request to its own size.
+DEFAULT_HW_WINDOW_MAX = 64
 
 
-def steady_state_frames(paced_latency, paced_interval, min_cycles=STEADY_STATE_MIN_CYCLES):
-    """Frame horizon of an evaluation derived from the paced (unbounded) measurements.
+def evaluation_cap(paced_latency, paced_interval, window_frames, fclk_mhz, cap_factor, cap_floor_s):
+    """Return the frame budget and the wall-clock cap of one polled evaluation.
 
-    The fixed-runtime heuristic observed every configuration for ``max(4 * latency, min_cycles)``
-    cycles; at the paced interval that many cycles complete ``ceil(... / interval)`` frames, so
-    the horizon in frames closely resembles the old observation without assuming a clock
-    period. At least ``STEADY_STATE_MIN_FRAMES`` frames are required.
+    A feasible configuration shows a clean window once its warm-up is over, and the warm-up is
+    on the order of the pipeline depth in frames (the paced latency over the paced interval),
+    so the cap is ``cap_factor`` times the frames of one pipeline depth plus the window,
+    converted to seconds at the accelerator clock, plus ``cap_floor_s`` for the polling of
+    designs whose frames are shorter than one AXI-lite access. Only pathological evaluations
+    (neither clean nor violated) ever reach it; they are rejected.
     """
-    cycles = max(4 * int(paced_latency), int(min_cycles))
-    frames = math.ceil(cycles / max(int(paced_interval), 1))
-    return max(STEADY_STATE_MIN_FRAMES, int(frames))
+    interval = max(int(paced_interval), 1)
+    depth_frames = math.ceil(int(paced_latency) / interval) + 1
+    cap_frames = int(math.ceil(cap_factor * (depth_frames + int(window_frames))))
+    cap_s = cap_frames * interval / (float(fclk_mhz) * 1e6) + float(cap_floor_s)
+    return cap_frames, cap_s
 
 
 class LiveFIFOOracle:
@@ -80,22 +89,32 @@ class LiveFIFOOracle:
     reads are non-intrusive; they cost a few ms per FIFO.
 
     With the steady-state registers of the instrumentation wrapper (``hw_capabilities
-    ["steady_state_registers"]``) and a frame horizon ``steady_state_frames``, the observation
+    ["steady_state_registers"]``) and a window of ``window_frames`` frames, the observation
     is a polling loop that ends by the first of these rules (``EvalResult.decided_by``):
 
-    - ``idle_timeout``: no frame completed for longer than the relaxed interval threshold
-      (deadlock is the extreme case), definitive negative;
+    - ``instrumentation_error``: timestamp overflow/underflow (deadlock), negative;
+    - ``idle_timeout``: no frame completed for longer than ``FeasibilityCheck.stall_bound``
+      (the relaxed latency plus one relaxed interval), negative for every stop condition;
     - ``pending_timeout``: the oldest frame in flight is older than the relaxed latency
-      threshold (only when the stop condition includes the latency), definitive negative;
-    - ``interval_violation`` / ``latency_violation``: the sliding-window maximum exceeds its
-      threshold, definitive negative;
-    - ``horizon_reached``: ``steady_state_frames`` frames completed without a violation;
-    - ``cap_hit``: the wall-clock cap (``iteration_runtime * cap_factor``) expired first; the
-      old single-read decision on the last sample is used and logged.
-    - ``instrumentation_error``: timestamp overflow/underflow (deadlock, as before).
+      threshold (stop conditions with latency), negative;
+    - ``latency_violation``: the window maximum of the latency exceeds its threshold (stop
+      conditions with latency; latency never decreases under the paced input), negative;
+    - ``window_slow``: the window is full and even its minimum interval exceeds the relaxed
+      interval threshold (stop conditions with interval), negative;
+    - ``window_clean``: the window is full and within the thresholds of the stop condition
+      (for the target measurement, which has no thresholds yet: the interval is constant over
+      the window), positive;
+    - ``cap_expired``: none of the above within the wall-clock cap ``cap_s``; the result is
+      ``undecided`` and therefore never feasible.
 
-    The interval and latency of a polled result are the window maxima, not the last sample.
-    Without the registers (or without a horizon) the observation is the fixed sleep of
+    The window is full once it holds ``window_frames`` completed frames after the first frame
+    of the run, whose interval the hardware excludes. A warm-up transient therefore leaves
+    the window by itself; no frame count is assumed. Only ``window_slow`` and ``window_clean``
+    depend on the window length: a periodic pattern or a late transient longer than the
+    window is misjudged, in the positive case by at most one slow frame per window. The
+    measured interval and latency of a decided result are the window maxima.
+
+    Without the registers (or without a window) the observation is the fixed sleep of
     ``iteration_runtime`` seconds and one read (``fixed_runtime``), exactly as before.
     """
 
@@ -105,40 +124,35 @@ class LiveFIFOOracle:
         iteration_runtime,
         throttle_interval,
         hw_capabilities,
-        steady_state_frames=None,
-        avg_window_size=64,
+        window_frames=None,
         poll_interval_s=0.0003,
-        cap_factor=4.0,
+        cap_s=None,
         feasibility=None,
     ):
-        """Bind to an overlay, the per-evaluation runtime (cap) and the input throttle interval.
+        """Bind to an overlay, the fixed-runtime fallback, the input throttle and the window.
 
-        ``feasibility`` (a ``FeasibilityCheck``) provides the thresholds of the early-exit
-        rules; it is ``None`` for the target measurement and set afterwards.
+        ``cap_s`` is the wall-clock cap of a polled evaluation (see ``evaluation_cap``); it
+        defaults to ``DEFAULT_CAP_FACTOR`` times the fixed runtime. ``feasibility`` (a
+        ``FeasibilityCheck``) provides the thresholds of the rules; it is ``None`` for the
+        target measurement and set afterwards.
         """
         self.overlay = overlay
         self.num_fifos = overlay.num_fifos
         self.iteration_runtime = iteration_runtime
         self.throttle_interval = throttle_interval
         self.hw_capabilities = hw_capabilities
-        self.steady_state_frames = steady_state_frames
-        self.avg_window_size = avg_window_size
+        self.window_frames = None if window_frames is None else int(window_frames)
         self.poll_interval_s = poll_interval_s
-        self.cap_factor = cap_factor
+        self.cap_s = iteration_runtime * DEFAULT_CAP_FACTOR if cap_s is None else float(cap_s)
         self.feasibility = feasibility
         self.num_evaluations = 0
 
     @property
     def polling(self):
         """Whether evaluations poll the steady-state registers instead of sleeping."""
-        return self.steady_state_frames is not None and bool(
+        return self.window_frames is not None and bool(
             self.hw_capabilities.get("steady_state_registers", False)
         )
-
-    @property
-    def cap_s(self):
-        """Wall-clock cap of a polled evaluation in seconds."""
-        return self.iteration_runtime * self.cap_factor
 
     def _observe_fixed(self):
         """Old observation: sleep for the iteration runtime and read the last sample once."""
@@ -171,41 +185,39 @@ class LiveFIFOOracle:
         """Poll the steady-state registers until a rule decides the evaluation."""
         ov = self.overlay
         fb = self.feasibility
+        window = self.window_frames
         check_interval = fb is not None and fb.stop_condition in ("interval", "both")
         check_latency = fb is not None and fb.stop_condition in ("latency", "both")
-        t0 = time.monotonic()
-        deadline = t0 + self.cap_s
+        deadline = time.monotonic() + self.cap_s
         decided_by = None
         s = None
         while True:
             s = ov.observe_steady_state()
             frames = s["run_frames"]
+            # the first frame of a run has no valid interval: the window is full once it holds
+            # ``window`` frames after it
+            window_full = frames >= window + 1 and s["avg_fill"] >= window
             if s["overflow"] or s["underflow"]:
                 decided_by = "instrumentation_error"
-            elif (
-                check_interval and frames >= 1 and s["idle_cycles"] > fb.relaxed_interval_threshold
-            ):
+            elif fb is not None and frames >= 1 and s["idle_cycles"] > fb.stall_bound:
                 decided_by = "idle_timeout"
             elif check_latency and s["oldest_pending_age"] > fb.relaxed_latency_threshold:
                 decided_by = "pending_timeout"
-            elif check_interval and s["int_win_max"] > fb.relaxed_interval_threshold:
-                decided_by = "interval_violation"
             elif check_latency and s["lat_win_max"] > fb.relaxed_latency_threshold:
                 decided_by = "latency_violation"
-            elif frames >= self.steady_state_frames:
-                decided_by = "horizon_reached"
-            elif time.monotonic() >= deadline:
-                decided_by = "cap_hit"
+            elif window_full:
+                if check_interval and s["int_win_min"] > fb.relaxed_interval_threshold:
+                    decided_by = "window_slow"
+                elif fb is None:
+                    if s["int_win_max"] == s["int_win_min"]:
+                        decided_by = "window_clean"
+                elif not check_interval or s["int_win_max"] <= fb.relaxed_interval_threshold:
+                    decided_by = "window_clean"
+            if decided_by is None and time.monotonic() >= deadline:
+                decided_by = "cap_expired"
             if decided_by is not None:
                 break
             time.sleep(self.poll_interval_s)
-
-        if decided_by == "cap_hit":
-            print(
-                "STEADY STATE CAP HIT after %.3f s: %d of %d frames, falling back to the "
-                "single-read decision" % (self.cap_s, s["run_frames"], self.steady_state_frames)
-            )
-            return self._read_last_sample("cap_hit", frames=s["run_frames"])
 
         min_latency = ov.instrumentation_read("min_latency")
         frames = s["run_frames"]
@@ -213,9 +225,9 @@ class LiveFIFOOracle:
         # (the next interval / the pending frame's latency is at least that long)
         interval = s["int_win_max"]
         latency = s["lat_win_max"]
-        if decided_by == "idle_timeout":
+        if decided_by in ("idle_timeout", "cap_expired"):
             interval = max(interval, s["idle_cycles"])
-        if decided_by == "pending_timeout":
+        if decided_by in ("pending_timeout", "cap_expired"):
             latency = max(latency, s["oldest_pending_age"])
         deadlock = frames == 0 or decided_by == "instrumentation_error"
         return dict(
@@ -225,6 +237,7 @@ class LiveFIFOOracle:
             deadlock=deadlock,
             decided_by=decided_by,
             frames=frames,
+            undecided=decided_by == "cap_expired",
         )
 
     def evaluate(self, depths, need_flags=False, need_peaks=False):
@@ -235,7 +248,8 @@ class LiveFIFOOracle:
         ov.configure_fifos_bounded(depths)
         t0 = time.monotonic()
         ov.start_accelerator(
-            throttle_interval=self.throttle_interval, avg_window_size=self.avg_window_size
+            throttle_interval=self.throttle_interval,
+            avg_window_size=self.window_frames if self.polling else DEFAULT_HW_WINDOW_MAX,
         )
         observed = self._observe_polling() if self.polling else self._observe_fixed()
         ov.stop_accelerator()
@@ -548,10 +562,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         relaxation=0.0,
         max_evaluations=None,
         max_runtime_s=None,
-        steady_state_frames=None,
-        avg_window_size=64,
+        window_frames=None,
         poll_interval_s=0.0003,
-        cap_factor=4.0,
+        evaluation_cap_s=None,
+        evaluation_cap_frames=None,
         cost_model="bits",
         **strategy_kwargs,
     ):
@@ -566,8 +580,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         start_depth : int or list
             Initial depth(s) for FIFOs; the performance targets are measured here.
         iteration_runtime : float
-            Runtime for each test iteration in seconds; with steady-state detection the
-            wall-clock cap of an evaluation is ``iteration_runtime * cap_factor``
+            Runtime of each test iteration in seconds without steady-state detection (fixed
+            sleep and one read)
         throttle_interval : int
             Throttle interval in cycles
         stop_condition : str
@@ -580,12 +594,16 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             Default 0.0 means no degradation allowed.
         max_evaluations, max_runtime_s :
             Budget of the search (hardware evaluations / wall-clock seconds), None = unlimited.
-        steady_state_frames : int or None
-            Frame horizon of the steady-state detection (``LiveFIFOOracle``); None keeps the
-            fixed-runtime observation. Requires the steady-state registers in the bitfile.
-        avg_window_size, poll_interval_s, cap_factor :
-            Sliding window written to the instrumentation (clamped to the build's maximum),
-            poll period in seconds and cap factor of the steady-state detection.
+        window_frames : int or None
+            Frames of a clean sliding window that count as steady state (``LiveFIFOOracle``;
+            written to the instrumentation as its window size, which the hardware clamps to
+            the build's ``instrumentation_avg_n``); None keeps the fixed-runtime observation.
+            Requires the steady-state registers in the bitfile.
+        poll_interval_s, evaluation_cap_s, evaluation_cap_frames :
+            Poll period in seconds and the wall-clock cap of one polled evaluation (see
+            ``evaluation_cap``; the frame budget it was derived from is only reported). An
+            evaluation that reaches the cap is rejected; the target measurement reaching it
+            aborts the search with a ``RuntimeError``.
         cost_model : str
             ``"bits"`` minimises the storage in kB over integer depths; ``"primitives"``
             minimises the FPGA primitives of the RTL FIFO (LUT equivalents of the device
@@ -614,24 +632,46 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             iteration_runtime,
             throttle_interval,
             self.hw_capabilities,
-            steady_state_frames=steady_state_frames,
-            avg_window_size=avg_window_size,
+            window_frames=window_frames,
             poll_interval_s=poll_interval_s,
-            cap_factor=cap_factor,
+            cap_s=evaluation_cap_s,
         )
         cache = EvaluationCache(oracle, cost_model)
-        if steady_state_frames is not None and not oracle.polling:
+        if window_frames is not None and not oracle.polling:
             print("STEADY STATE DETECTION: registers not in the bitfile, using the fixed runtime")
         elif oracle.polling:
+            if window_frames > DEFAULT_HW_WINDOW_MAX:
+                warnings.warn(
+                    f"window_frames={window_frames} exceeds the default hardware window of "
+                    f"{DEFAULT_HW_WINDOW_MAX} frames (build option instrumentation_avg_n); a "
+                    "clamped window never fills and every evaluation is rejected at the cap"
+                )
             print(
-                "STEADY STATE DETECTION: horizon %d frames, window %d, poll %.0f us, cap %.3f s"
-                % (steady_state_frames, avg_window_size, poll_interval_s * 1e6, oracle.cap_s)
+                "STEADY STATE DETECTION: window %d frames, poll %.0f us, cap %.3f s%s"
+                % (
+                    window_frames,
+                    poll_interval_s * 1e6,
+                    oracle.cap_s,
+                    "" if evaluation_cap_frames is None else " (%d frames)" % evaluation_cap_frames,
+                )
             )
 
         # Run once at the start configuration to determine the targets (iteration "0"); the
         # thresholds derived from it enable the early-exit rules of the oracle
         start_time = time.time()
         target = cache.evaluate(start_depths, role="target")
+        if target.result.undecided or target.result.deadlock:
+            raise RuntimeError(
+                "the start configuration reached no steady state within the evaluation cap "
+                f"({oracle.cap_s:.3f} s, {target.result.frames} frames, "
+                f"{target.result.decided_by}): no target can be derived"
+            )
+        if oracle.polling and target.result.interval != throttle_interval:
+            warnings.warn(
+                f"the paced start configuration runs at {target.result.interval} cycles per "
+                f"frame instead of the detached maximum period {throttle_interval} it is paced "
+                "at; the measured value is the target"
+            )
         feasibility = FeasibilityCheck.from_result(stop_condition, relaxation, target.result)
         oracle.feasibility = feasibility
         budget = SearchBudget(max_evaluations=max_evaluations, max_runtime_s=max_runtime_s)
@@ -692,10 +732,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                 "hw_capabilities": dict(self.hw_capabilities),
                 "num_cache_hits": cache.num_cache_hits,
                 "steady_state_detection": oracle.polling,
-                "steady_state_frames": steady_state_frames if oracle.polling else None,
-                "avg_window_size": avg_window_size if oracle.polling else None,
+                "window_frames": window_frames if oracle.polling else None,
                 "poll_interval_s": poll_interval_s if oracle.polling else None,
                 "evaluation_cap_s": oracle.cap_s if oracle.polling else None,
+                "evaluation_cap_frames": evaluation_cap_frames if oracle.polling else None,
                 "decisions": decision_counts(cache),
             },
             "result": result,
@@ -844,12 +884,12 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         Steady-state detection (``LiveFIFOOracle``, needs the steady-state registers of the
         instrumentation wrapper; older bitfiles fall back to the fixed runtime):
         ``steady_state_detection`` ("auto", or False to force the fixed runtime),
-        ``steady_state_frames`` (frame horizon of a positive verdict, default derived from the
-        paced measurements with ``steady_state_frames()``: the old observation time in frames),
-        ``avg_window_size`` (sliding window in frames, default: the horizon, clamped by the
-        hardware to the build's ``instrumentation_avg_n``), ``poll_interval_s`` (default
-        300 us) and ``cap_factor`` (wall-clock cap of an evaluation as a multiple of the
-        fixed-runtime heuristic, default 4; the old single-read decision applies when hit).
+        ``window_frames`` (frames of a clean sliding window that count as steady state,
+        default ``DEFAULT_WINDOW_FRAMES``; at most the build's ``instrumentation_avg_n``),
+        ``poll_interval_s`` (default 300 us), ``cap_factor`` and ``cap_floor_s`` (wall-clock
+        cap of an evaluation, see ``evaluation_cap``; defaults 4 and 2 ms). The target
+        interval and latency are the window maxima of the clean window of the paced start
+        configuration, so they are free of the warm-up transient.
         """
         fifo_search_order = kwargs.get("fifo_search_order")
         if fifo_search_order is not None:
@@ -866,9 +906,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         iteration_runtime_factor = kwargs.get("iteration_runtime_factor", 1.0)
         hw_capabilities = kwargs.get("hw_capabilities", "auto")
         steady_state_detection = kwargs.get("steady_state_detection", "auto")
-        steady_state_kwargs = {
-            k: kwargs[k] for k in ("poll_interval_s", "cap_factor") if k in kwargs
-        }
+        steady_state_kwargs = {k: kwargs[k] for k in ("poll_interval_s",) if k in kwargs}
         cost_model = kwargs.get("cost_model", "bits")
         strategy_kwargs = {k: kwargs[k] for k in STRATEGY_KWARGS if k in kwargs}
         is_binary = search_strategy.startswith("binary_")
@@ -921,15 +959,23 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # Determine search iteration runtime via heuristic based on free-running latency
         iteration_runtime = max(0.001, (paced_latency * 4) * 10 / 1000 / 1000 / 1000)
         iteration_runtime *= iteration_runtime_factor
-        # Frame horizon of the steady-state detection: the same observation in frames
-        frames = kwargs.get("steady_state_frames")
-        if frames is None:
-            frames = steady_state_frames(paced_latency, paced_interval)
-        steady_state_kwargs["steady_state_frames"] = int(frames)
-        steady_state_kwargs["avg_window_size"] = int(kwargs.get("avg_window_size", frames))
+        # Steady-state detection: window length and the evaluation cap from the paced run
+        window_frames = int(kwargs.get("window_frames", DEFAULT_WINDOW_FRAMES))
+        cap_frames, cap_s = evaluation_cap(
+            paced_latency,
+            paced_interval,
+            window_frames,
+            self.fclk_mhz_actual,
+            kwargs.get("cap_factor", DEFAULT_CAP_FACTOR),
+            kwargs.get("cap_floor_s", DEFAULT_CAP_FLOOR_S),
+        )
+        steady_state_kwargs["window_frames"] = window_frames
+        steady_state_kwargs["evaluation_cap_s"] = cap_s
+        steady_state_kwargs["evaluation_cap_frames"] = cap_frames
         print(
-            "STEADY STATE FRAMES: %d (paced latency %d, interval %d cycles)"
-            % (frames, paced_latency, paced_interval)
+            "STEADY STATE WINDOW: %d frames, evaluation cap %d frames / %.3f s (paced latency "
+            "%d, interval %d cycles)"
+            % (window_frames, cap_frames, cap_s, paced_latency, paced_interval)
         )
 
         search_log = self.run_fifo_search(

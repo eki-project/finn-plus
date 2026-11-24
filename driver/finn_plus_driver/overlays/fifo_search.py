@@ -58,6 +58,8 @@ class EvalResult:
     ``decided_by`` names the rule that ended the observation (see ``live_fifo.LiveFIFOOracle``),
     ``frames`` is the number of completed frames it was based on and ``eval_time_s`` the
     wall-clock time of the observation; all three are optional bookkeeping of the oracle.
+    ``undecided`` marks an observation that ended by its time cap before any rule could decide
+    it; such a configuration is never feasible (conservative), whatever its measured values.
     """
 
     depths: Tuple[int, ...]
@@ -72,6 +74,7 @@ class EvalResult:
     decided_by: Optional[str] = None
     frames: Optional[int] = None
     eval_time_s: Optional[float] = None
+    undecided: bool = False
 
 
 class Oracle(Protocol):
@@ -89,12 +92,13 @@ class Oracle(Protocol):
 class FeasibilityCheck:
     """Decides whether an evaluation meets the performance target within tolerances.
 
-    The thresholds are the ones of the original binary search: the interval may degrade by
-    ``relaxation``, the latency by ``relaxation`` plus a fixed default tolerance for the
-    measurement jitter observed on some models. Deadlocked evaluations are never feasible.
+    Both the interval and the latency may degrade by ``relaxation`` relative to the targets
+    measured at the start configuration; there is no hidden tolerance. Deadlocked and
+    undecided evaluations are never feasible. ``stall_bound`` is the number of cycles without
+    a completed frame after which a run is certainly stalled: longer than the whole relaxed
+    latency plus one relaxed interval, which no feasible configuration needs even during its
+    warm-up (used by the oracle's idle rule, independent of the stop condition).
     """
-
-    LATENCY_DEFAULT_RELAXATION = 0.0005
 
     def __init__(self, stop_condition, relaxation, target_interval, target_latency):
         """Set up the predicate for a stop condition, a relaxation and the measured targets."""
@@ -105,9 +109,12 @@ class FeasibilityCheck:
         self.target_interval = target_interval
         self.target_latency = target_latency
         self.relaxed_interval_threshold = target_interval * (1 + relaxation)
-        self.relaxed_latency_threshold = target_latency * (
-            1 + (self.LATENCY_DEFAULT_RELAXATION + relaxation)
-        )
+        self.relaxed_latency_threshold = target_latency * (1 + relaxation)
+
+    @property
+    def stall_bound(self) -> float:
+        """Idle cycles (no completed frame) beyond which a run is certainly stalled."""
+        return self.relaxed_latency_threshold + self.relaxed_interval_threshold
 
     @classmethod
     def from_result(cls, stop_condition, relaxation, target: EvalResult):
@@ -125,8 +132,8 @@ class FeasibilityCheck:
         return interval_degraded or latency_degraded
 
     def feasible(self, result: EvalResult) -> bool:
-        """Return whether the configuration is acceptable: no deadlock and no degradation."""
-        return not result.deadlock and not self.degraded(result)
+        """Return whether the configuration is acceptable: decided, no deadlock, no degradation."""
+        return not result.deadlock and not result.undecided and not self.degraded(result)
 
 
 class CostModel(Protocol):
@@ -1323,6 +1330,8 @@ def cache_to_iterations(cache: EvaluationCache) -> Dict[str, Dict]:
             record["frames"] = r.frames
         if r.eval_time_s is not None:
             record["eval_time_s"] = round(r.eval_time_s, 6)
+        if r.undecided:
+            record["undecided"] = True
         iterations[str(entry.index)] = record
     return iterations
 

@@ -73,9 +73,10 @@ class FINNInstrumentationOverlay(Overlay):
         """Read the registers polled for steady-state detection (see ``live_fifo``).
 
         Returns a dict with ``overflow``, ``underflow``, ``run_frames``, ``avg_fill``,
-        ``int_win_max``, ``lat_win_max``, ``idle_cycles`` and ``oldest_pending_age``. The window
-        maxima lag a completed frame by up to two window lengths (sequential scan in hardware)
-        and the interval of the first frame of a run is excluded from them.
+        ``int_win_min``, ``int_win_max``, ``lat_win_min``, ``lat_win_max``, ``idle_cycles`` and
+        ``oldest_pending_age``. The window extremes lag a completed frame by up to two window
+        lengths (sequential scan in hardware) and the interval of the first frame of a run is
+        excluded from them.
         """
         status_reg = self.instrumentation_read("status")
         return {
@@ -83,7 +84,9 @@ class FINNInstrumentationOverlay(Overlay):
             "underflow": (status_reg & 0x00000002) != 0,
             "run_frames": self.instrumentation_read("run_frames"),
             "avg_fill": self.instrumentation_read("avg_fill"),
+            "int_win_min": self.instrumentation_read("int_win_min"),
             "int_win_max": self.instrumentation_read("int_win_max"),
+            "lat_win_min": self.instrumentation_read("lat_win_min"),
             "lat_win_max": self.instrumentation_read("lat_win_max"),
             "idle_cycles": self.instrumentation_read("idle_cycles"),
             "oldest_pending_age": self.instrumentation_read("oldest_pending_age"),

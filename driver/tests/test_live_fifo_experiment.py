@@ -23,6 +23,7 @@ from finn_plus_driver.overlays.fifo_search import (
     TotalBitsCost,
 )
 from finn_plus_driver.overlays.live_fifo import (
+    DEFAULT_WINDOW_FRAMES,
     OP_BARRIER_CLEAN,
     OP_COMP_PERIOD,
     OP_NOP,
@@ -34,7 +35,7 @@ from finn_plus_driver.overlays.live_fifo import (
     OP_WRITE_FILL,
     FINNLiveFIFOOverlay,
     LiveFIFOOracle,
-    steady_state_frames,
+    evaluation_cap,
 )
 from test_fifo_search import (
     DEGRADED_INTERVAL,
@@ -56,11 +57,11 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
 
     The steady-state registers (``steady_state_hw``) are emulated per run with a virtual
     clock that advances by one poll per ``observe_steady_state`` call: a feasible configuration
-    completes ``frames_per_poll`` frames per poll with constant window maxima; a degraded one
-    (mock: ``DEGRADED_*``) degrades slowly, its window maxima growing by ``degrade_step`` per
-    poll; a severely violated one (mock: deadlock) completes one frame and then idles with a
-    growing pending-frame age. ``stall_mode`` makes every bounded run look frozen before its
-    first frame (no frames, no pending age) to exercise the wall-clock cap.
+    completes ``frames_per_poll`` frames per poll with a constant window (minimum = maximum);
+    a degraded one (mock: ``DEGRADED_*``) runs steadily slow, its whole window growing by
+    ``degrade_step`` per poll; a severely violated one (mock: deadlock) completes one frame and
+    then idles with a growing pending-frame age. ``stall_mode`` makes every bounded run look
+    frozen before its first frame (no frames, no pending age) to exercise the wall-clock cap.
     """
 
     def __init__(
@@ -135,7 +136,7 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         if opcode == OP_BARRIER_CLEAN:
             return OP_BARRIER_CLEAN
         if opcode == OP_COMP_PERIOD:
-            return 1000
+            return FEASIBLE_INTERVAL  # the pipeline keeps up with the pacing at this period
         if opcode == OP_READ_FILL:
             if self.mode == "paced":
                 return self.paced_peaks[fifo_id]
@@ -187,25 +188,34 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         self.num_polls += 1
         polls = self.polls
         cls = self._bounded_class()
-        regs = {"overflow": False, "underflow": False, "avg_fill": 1}
+        window = self.avg_window_sizes[-1]
+        regs = {"overflow": False, "underflow": False}
+
+        def win(frames, interval, latency):
+            """Set the window registers of a run with a constant interval and latency."""
+            regs.update(run_frames=frames, avg_fill=min(frames, window))
+            regs.update(int_win_min=interval, int_win_max=interval)
+            regs.update(lat_win_min=latency, lat_win_max=latency)
+
         if self.stall_mode:
-            regs.update(run_frames=0, int_win_max=0, lat_win_max=0, idle_cycles=0)
-            regs["oldest_pending_age"] = 0
+            win(0, 0, 0)
+            regs.update(idle_cycles=0, oldest_pending_age=0)
         elif cls == "feasible":
-            regs.update(run_frames=self.frames_per_poll * polls)
-            regs.update(int_win_max=FEASIBLE_INTERVAL, lat_win_max=FEASIBLE_LATENCY)
+            win(self.frames_per_poll * polls, FEASIBLE_INTERVAL, FEASIBLE_LATENCY)
             regs.update(
                 idle_cycles=FEASIBLE_INTERVAL // 2, oldest_pending_age=FEASIBLE_LATENCY // 2
             )
         elif cls == "degraded":
-            regs.update(run_frames=self.frames_per_poll * polls)
-            regs.update(int_win_max=FEASIBLE_INTERVAL + self.degrade_step * polls)
-            regs.update(lat_win_max=FEASIBLE_LATENCY + 4 * self.degrade_step * polls)
+            win(
+                self.frames_per_poll * polls,
+                FEASIBLE_INTERVAL + self.degrade_step * polls,
+                FEASIBLE_LATENCY + 4 * self.degrade_step * polls,
+            )
             regs.update(
                 idle_cycles=FEASIBLE_INTERVAL // 2, oldest_pending_age=FEASIBLE_LATENCY // 2
             )
         else:  # deadlock after the first frame
-            regs.update(run_frames=1, int_win_max=0, lat_win_max=FEASIBLE_LATENCY)
+            win(1, 0, FEASIBLE_LATENCY)
             regs.update(idle_cycles=1000 * polls, oldest_pending_age=1000 * polls + 50)
         return regs
 
@@ -257,8 +267,10 @@ def clock(monkeypatch):
     return fake
 
 
-#: Frame horizon used by the experiment tests (4 polls of the emulation)
-HORIZON = 12
+#: Window of the experiment tests: full after 2 polls of the emulation (3 frames per poll)
+WINDOW = 4
+#: Decision rules of the polling oracle that end an evaluation without the cap
+DECIDED = {"window_clean", "window_slow", "latency_violation", "idle_timeout", "pending_timeout"}
 
 
 @pytest.mark.parametrize(
@@ -283,7 +295,7 @@ def test_experiment_fifosizing_writes_reports(tmp_path, kwargs):
     overlay, mock = make_overlay()
     with pytest.warns(DeprecationWarning) if "fifo_search_order" in kwargs else _nowarn():
         overlay.experiment_fifosizing(
-            report_dir=str(tmp_path), stop_condition="both", steady_state_frames=HORIZON, **kwargs
+            report_dir=str(tmp_path), stop_condition="both", window_frames=WINDOW, **kwargs
         )
 
     strategy = kwargs.get("search_strategy") or "binary_" + kwargs["fifo_search_order"]
@@ -326,24 +338,23 @@ def test_experiment_fifosizing_writes_reports(tmp_path, kwargs):
     assert search["num_evaluations"] == len(search["all_iterations"]) == overlay.num_runs - 1
     for it in search["all_iterations"].values():
         assert "deadlock" in it and "fifo_depths" in it
-        assert it["decided_by"] in {
-            "horizon_reached",
-            "interval_violation",
-            "latency_violation",
-            "idle_timeout",
-            "pending_timeout",
-        }
+        assert it["decided_by"] in DECIDED and "undecided" not in it
         assert it["frames"] >= 1 and it["eval_time_s"] >= 0
     assert search["target_interval_cycles"] == FEASIBLE_INTERVAL
-    # the target measurement ran to the horizon, every verdict was decided by a rule
-    assert search["all_iterations"]["0"]["decided_by"] == "horizon_reached"
-    assert search["all_iterations"]["0"]["frames"] >= HORIZON
-    assert search["steady_state_detection"] and search["steady_state_frames"] == HORIZON
-    assert search["avg_window_size"] == HORIZON
-    assert set(overlay.avg_window_sizes[1:]) == {HORIZON}  # [0] is the paced run
+    assert search["target_latency_cycles"] == FEASIBLE_LATENCY
+    # the target measurement waited for a clean window, every verdict was decided by a rule
+    assert search["all_iterations"]["0"]["decided_by"] == "window_clean"
+    assert search["all_iterations"]["0"]["frames"] >= WINDOW + 1
+    assert search["steady_state_detection"] and search["window_frames"] == WINDOW
+    assert (
+        search["evaluation_cap_frames"]
+        == evaluation_cap(FEASIBLE_LATENCY, FEASIBLE_INTERVAL, WINDOW, 100.0, 4.0, 0.002)[0]
+    )
+    assert set(overlay.avg_window_sizes[1:]) == {WINDOW}  # [0] is the paced run
     assert sum(search["decisions"].values()) == search["num_evaluations"]
-    assert search["decisions"]["horizon_reached"] >= 1
-    assert "cap_hit" not in search["decisions"] and "fixed_runtime" not in search["decisions"]
+    assert search["decisions"]["window_clean"] >= 1
+    assert "cap_expired" not in search["decisions"]
+    assert "fixed_runtime" not in search["decisions"]
 
     optimum = brute_force_optimum(mock, TotalBitsCost([8, 64, 16, 32]), [6, 6, 5, 4])
     if strategy.startswith("binary_"):
@@ -399,7 +410,7 @@ def test_old_hardware_is_detected_and_bottom_up_refuses(tmp_path, clock):
         "steady_state_registers": False,
     }
     # old bitfile: every evaluation slept for the fixed runtime and read once
-    assert not search["steady_state_detection"] and search["steady_state_frames"] is None
+    assert not search["steady_state_detection"] and search["window_frames"] is None
     assert search["decisions"] == {"fixed_runtime": search["num_evaluations"]}
     assert overlay.num_polls == 0
     assert clock.num_sleeps >= search["num_evaluations"] + 1  # evaluations + the paced run
@@ -456,28 +467,31 @@ def test_size_iteratively_binary_search_compat(tmp_path):
     assert log["all_iterations"]["1"]["tested_fifo"] in (0, 1)  # deepest first: depth 6
 
 
-def test_steady_state_frames_from_paced_measurements():
-    """The horizon is the fixed-runtime observation converted to frames, at least 4."""
-    # kws: 4 * 1697 < 1e5 cycles -> 1e5 / 490 = 204.1 frames
-    assert steady_state_frames(1697, 490) == 205
-    # mobilenetv1: 4 * 711946 = 2847784 cycles / 394272 = 7.2 frames
-    assert steady_state_frames(711946, 394272) == 8
-    assert steady_state_frames(10, 100000) == 4  # minimum
-    assert steady_state_frames(1000, 0) >= 100000  # degenerate interval
+def test_evaluation_cap_from_paced_measurements():
+    """The cap covers cap_factor pipeline depths plus windows at the clock, plus the floor."""
+    # mobilenetv1: latency 711946 / interval 394272 -> 2 + 1 frames of depth, window 4 -> 28
+    frames, cap_s = evaluation_cap(711946, 394272, 4, 100.0, 4.0, 0.002)
+    assert frames == 28
+    assert cap_s == pytest.approx(28 * 394272 / 1e8 + 0.002)
+    # cybsec: the floor dominates the 36 frames of 70 cycles
+    frames, cap_s = evaluation_cap(213, 70, 4, 100.0, 4.0, 0.002)
+    assert frames == 36 and cap_s == pytest.approx(36 * 70 / 1e8 + 0.002)
+    assert evaluation_cap(1000, 0, 4, 100.0, 4.0, 0.0)[0] >= 4 * 1005  # degenerate interval
 
 
-def test_default_horizon_and_fixed_runtime_disabled(tmp_path):
-    """Without the kwarg the horizon comes from the paced run; the detection can be disabled."""
-    # paced latency 1000 / interval 100 (emulation) -> 1e5 / 100 = 1000 frames; the emulation
-    # completes 400 frames per poll so that the horizon is reached within the cap
-    overlay, mock = make_overlay(frames_per_poll=400)
+def test_default_window_and_fixed_runtime_disabled(tmp_path):
+    """Without kwargs the default window and the cap from the paced run apply; the detection
+    can be disabled."""
+    overlay, mock = make_overlay()
     overlay.experiment_fifosizing(report_dir=str(tmp_path), search_strategy="binary_forward")
     with open(tmp_path / "binary_forward" / "both" / "fifo_sizing_report.json") as f:
         search = json.load(f)["search"]
-    assert search["steady_state_frames"] == steady_state_frames(FEASIBLE_LATENCY, FEASIBLE_INTERVAL)
-    assert search["steady_state_frames"] == 1000 and search["avg_window_size"] == 1000
-    assert search["all_iterations"]["0"]["frames"] == 1200
-    assert "cap_hit" not in search["decisions"]
+    assert search["window_frames"] == DEFAULT_WINDOW_FRAMES == 4
+    frames, cap_s = evaluation_cap(FEASIBLE_LATENCY, FEASIBLE_INTERVAL, 4, 100.0, 4.0, 0.002)
+    assert search["evaluation_cap_frames"] == frames
+    assert search["evaluation_cap_s"] == pytest.approx(cap_s)
+    assert search["all_iterations"]["0"]["frames"] == 6  # 2 polls of 3 frames fill the window
+    assert "cap_expired" not in search["decisions"]
 
     overlay, mock = make_overlay()
     overlay.experiment_fifosizing(
@@ -493,7 +507,7 @@ def test_default_horizon_and_fixed_runtime_disabled(tmp_path):
     assert overlay.num_polls == 0
 
 
-def make_oracle(overlay, stop_condition, frames=HORIZON, cap_factor=4.0, feasibility=True):
+def make_oracle(overlay, stop_condition, frames=WINDOW, cap_s=0.004, feasibility=True):
     """Polling oracle on the emulated overlay with the thresholds of the mock targets."""
     overlay.hw_capabilities = {
         "peak_occupancy": True,
@@ -503,12 +517,11 @@ def make_oracle(overlay, stop_condition, frames=HORIZON, cap_factor=4.0, feasibi
     oracle = LiveFIFOOracle(
         overlay,
         iteration_runtime=0.001,
-        throttle_interval=1000,
+        throttle_interval=FEASIBLE_INTERVAL,
         hw_capabilities=overlay.hw_capabilities,
-        steady_state_frames=frames,
-        avg_window_size=frames,
+        window_frames=frames,
         poll_interval_s=0.0003,
-        cap_factor=cap_factor,
+        cap_s=cap_s,
     )
     if feasibility:
         oracle.feasibility = FeasibilityCheck(
@@ -527,82 +540,97 @@ def test_oracle_decision_rules(stop_condition, clock):
     # degraded instance: constraint {2} >= 3 violated by 2 (not severe), {3} >= 1 deadlocks at 0
     feasible, degraded, deadlock = [6, 6, 5, 4], [6, 6, 2, 4], [6, 6, 5, 0]
 
+    # feasible: the window (4 frames after the first) is full and clean at the 2nd poll
     r = oracle.evaluate(feasible, need_flags=True, need_peaks=True)
-    assert r.decided_by == "horizon_reached" and r.frames == HORIZON
-    assert overlay.polls == HORIZON // overlay.frames_per_poll
+    assert r.decided_by == "window_clean" and r.frames == 6 and overlay.polls == 2
     assert (r.interval, r.latency, r.min_latency) == (
         FEASIBLE_INTERVAL,
         FEASIBLE_LATENCY,
         FEASIBLE_LATENCY,
     )
-    assert fb.feasible(r) and not r.deadlock and r.peak is not None
+    assert fb.feasible(r) and not r.deadlock and not r.undecided and r.peak is not None
 
-    # slowly degrading: the window maximum crosses the threshold at the 1st poll
-    # (interval: 100 + 10 * polls > 100), long before the horizon
+    # steadily slow: a latency above the target is definitive at once (1st poll); the interval
+    # alone needs a full window whose minimum is above the threshold (2nd poll)
     r = oracle.evaluate(degraded)
-    if stop_condition == "latency":
-        assert r.decided_by == "latency_violation"
-        assert r.latency > fb.relaxed_latency_threshold
+    if stop_condition == "interval":
+        assert r.decided_by == "window_slow" and overlay.polls == 2 and r.frames == 6
+        assert r.interval == FEASIBLE_INTERVAL + 20 > fb.relaxed_interval_threshold
     else:
-        assert r.decided_by == "interval_violation"
-        assert r.interval > fb.relaxed_interval_threshold
-    assert overlay.polls == 1 and r.frames == overlay.frames_per_poll
+        assert r.decided_by == "latency_violation" and overlay.polls == 1 and r.frames == 3
+        assert r.latency > fb.relaxed_latency_threshold
     assert not fb.feasible(r) and not r.deadlock
 
-    # deadlock after the first frame: idle (interval rule) or pending age (latency rule)
+    # deadlock after the first frame: pending age (latency rules, 1st poll) or idle longer than
+    # the stall bound of latency + interval (2nd poll)
     r = oracle.evaluate(deadlock, need_flags=True)
-    if stop_condition == "latency":
-        assert r.decided_by == "pending_timeout"
-        assert r.latency == 1050 > fb.relaxed_latency_threshold
+    if stop_condition == "interval":
+        assert r.decided_by == "idle_timeout" and overlay.polls == 2
+        assert r.interval == 2000 > fb.stall_bound == FEASIBLE_LATENCY + FEASIBLE_INTERVAL
     else:
-        assert r.decided_by == "idle_timeout"
-        assert r.interval == 1000 > fb.relaxed_interval_threshold
-    assert overlay.polls == 1 and r.frames == 1
+        assert r.decided_by == "pending_timeout" and overlay.polls == 1
+        assert r.latency == 1050 > fb.relaxed_latency_threshold
+    assert r.frames == 1
     assert not fb.feasible(r) and not r.deadlock and r.producer_blocked is not None
 
 
-def test_oracle_degradation_within_threshold_reaches_horizon(clock):
-    """A degradation below the relaxed threshold is not a violation: the horizon decides."""
-    overlay, mock = make_overlay(degrade_step=1)  # +1 cycle per poll, 4 polls to the horizon
+def test_oracle_degradation_within_threshold_is_clean(clock):
+    """A degradation below the relaxed threshold is accepted once the window is full."""
+    overlay, mock = make_overlay(degrade_step=1)  # +1 cycle per poll
     oracle = make_oracle(overlay, "interval")
     oracle.feasibility = FeasibilityCheck("interval", 0.1, FEASIBLE_INTERVAL, FEASIBLE_LATENCY)
     r = oracle.evaluate([6, 6, 2, 4])
-    assert r.decided_by == "horizon_reached" and r.frames == HORIZON
-    assert r.interval == FEASIBLE_INTERVAL + 4  # the window maximum at the horizon
+    assert r.decided_by == "window_clean" and r.frames == 6 and overlay.polls == 2
+    assert r.interval == FEASIBLE_INTERVAL + 2  # the window maximum when the window filled
     assert oracle.feasibility.feasible(r)
-    # a tighter relaxation turns the same configuration into a violation at the 3rd poll
-    oracle.feasibility = FeasibilityCheck("interval", 0.02, FEASIBLE_INTERVAL, FEASIBLE_LATENCY)
+    # a tighter relaxation turns the same configuration into a slow window at the same poll
+    oracle.feasibility = FeasibilityCheck("interval", 0.01, FEASIBLE_INTERVAL, FEASIBLE_LATENCY)
     r = oracle.evaluate([6, 6, 2, 4])
-    assert r.decided_by == "interval_violation" and overlay.polls == 3
+    assert r.decided_by == "window_slow" and overlay.polls == 2
+    assert not oracle.feasibility.feasible(r)
 
 
-def test_oracle_cap_falls_back_to_single_read(clock, capsys):
-    """When no rule fires before the cap, the old single-read decision is used and logged."""
+def test_oracle_cap_rejects(clock):
+    """When no rule fires before the cap, the evaluation is undecided and never feasible."""
     overlay, mock = make_overlay()
     overlay.stall_mode = True  # frozen before the first frame: no rule can fire
-    oracle = make_oracle(overlay, "interval", cap_factor=4.0)
+    oracle = make_oracle(overlay, "interval", cap_s=0.004)
     t0 = clock.now
     r = oracle.evaluate([6, 6, 5, 4])
-    assert r.decided_by == "cap_hit" and r.frames == 0
+    assert r.decided_by == "cap_expired" and r.frames == 0 and r.undecided and r.deadlock
     assert clock.now - t0 == pytest.approx(oracle.cap_s, abs=oracle.poll_interval_s)
-    assert "STEADY STATE CAP HIT" in capsys.readouterr().out
-    # the single read reports the mock's verdict: feasible here, degraded for a violated one
-    assert (r.interval, r.latency) == (FEASIBLE_INTERVAL, FEASIBLE_LATENCY) and not r.deadlock
-    r = oracle.evaluate([6, 6, 2, 4])
-    assert r.decided_by == "cap_hit" and r.interval == DEGRADED_INTERVAL
-    # a stalled run reads interval 0 in the deadlock class: reported as deadlock, as before
-    r = oracle.evaluate([6, 6, 5, 0])
-    assert r.decided_by == "cap_hit" and r.deadlock
+    assert not oracle.feasibility.feasible(r)
+    # a slow start that never fills the window within the cap is rejected the same way, even
+    # though its values are within the thresholds
+    overlay.stall_mode = False
+    overlay.frames_per_poll = 1
+    oracle = make_oracle(overlay, "interval", cap_s=0.0006)  # 3 polls: 3 frames < window + 1
+    r = oracle.evaluate([6, 6, 5, 4])
+    assert r.decided_by == "cap_expired" and r.undecided and not r.deadlock
+    assert r.interval == FEASIBLE_INTERVAL and not oracle.feasibility.feasible(r)
 
 
 def test_oracle_target_measurement_without_thresholds(clock):
-    """Before the thresholds exist (target measurement) only the horizon and the cap decide."""
+    """Before the thresholds exist (target measurement) only a constant window or the cap decide."""
     overlay, mock = make_overlay()
     oracle = make_oracle(overlay, "both", feasibility=False)
     r = oracle.evaluate([6, 6, 5, 0])  # would be a deadlock, but no threshold is known yet
-    assert r.decided_by == "cap_hit" and r.frames == 1
+    assert r.decided_by == "cap_expired" and r.frames == 1 and r.undecided
     r = oracle.evaluate([6, 6, 5, 4])
-    assert r.decided_by == "horizon_reached" and r.frames == HORIZON
+    assert r.decided_by == "window_clean" and r.frames == 6
+
+
+def test_target_without_steady_state_aborts(tmp_path):
+    """A start configuration that never shows a clean window aborts the experiment."""
+    overlay, mock = make_overlay()
+    overlay.frames_per_poll = 1
+    with pytest.raises(RuntimeError, match="no steady state within the evaluation cap"):
+        overlay.experiment_fifosizing(
+            report_dir=str(tmp_path),
+            search_strategy="binary_forward",
+            cap_factor=0.0,
+            cap_floor_s=0.0005,  # 2 polls, 2 frames: the window never fills
+        )
 
 
 class _nowarn:

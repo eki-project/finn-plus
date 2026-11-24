@@ -187,15 +187,21 @@ def make_context(
 
 
 def test_feasibility_thresholds_match_original_formulas():
-    """Thresholds are target*(1+relaxation) and target*(1+0.0005+relaxation)."""
+    """Both thresholds are target*(1+relaxation), without any hidden tolerance."""
     target = EvalResult((1,), 200, 4000, 3000, False)
     fb = FeasibilityCheck.from_result("both", 0.1, target)
     assert fb.relaxed_interval_threshold == pytest.approx(220.0)
-    assert fb.relaxed_latency_threshold == pytest.approx(4000 * 1.1005)
-    assert fb.feasible(EvalResult((1,), 220, 4000, 1, False))
+    assert fb.relaxed_latency_threshold == pytest.approx(4400.0)
+    assert fb.stall_bound == pytest.approx(4620.0)
+    assert fb.feasible(EvalResult((1,), 220, 4400, 1, False))
     assert not fb.feasible(EvalResult((1,), 221, 4000, 1, False))
-    assert not fb.feasible(EvalResult((1,), 200, 4403, 1, False))
+    assert not fb.feasible(EvalResult((1,), 200, 4401, 1, False))
     assert not fb.feasible(EvalResult((1,), 200, 4000, 1, True))
+    assert not fb.feasible(EvalResult((1,), 200, 4000, 1, False, undecided=True))
+    assert FeasibilityCheck("both", 0.0, 200, 4000).feasible(EvalResult((1,), 200, 4000, 1, False))
+    assert not FeasibilityCheck("both", 0.0, 200, 4000).feasible(
+        EvalResult((1,), 200, 4001, 1, False)
+    )
     assert FeasibilityCheck("interval", 0.0, 200, 4000).feasible(
         EvalResult((1,), 200, 9999, 1, False)
     )
