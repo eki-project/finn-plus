@@ -504,8 +504,10 @@ QoR TabPFN:
       allow_failure: true
   needs:
     - job: Result Collection
-  # above the Slurm wall time below; the GitLab timer also runs while the job waits in the queue
-  timeout: 3h
+  # The GitLab timer also runs while the job waits in the GPU queue (a full A40 partition cost
+  # 3 h of waiting on 2026-11-24), so it is far above the Slurm wall time below, which alone
+  # bounds the fitting itself.
+  timeout: 24h
   variables:
     # One GPU (--gres=gpu:TYPE:COUNT per the PC2 docs) with the CPU share the docs pair with a
     # GPU (16 cores) and memory for the venv on the RAM disk plus TabPFN's host memory (8 GB
@@ -603,7 +605,8 @@ QoR End2End Models:
       allow_failure: true
   needs:
     - job: Result Collection
-  timeout: 3h
+  # see QoR TabPFN: the GitLab timer includes the GPU queue wait
+  timeout: 24h
   variables:
     QOR_GPU_SLURM_TIMEOUT: "2:00:00"
     QOR_GPU_CPU_CORES: "16"
