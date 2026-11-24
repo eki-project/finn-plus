@@ -124,3 +124,14 @@ class FINNVitisLinkConfigError(FINNInternalError):
     def __init__(self, *args: object) -> None:
         """Create a new FINNVitisLinkConfigError."""
         super().__init__(*args)
+
+
+class FINNFrontendExportError(FINNUserError):
+    """(User) Error emitted if the ONNX Passes frontend leaves operators in the model
+    which cannot be exported to QONNX/FINN, e.g., MultiThreshold variants without a
+    FINN counterpart.
+    """
+
+    def __init__(self, *args: object) -> None:
+        """Create a new FINNFrontendExportError."""
+        super().__init__(*args)
