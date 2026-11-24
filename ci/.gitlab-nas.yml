@@ -3,8 +3,9 @@
 #
 # Stages: the random-sampling baseline and the four search variants run in parallel on CPU
 # nodes, the Pareto fronts and a slice of the feasible samples are exported for full builds, the
-# proxy ground truth trains candidates on a GPU node, and the report renders the figures and
-# copies everything to the persistent result store ($OTUS_NAS_RESULT_DIR_STORE).
+# proxy ground truth trains candidates on a GPU node, the report renders the figures, and a last
+# job on the login node copies everything to the persistent result store
+# ($OTUS_NAS_RESULT_DIR_STORE, which is read-only from the compute nodes).
 include: ci/.gitlab-setup.yml
 
 stages:
@@ -12,6 +13,7 @@ stages:
   - export
   - groundtruth
   - report
+  - store
 
 variables:
   NAS_CFG:
@@ -276,12 +278,36 @@ NAS Report:
         echo "No results to report"
         status=1
       fi
-      mkdir -p "$NAS_STORE"
-      cp -r "$NAS_OUT/." "$NAS_STORE/"
-      echo "Results stored under $NAS_STORE"
       exit $status
   artifacts:
     name: "nas_results"
     when: always
     paths:
       - nas_artifacts/
+
+# Everything the report job collected goes to the persistent result store. Runs on the login
+# node without Slurm: the group directory is read-only on the compute nodes.
+NAS Store:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: store
+  tags:
+    - otus_login
+  needs:
+    - job: NAS Report
+  rules:
+    # Also run on failure of previous jobs to keep partial results
+    - when: always
+  script:
+    - |
+      : "${OTUS_NAS_RESULT_DIR_STORE:?project variable OTUS_NAS_RESULT_DIR_STORE is not set (persistent result directory, see ci/nas/README.md)}"
+      NAS_STORE="$OTUS_NAS_RESULT_DIR_STORE/${CI_PIPELINE_CREATED_AT:0:10}_${CI_COMMIT_SHORT_SHA}_${PARENT_PIPELINE_ID}_${NAS_CFG}"
+      if [ ! -d nas_artifacts ]; then
+        echo "No results to store"
+        exit 1
+      fi
+      mkdir -p "$NAS_STORE"
+      cp -r nas_artifacts/. "$NAS_STORE/"
+      echo "Results stored under $NAS_STORE"
+      du -sh "$NAS_STORE"
