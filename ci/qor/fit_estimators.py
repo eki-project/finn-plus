@@ -439,7 +439,8 @@ def main() -> int:
                     entry["stored"] = True
             summary[name] = entry
 
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    # a subset run must not overwrite the summary of the full run in the same output directory
+    (out_dir / f"summary{subset_suffix}.json").write_text(json.dumps(summary, indent=2))
     logger.info("Summary:\n%s", json.dumps(summary, indent=2))
     return 1 if failures else 0
 
