@@ -1,5 +1,10 @@
 # End-to-end benchmarks of the distributed-arithmetic MVU on three MLPs and a 1D CNN.
 #
+# Not part of the regular Bench (Basic) matrix. Launch it on demand through the
+# Bench (Manual) job with MANUAL_CFG_PATH=regression_da, PARALLEL_JOBS=21 (one
+# Slurm array task per run) and TEST_SUITE=none; a full run takes about 15 h
+# (RUN 13 alone needs 13 h of HLS synthesis).
+#
 # The cybsec MLP (600 -> 64 -> 64 -> 64 -> 1, 2-bit weights) across the MVAU and
 # threshold implementation options, as a benchmark for the distributed-arithmetic
 # MVU. At the regular folding target of the regression (1 M fps, hidden layers at
