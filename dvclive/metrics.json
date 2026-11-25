@@ -1,0 +1,78 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 6814.0,
+            "DSP": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 21504,
+            "max_cycles": 16384,
+            "max_cycles_node_name": "MVAU_hls_0",
+            "estimated_throughput_fps": 12207.03125,
+            "estimated_latency_ns": 107520.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 6265.0,
+            "FF": 2156.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        }
+    },
+    "empirical_estimate": {
+        "resources": {
+            "LUT": 4432.0,
+            "DSP": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        },
+        "power": {
+            "power": 206.20589211550916
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 18916,
+            "FF": 25453,
+            "SRL": 626,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 5,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "power": {
+            "avg_0V85_power": 4.15072,
+            "avg_3V3_power": 2.6688000000000005,
+            "avg_total_power": 6.819519999999999,
+            "min_0V85_power": 4.15072,
+            "min_3V3_power": 2.6688000000000005,
+            "min_total_power": 6.819519999999999,
+            "max_0V85_power": 4.15072,
+            "max_3V3_power": 2.6688000000000005,
+            "max_total_power": 6.819519999999999
+        }
+    },
+    "time": {
+        "step_apply_multi_dnn": 0,
+        "step_collapse_multi_dnn": 0,
+        "finn.transformation.multi_dnn.multi_dnn_steps.step_maximize_concat_split_simd": 0,
+        "step_minimize_bit_width": 0,
+        "step_generate_estimate_reports": 0,
+        "step_prepare_nodecontainer": 0,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 84,
+        "step_create_stitched_ip": 0,
+        "step_synthesize_bitfile": 761,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 845
+    }
+}
