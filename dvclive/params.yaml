@@ -1,0 +1,40 @@
+params:
+  dut: bnn-pynq
+  model_path: models/bnn-pynq/tfc-w1a2_qonnx.onnx
+  steps:
+  - finn.builder.custom_step_library.general.add_preproc_divide_by_255
+  - finn.builder.custom_step_library.general.add_postproc_top1
+  - step_qonnx_to_finn
+  - step_tidy_up
+  - step_streamline
+  - finn.builder.custom_step_library.general.flatten_global_input
+  - step_convert_to_hw
+  - step_minimize_bit_width_initial
+  - step_create_dataflow_partition
+  - step_specialize_layers
+  - step_target_fps_parallelization
+  - step_apply_folding_config
+  - step_minimize_bit_width
+  - step_generate_estimate_reports
+  - step_generate_hardware
+  - step_create_stitched_ip
+  - step_measure_rtlsim_performance
+  - step_out_of_context_synthesis
+  - step_synthesize_bitfile
+  - step_make_driver
+  - step_deployment_package
+  standalone_thresholds: true
+  folding_config_file: models/bnn-pynq/tfc-w1a2_unrolled_hls_embedded_folding_config.json
+  specialize_layers_config_file: models/bnn-pynq/tfc-w1a2_specialize_layers.json
+  auto_fifo_strategy: force_minimal_fifos
+  generate_outputs:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  validation_dataset: mnist
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
