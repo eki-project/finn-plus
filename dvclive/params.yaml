@@ -1,0 +1,19 @@
+params:
+  dut: cybsec
+  target_fps:
+  standalone_thresholds: true
+  folding_config_file: models/cybsec/unrolled_hls_embedded_folding_config.json
+  enable_da_mvau: true
+  auto_fifo_strategy: force_minimal_fifos
+  generate_outputs:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+  validation_dataset: unswnb15
+  model_path: models/cybsec/unsw_nb15-mlp-w2a2.onnx
+metadata:
+  tool_version: '2024.2'
