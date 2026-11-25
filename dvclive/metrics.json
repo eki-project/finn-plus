@@ -1,0 +1,46 @@
+{
+    "status": "failed",
+    "estimate": {
+        "resources": {
+            "LUT": 5880.0,
+            "DSP": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 36392,
+            "max_cycles": 2048,
+            "max_cycles_node_name": "NodeContainer_0",
+            "estimated_throughput_fps": 97656.25,
+            "estimated_latency_ns": 181960.0
+        }
+    },
+    "empirical_estimate": {
+        "resources": {
+            "LUT": 5880.0,
+            "DSP": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        },
+        "power": {
+            "power": 0.0
+        }
+    },
+    "time": {
+        "step_tidy_up": 0,
+        "finn.builder.custom_step_library.conv1d.step_pre_streamline": 0,
+        "step_streamline": 6,
+        "step_convert_to_hw": 0,
+        "finn.builder.custom_step_library.conv1d.step_convert_final_layers": 0,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_apply_multi_dnn": 0,
+        "step_collapse_multi_dnn": 0,
+        "step_target_fps_parallelization": 0,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 0,
+        "step_generate_estimate_reports": 0,
+        "step_prepare_nodecontainer": 1558,
+        "total_build_time": 1564
+    }
+}
