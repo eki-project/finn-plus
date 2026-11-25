@@ -35,6 +35,7 @@ compute (TH > 1) and various weight memory modes.
 
 import math
 import numpy as np
+import shutil
 from onnx import GraphProto, NodeProto
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
@@ -43,7 +44,12 @@ from typing import TYPE_CHECKING, Literal, cast
 from finn.custom_op.fpgadataflow.hwcustomop import NodeAttrTypes
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
-from finn.custom_op.fpgadataflow.rtl.da_codegen import DA_LUT_PER_COST_BIT, build_da_core
+from finn.custom_op.fpgadataflow.rtl.da_codegen import (
+    ALKAID_LICENSE_FILES,
+    ALKAID_NOTICE_FILE,
+    DA_LUT_PER_COST_BIT,
+    build_da_core,
+)
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import get_dsp_block, get_dsp_datapath_limits
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
@@ -281,6 +287,12 @@ class MVAU_rtl(MVAU, RTLBackend):
         core = self._build_da_core(model, clk, top)
         for fname, text in core.files.items():
             (Path(code_gen_dir) / fname).write_text(text)
+        if core.notice:
+            # attribution + license texts for the copied alkaid primitives (LGPL-3.0)
+            (Path(code_gen_dir) / ALKAID_NOTICE_FILE).write_text(core.notice)
+            license_dir = self._rtllib_dir() / "third_party" / "alkaid"
+            for lic in ALKAID_LICENSE_FILES:
+                shutil.copyfile(license_dir / lic, Path(code_gen_dir) / lic)
 
         code_gen_dict = {
             "$MODULE_NAME_AXI_WRAPPER$": top,

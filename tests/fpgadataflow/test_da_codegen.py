@@ -36,7 +36,9 @@ from qonnx.core.datatype import DataType
 from qonnx.util.basic import calculate_matvec_accumulator_range, gen_finn_dt_tensor
 
 from finn.custom_op.fpgadataflow.rtl.da_codegen import (
+    ALKAID_LICENSE_FILES,
     DA_PRIMITIVE_MODULES,
+    alkaid_version,
     build_da_core,
     clear_da_solution_cache,
     da_cost_estimate,
@@ -147,7 +149,26 @@ def test_da_codegen_golden_and_interface(idt, wdt, hard_dc):
         assert not re.search(rf"(?<![\w$]){prim}\s*#\s*\(", all_text), f"unprefixed {prim}"
         if re.search(rf"(?<![\w$]){core.top_name}_{prim}\s*#\s*\(", all_text):
             assert f"{core.top_name}_{prim}.v" in core.files
-    assert "multiplier" not in all_text.replace(f"{core.top_name}_multiplier", "")
+    assert not re.search(r"multiplier\s*#\s*\(", all_text), "generic multiplier instantiated"
+    assert f"{core.top_name}_multiplier.v" not in core.files
+    # copied primitives carry the alkaid attribution, generated files do not
+    copied = [
+        f"{core.top_name}_{p}.v"
+        for p in DA_PRIMITIVE_MODULES
+        if f"{core.top_name}_{p}.v" in core.files
+    ]
+    for fname, text in core.files.items():
+        if fname in copied:
+            head = text[: re.search(r"^\s*module\s", text, flags=re.MULTILINE).start()]
+            assert "alkaid" in head and "LGPL-3.0-or-later" in head and alkaid_version() in head
+            assert fname in core.notice
+        else:
+            assert "LGPL" not in text
+    if copied:
+        assert alkaid_version() in core.notice
+        assert all(lic in core.notice for lic in ALKAID_LICENSE_FILES)
+    else:
+        assert core.notice == ""
     assert f"{core.top_name}.v" in core.files
     assert f"{core.wrapper_name}.v" in core.files
     assert f"module {core.wrapper_name} (" in core.files[f"{core.wrapper_name}.v"]

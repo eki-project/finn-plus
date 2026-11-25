@@ -29,10 +29,10 @@
 import pytest
 
 import itertools
-
 import numpy as np
 import qonnx.custom_op.general.xnorpopcount as xp
 from onnx import TensorProto, helper
+from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.general.multithreshold import multithreshold
@@ -53,6 +53,7 @@ from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.core.rtlsim_exec import rtlsim_exec
+from finn.custom_op.fpgadataflow.rtl.da_codegen import ALKAID_LICENSE_FILES, ALKAID_NOTICE_FILE
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
     InferQuantizedMatrixVectorActivation,
@@ -1231,6 +1232,11 @@ def test_fpgadataflow_rtl_mvau_da(mw_mh, idt_wdt, part, clk_ns, sparsity, hard_d
     assert inst.get_nodeattr("da_latency_cycles") >= 2
     assert inst.dsp_estimation(part) == 0
     assert inst.lut_estimation(part) > 0
+    # attribution for the copied alkaid primitives sits next to the Verilog, not in Vivado's file list
+    code_gen_dir = Path(inst.get_nodeattr("code_gen_dir_ipgen"))
+    for fname in (ALKAID_NOTICE_FILE, *ALKAID_LICENSE_FILES):
+        assert (code_gen_dir / fname).is_file(), fname
+    assert all(f.endswith((".v", ".sv")) for f in inst.get_rtl_file_list(abspath=False))
     # one vector per cycle plus the pipeline: cycle count must stay close to the estimate
     exp_cycles = model.analysis(exp_cycles_per_layer)[model.graph.node[0].name]
     cycles_rtlsim = inst.get_nodeattr("cycles_rtlsim")

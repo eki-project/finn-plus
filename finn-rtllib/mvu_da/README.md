@@ -87,8 +87,17 @@ with uniform per-element slots), `<node>_da_core_tables.v` (partial-sum LUTs,
 1-bit inputs only) and prefixed copies of the alkaid primitives
 (`<node>_da_core_shift_adder.v`, `..._ternary_adder.v`, `..._negative.v`, ...).
 Every module name carries the node name, so several cores coexist in one
-Vivado project. The primitive sources are library code of alkaid (LGPL-3.0),
-copied at build time from the installed package.
+Vivado project. The primitive sources are library code of alkaid
+(LGPL-3.0-or-later), copied at build time from the installed package. Each copy
+starts with an attribution header, and `NOTICE_alkaid.txt` next to the Verilog
+lists the copied files, the alkaid version and the modification (the module
+prefix); the license texts come along as `LICENSE.LGPL-3.0.txt` and
+`LICENSE.GPL-3.0.txt` (from `third_party/alkaid/` in this directory). Whoever
+passes on a generated accelerator that contains a DA core has to keep these
+notices and make the primitive sources available (LGPL section 4); the files
+generated from the weights (stages, pipeline, tables, wrappers) are tool output
+and not affected. None of the generated files is needed to *use* the RTL MVAU
+in a design that stays in-house.
 
 ## Datatype mapping
 

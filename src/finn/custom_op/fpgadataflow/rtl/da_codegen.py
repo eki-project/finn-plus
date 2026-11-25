@@ -54,6 +54,7 @@ Bus layout between FINN and the generated core (see also ``mvu_da_axi_wrapper.v`
 """
 
 import hashlib
+import importlib.metadata
 import numpy as np
 import re
 import threading
@@ -135,6 +136,8 @@ class DACore:
     """Bit-exact reference: takes FINN-encoded inputs of shape (N, MW), returns (N, MH)."""
     comb: object = field(repr=False, default=None)
     """The alkaid ``CombLogic`` program (kept for inspection, not serializable)."""
+    notice: str = ""
+    """Third-party notice for the copied alkaid primitives (empty if none were copied)."""
 
 
 def _require(cond: bool, msg: str) -> None:
@@ -176,6 +179,82 @@ def _primitive_source_dir() -> str:
     import alkaid.codegen.rtl.verilog as vpkg
 
     return str(Path(vpkg.__file__).parent / "source")
+
+
+# Attribution for the alkaid primitives that end up in the generated design. The
+# primitives are LGPL-3.0-or-later library code; the files generated from the
+# weights (stages, pipeline, io wrapper, tables) are tool output and not covered.
+ALKAID_URL = "https://github.com/calad0i/alkaid"
+ALKAID_COPYRIGHT = "Copyright (C) Chang Sun and the alkaid contributors"
+ALKAID_NOTICE_FILE = "NOTICE_alkaid.txt"
+ALKAID_LICENSE_FILES = ("LICENSE.LGPL-3.0.txt", "LICENSE.GPL-3.0.txt")
+"""License texts shipped in ``finn-rtllib/mvu_da/third_party/alkaid`` and copied
+next to the notice when a core is generated."""
+
+
+def alkaid_version() -> str:
+    """Return the installed alkaid version, or ``"unknown"`` without package metadata."""
+    try:
+        return importlib.metadata.version("alkaid")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _primitive_header(primitive: str, prefix: str, version: str) -> str:
+    """Return the Verilog comment that heads a copied alkaid primitive file."""
+    return f"""\
+// ---------------------------------------------------------------------------
+// Modified copy of `{primitive}.v` from alkaid {version} ({ALKAID_URL}),
+// {ALKAID_COPYRIGHT}.
+// alkaid is free software under the GNU Lesser General Public License,
+// version 3 or (at your option) any later version (LGPL-3.0-or-later).
+// This file is distributed WITHOUT ANY WARRANTY; see {ALKAID_LICENSE_FILES[0]}
+// and {ALKAID_LICENSE_FILES[1]} next to it for the terms.
+// Modification by FINN+: the identifier of the Verilog module below carries the
+// prefix `{prefix}` so that several cores can coexist in one design.
+// Further details: {ALKAID_NOTICE_FILE} in this directory.
+// ---------------------------------------------------------------------------
+
+"""
+
+
+def alkaid_notice(top_name: str, copied: dict[str, str], version: str) -> str:
+    """Return the third-party notice for a generated core.
+
+    Args:
+        top_name: Name of the core (prefix of every generated file).
+        copied: Mapping from the emitted file name to the alkaid primitive it copies.
+        version: alkaid version the primitives were taken from.
+    """
+    listing = "\n".join(f"  {dst}  (from alkaid's {src}.v)" for dst, src in sorted(copied.items()))
+    return f"""\
+Third-party notice for the distributed-arithmetic core {top_name}
+{"=" * (50 + len(top_name))}
+
+The following Verilog files are modified copies of library sources of
+alkaid {version} ({ALKAID_URL}, PyPI package "alkaid"),
+{ALKAID_COPYRIGHT}:
+
+{listing}
+
+alkaid is free software: you can redistribute it and/or modify it under the
+terms of the GNU Lesser General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. It is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. The text of the GNU Lesser General Public
+License is in {ALKAID_LICENSE_FILES[0]} and the GNU General Public License it
+supplements is in {ALKAID_LICENSE_FILES[1]}, both next to this file.
+
+Modification by FINN+ (https://github.com/eki-project/finn-plus): the Verilog
+module identifiers in the files above carry the prefix "{top_name}_" so that
+several cores can coexist in one design. Nothing else was changed.
+
+The other files of this core ({top_name}.v, {top_name}_logic*.v,
+{top_name}_tables.v, {top_name}_wrapper.v and the AXI wrapper) were generated
+by alkaid and FINN+ from the weights of the model. They contain no alkaid
+library code and this notice does not apply to them.
+"""
 
 
 def latency_cutoff_from_clk(clk_ns: float) -> float:
@@ -464,6 +543,11 @@ def build_da_core(
     for text in files.values():
         for n in module_names_in(text):
             assert n.startswith(top_name), f"module {n} escaped prefixing"
+    version = alkaid_version()
+    copied = {f"{prefix}{p}.v": p for p in used_primitives}
+    for fname, p in copied.items():
+        files[fname] = _primitive_header(p, prefix, version) + files[fname]
+    notice = alkaid_notice(top_name, copied, version) if copied else ""
 
     n_adders = sum(op.opcode in (0, 1, 4, 11) for op in comb.ops)
 
@@ -492,6 +576,7 @@ def build_da_core(
         latency_cutoff=float(latency_cutoff),
         golden=golden,
         comb=comb,
+        notice=notice,
     )
 
 
