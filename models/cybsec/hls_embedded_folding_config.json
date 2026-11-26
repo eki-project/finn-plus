@@ -1,0 +1,6 @@
+{
+  "Defaults": {
+    "mem_mode": ["internal_embedded", ["MVAU_hls"]],
+    "resType": ["lut", ["MVAU_hls"]]
+  }
+}

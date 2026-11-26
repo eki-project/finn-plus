@@ -1,0 +1,106 @@
+# Distributed-arithmetic MVU (MVAU_rtl, mem_mode=internal_embedded) against the HLS
+# MVAU with embedded weights on identical, fully unrolled weight matrices (sf = nf = 1).
+# Used to calibrate DA_LUT_PER_COST_BIT and DA_LATENCY_CUTOFF_PER_NS in da_codegen.py.
+[
+    {
+        "dut": ["mvau"],
+        "idt": ["UINT4"], "wdt": ["INT4"], "act": [null],
+        "sparsity_type": ["none"], "sparsity_amount": [0],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls"],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        "dut": ["mvau"],
+        "idt": ["UINT4"], "wdt": ["INT4"], "act": [null],
+        "sparsity_type": ["none"], "sparsity_amount": [0],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["rtl"], "da_hard_dc": [-1, 2],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth"]]
+    },
+    {
+        "dut": ["mvau"],
+        "idt": ["UINT4"], "wdt": ["INT4"], "act": [null],
+        "sparsity_type": ["unstructured"], "sparsity_amount": [0.5],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls"],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        "dut": ["mvau"],
+        "idt": ["UINT4"], "wdt": ["INT4"], "act": [null],
+        "sparsity_type": ["unstructured"], "sparsity_amount": [0.5],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["rtl"], "da_hard_dc": [-1, 2],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        "dut": ["mvau"],
+        "idt": ["INT8"], "wdt": ["INT8"], "act": [null],
+        "sparsity_type": ["none"], "sparsity_amount": [0],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls"],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        "dut": ["mvau"],
+        "idt": ["INT8"], "wdt": ["INT8"], "act": [null],
+        "sparsity_type": ["none"], "sparsity_amount": [0],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["rtl"], "da_hard_dc": [-1, 2],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth"]]
+    },
+    {
+        "dut": ["mvau"],
+        "idt": ["INT8"], "wdt": ["INT8"], "act": [null],
+        "sparsity_type": ["unstructured"], "sparsity_amount": [0.5],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls", "rtl"], "da_hard_dc": [2],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        # BIPOLAR weights cannot hold zeros: dense only
+        "dut": ["mvau"],
+        "idt": ["UINT4"], "wdt": ["BIPOLAR"], "act": [null],
+        "sparsity_type": ["none"], "sparsity_amount": [0],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls", "rtl"], "da_hard_dc": [2],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        # bipolar activations: the 1-bit inputs take alkaid's partial-sum LUT path
+        "dut": ["mvau"],
+        "idt": ["BIPOLAR"], "wdt": ["INT4"], "act": [null],
+        "sparsity_type": ["none"], "sparsity_amount": [0],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls", "rtl"], "da_hard_dc": [2],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+]

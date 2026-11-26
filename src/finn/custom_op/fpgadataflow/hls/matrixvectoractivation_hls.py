@@ -373,6 +373,18 @@ class MVAU_hls(MVAU, HLSBackend):
                 f"{self.onnx_node.name}: mem_mode must be one of {_MEM_MODES}, got {self.mem_mode}"
             )
 
+    def single_iteration_per_call(self) -> bool:
+        """Return True if every call of the HLS top processes exactly one weight tile of one
+        input vector (WMEM=1, one input vector, static weights), i.e. no loop remains
+        to pipeline and the top function itself has to be pipelined."""
+        return (
+            self.calc_wmem() == 1
+            and int(np.prod(self.num_input_vectors)) == 1
+            and self.mem_mode in ("internal_embedded", "internal_decoupled")
+            and self.mlo_max_iter == 0
+            and not self.get_nodeattr("bodies")
+        )
+
     def pragmas(self) -> None:
         """Emit HLS interface, resource and array partition pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = [
@@ -380,6 +392,14 @@ class MVAU_hls(MVAU, HLSBackend):
             "#pragma HLS INTERFACE axis port=out0_V",
             "#pragma HLS INTERFACE ap_ctrl_none port=return",
         ]
+        if self.single_iteration_per_call():
+            # With a single weight tile and a single input vector per call the pipelined
+            # loop inside the hlslib function has one iteration and is flattened away, so
+            # every call of the (unpipelined) top pays its full latency as the interval
+            # (6 cycles per vector for the embedded MVAU). Pipelining the top itself
+            # brings it back to one vector per cycle. Only safe here, since function-level
+            # pipelining unrolls every loop of the top.
+            self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS pipeline II=1 style=flp")
 
         if self.mem_mode == "internal_embedded":
             self.code_gen_dict["$PRAGMAS$"].append('#include "params.h"')

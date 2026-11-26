@@ -1,0 +1,74 @@
+# Baseline for the distributed-arithmetic MVU: what does the HLS MVAU gain from
+# constant folding at WMEM = 1 (embedded vs. decoupled weights, same folding), and
+# the alkaid cost of the same weights (logged as da_* in dut_info.json). sf = nf = 1
+# is the fully unrolled layer (SIMD = MW, PE = MH); the last block sweeps WMEM.
+[
+    {
+        "dut": ["mvau"],
+        "idt": ["UINT4"], "wdt": ["INT4"], "act": [null],
+        "sparsity_type": ["none"], "sparsity_amount": [0],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded", "internal_decoupled"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls"],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        "dut": ["mvau"],
+        "idt": ["UINT4"], "wdt": ["INT4"], "act": [null],
+        "sparsity_type": ["unstructured"], "sparsity_amount": [0.5],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded", "internal_decoupled"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls"],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        "dut": ["mvau"],
+        "idt": ["INT8"], "wdt": ["INT8"], "act": [null],
+        "sparsity_type": ["none"], "sparsity_amount": [0],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded", "internal_decoupled"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls"],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        "dut": ["mvau"],
+        "idt": ["INT8"], "wdt": ["INT8"], "act": [null],
+        "sparsity_type": ["unstructured"], "sparsity_amount": [0.5],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded", "internal_decoupled"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls"],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        # BIPOLAR weights cannot hold zeros: dense only
+        "dut": ["mvau"],
+        "idt": ["UINT4"], "wdt": ["BIPOLAR"], "act": [null],
+        "sparsity_type": ["none"], "sparsity_amount": [0],
+        "nhw": [[1,8,8]], "mw": [16, 64], "mh": [16, 64], "sf": [1], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded", "internal_decoupled"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls"],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        # WMEM sweep (1, 2, 4) at one shape: gradual effect of constant folding
+        "dut": ["mvau"],
+        "idt": ["UINT4"], "wdt": ["INT4"], "act": [null],
+        "sparsity_type": ["none"], "sparsity_amount": [0],
+        "nhw": [[1,8,8]], "mw": [64], "mh": [64], "sf": [2, 4], "nf": [1], "m": [1],
+        "mem_mode": ["internal_embedded", "internal_decoupled"],
+        "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
+        "backend": ["hls"],
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+]
