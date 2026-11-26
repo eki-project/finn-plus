@@ -1,4 +1,6 @@
 {
+  "local_mac": "0xA0",
+  "nack_repeat_interval": 1000,
   "connections": [
     {"mac": "0xA1", "streams": [{"width": 64, "depth": 512}, {"width": 32, "depth": 256}]},
     {"mac": "0xA2", "streams": [{"width": 128, "depth": 1024}]}

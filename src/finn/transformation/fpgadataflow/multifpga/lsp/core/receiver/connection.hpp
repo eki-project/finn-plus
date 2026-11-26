@@ -14,6 +14,7 @@ namespace lsp {
         using namespace helpers;
         using namespace constants;
         using namespace utils;
+        using namespace ring_buffer;
 
 
         // Parser state, kept across beats
@@ -25,10 +26,10 @@ namespace lsp {
         };
 
         // Drop the whole frame like a lost one: roll back its segments and discard its remaining beats
-        template <typename... Rings>
-        connection_state _dropFrame(beat_t& data, std::tuple<Rings...>& buffers) {
+        template <int... Ws, size_t... Ds>
+        connection_state _dropFrame(beat_t& data, ring_buffers_t<ring_depths_t<Ds...>, stream_widths_t<Ws...>> &buffers) {
             #pragma HLS inline
-            ring_buffer::rollbackAll(buffers);
+            buffers.rollbackAll();
             if (data.last) {
                 return connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME;
             } else {
@@ -46,7 +47,7 @@ namespace lsp {
             beat_t& data,
             bool isProbe,
             ctrl_status_t<sizeof...(Ws)>& creditUpdate,
-            ring_buffer::stream_ring_buffers_t<ring_buffer::lsp_ring_depths_t<Ds...>, Ws...> &buffers,
+            ring_buffers_t<ring_depths_t<Ds...>, stream_widths_t<Ws...>> &buffers,
             ap_uint<header_t::PAYLOAD_WIDTH>& frameChunksLeft,
             pending_ctrl_status_t<sizeof...(Ws)>& ctrlStatus
         ) {
@@ -78,17 +79,18 @@ namespace lsp {
                     // Malformed: a PROBE entry with payload
                     return _dropFrame(data, buffers);
                 } else {
-                    switch (ring_buffer::dispatchSegment(buffers, segment)) {
-                        case ring_buffer::lsp_stream_ring_buffer_update_result::SEGMENT_READ:
+                    switch (buffers.dispatchSegment(segment)) {
+                        case staging_result::WORD_STAGED:
+                        case staging_result::WORD_STAGED_PARTIAL:
                             break;
                         // The sender's fault, retransmitting would not help: skip the segment
-                        case ring_buffer::lsp_stream_ring_buffer_update_result::UNKNOWN_STREAM:
+                        // WORD_OVERFLOW must be skipped also, because it is caused by an impl error.
+                        // If we droppoed the frame and requested a resend this would loop infinitely
+                        case staging_result::UNKNOWN_STREAM:
+                        case staging_result::WORD_OVERFLOW:
                             break;
                         // Invalid validBytesLastChunk, payload too wide, or no room: drop, so that no stream loses data
-                        case ring_buffer::lsp_stream_ring_buffer_update_result::INVALID_CHUNK_BYTEMASK:
-                        case ring_buffer::lsp_stream_ring_buffer_update_result::UNEXPECTED_ERROR:
-                        case ring_buffer::lsp_stream_ring_buffer_update_result::BUFFER_FULL:
-                        case ring_buffer::lsp_stream_ring_buffer_update_result::SENDER_BLOCKED:
+                        case staging_result::BUFFER_FULL:
                             return _dropFrame(data, buffers);
                     }
                     chunkOffset.index += segment.chunks;
@@ -140,7 +142,7 @@ namespace lsp {
             // State kept across calls
             static connection_state state = connection_state::EXPECT_FRAME_START;
             static ap_uint<constants::FSN_WIDTH> expectedFSN = 0;
-            static ring_buffer::stream_ring_buffers_t<ring_buffer::lsp_ring_depths_t<Ds...>, Ws...> buffers;
+            static ring_buffers_t<ring_depths_t<Ds...>, stream_widths_t<Ws...>> buffers;
             static ap_uint<header_t::PAYLOAD_WIDTH> frameChunksLeft;
             static header_t header;
 
@@ -151,7 +153,7 @@ namespace lsp {
             static pending_ctrl_status_t<sizeof...(Ws)> ctrlStatus;
 
             // Try to empty streams
-            ring_buffer::tryReadIntoStream(buffers, outStreams...);
+            buffers.tryReadIntoStream(outStreams...);
 
             // Credit check on every call, beat or not: report the limits of all streams whose credit update is due
             auto currentCreditStatus = ctrl_status_t::template makeACK<false>(expectedFSN, buffers);
@@ -176,7 +178,7 @@ namespace lsp {
 
                 // Bad FCS, flagged in tuser on the last beat: roll back the frame without parsing this beat
                 if (data.last && data.user == 1) {
-                    ring_buffer::rollbackAll(buffers);
+                    buffers.rollbackAll();
                     state = connection_state::EXPECT_FRAME_START;
                     ctrlStatus.add(ctrl_status_t::makeNACKImmediately(expectedFSN));
                     return;
@@ -241,7 +243,7 @@ namespace lsp {
                     } else if (state == connection_state::EXPECT_FRAME_START && !isProbe) {
                         expectedFSN++;
                         ctrlStatus.add(ctrl_status_t::makeFSNUpdate(expectedFSN));
-                        ring_buffer::commitAll(buffers);
+                        buffers.commitAll();
                     }
                 }
             };

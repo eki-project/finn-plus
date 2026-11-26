@@ -76,6 +76,35 @@ namespace lsp {
             // or bit range
             return -1;
         }
+
+        /** Width of the L2 header for a known EtherType or TPID, without the padding that
+        getOffsetFromEthertype adds. */
+        constexpr int ethernetHeaderWidth(ethertype_or_tag tag) {
+            switch (tag) {
+                case IEEE_802_1_Q:
+                    return 144; // 18 B, one VLAN tag
+                case IEEE_802_1_AD_LEGACY:
+                case IEEE_802_1_AD:
+                    return 176; // 22 B, two VLAN tags
+                case LOCAL_ETHTYPE_1:
+                case LOCAL_ETHTYPE_2:
+                    return 112; // 14 B, untagged
+            }
+            // Only reached for a value outside the enum
+            return -1;
+        }
+
+        /** Width of the largest frame for a known EtherType or TPID (L2 header plus MTU, without the
+        FCS), rounded down to whole beats. A frame of at most this width can be sent in full beats only
+        (every keep bit set) without exceeding the MTU. */
+        template<ethertype_or_tag Tag>
+        constexpr int maxFullBeatFrameWidth() {
+            static_assert(ethernetHeaderWidth(Tag) > 0, "Unknown EtherType or TPID");
+            constexpr int Width = (ethernetHeaderWidth(Tag) + static_cast<int>(constants::ETHERNET_MTU) * 8)
+                / constants::BEAT_WIDTH * constants::BEAT_WIDTH;
+            static_assert(Width >= constants::BEAT_WIDTH, "The MTU must allow at least one full beat");
+            return Width;
+        }
     }
 
     namespace messages {
@@ -89,7 +118,7 @@ namespace lsp {
             ap_uint<lsp::constants::FRAME_TYPE_WIDTH> frameType;
             ap_uint<8> flags;
             ap_uint<lsp::constants::FSN_WIDTH> frameSequenceNumber;
-            ap_uint<10> payloadChunks;
+            ap_uint<lsp::constants::PAYLOADCHUNKS_WIDTH> payloadChunks;
             ap_uint<8> _reserved;
 
             static constexpr int WIDTH = lsp::constants::PROTOCOL_HEADER_WIDTH;
@@ -209,6 +238,16 @@ namespace lsp {
                 return record;
             }
         };
+
+        /** Return the number of credit records that can fit into one frame. Accounts for L2 and LSP header.
+        Truncates if the count is too large to store the payloadChunks.
+        TODO: UDP support. */
+        template<size_t FrameWidthBits, utils::ethertype_or_tag Tag>
+        constexpr size_t creditRecordsPerFrame() {
+            static_assert(FrameWidthBits % constants::BEAT_WIDTH == 0, "Frame width needs to be a multiple of the BEAT width.");
+            constexpr size_t credits = (FrameWidthBits - header_t::WIDTH - utils::getOffsetFromEthertype(Tag)) / credit_record_t::WIDTH;
+            return (clog2(1 + credits) > constants::PAYLOADCHUNKS_WIDTH) ? (1 << constants::PAYLOADCHUNKS_WIDTH) - 1 : credits;
+        }
 
     }
 

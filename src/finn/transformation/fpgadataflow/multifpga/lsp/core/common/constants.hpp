@@ -69,6 +69,7 @@ namespace lsp {
         constexpr int PROTOCOL_HEADER_WIDTH = 64;
         constexpr int FRAME_TYPE_WIDTH = 3;
         constexpr int FSN_WIDTH = 32;
+        constexpr int PAYLOADCHUNKS_WIDTH = 10;
 
         // Frame types ("enum" values of the header's frame type field)
         static const ap_uint<FRAME_TYPE_WIDTH> FRAME_DATA = 0;

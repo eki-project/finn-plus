@@ -14,7 +14,7 @@ namespace lsp {
 
         template<typename Peers>
         void manager(
-            hls::stream<beat_t, CMAC_BEAT_BUFFER>& ingress,
+            hls::stream<beat_t>& ingress,
             hls::stream<beat_t> (&macStreams)[Peers::N]
         ) {
             // State kept across iterations

@@ -1,7 +1,13 @@
 """Generate the LSP receiver top function from a JSON config of its connections.
 
-Config: {"connections": [{"mac": "0xA1", "streams": [{"width": 64, "depth": 512}, ...]}, ...]}
-Connection I gets macStreams[I], its own CTRL status stream and the ports c<I>_s<J>.
+Config: {
+    "local_mac": "0xA0",
+    "nack_repeat_interval": 1000,
+    "connections": [{"mac": "0xA1", "streams": [{"width": 64, "depth": 512}, ...]}, ...]
+}
+local_mac is the MAC address of this node, the source of its CTRL frames. nack_repeat_interval is
+the number of cycles after which a NACK is repeated while its gap stays open. Connection I gets
+macStreams[I], its own CTRL status stream and the ports c<I>_s<J>.
 
 Usage: python generate_receiver_top.py <config.json> <output.cpp>
 """
@@ -27,7 +33,10 @@ def render_receiver_top(config: dict, config_name: str) -> str:
         keep_trailing_newline=True,
     )
     return environment.get_template("receiver_top.cpp.j2").render(
-        connections=connections, config_name=config_name
+        connections=connections,
+        config_name=config_name,
+        local_mac=config["local_mac"],
+        nack_repeat_interval=config["nack_repeat_interval"],
     )
 
 

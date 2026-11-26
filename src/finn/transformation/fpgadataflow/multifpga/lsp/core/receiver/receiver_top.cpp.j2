@@ -34,8 +34,8 @@ void connection_{{ c }}(
 {%- endfor %}
 
 void receiver_top(
-    hls::stream<beat_t>& fromCMAC,
-    hls::stream<beat_t>& toCMAC
+    hls::stream<axis_beat_t>& fromCMAC,
+    hls::stream<axis_beat_t>& toCMAC
 {%- for conn in connections %}
 {%- set c = loop.index0 %}
 {%- for stream in conn.streams %},
@@ -43,9 +43,24 @@ void receiver_top(
 {%- endfor %}
 {%- endfor %}
 ) {
+    // Free-running: only hls::tasks, so there is no start/done handshake
+    #pragma HLS interface mode=ap_ctrl_none port=return
+    #pragma HLS interface mode=axis port=fromCMAC
+    #pragma HLS interface mode=axis port=toCMAC
+{%- for conn in connections %}
+{%- set c = loop.index0 %}
+{%- for stream in conn.streams %}
+    #pragma HLS interface mode=axis port=c{{ c }}_s{{ loop.index0 }}
+{%- endfor %}
+{%- endfor %}
     #pragma HLS dataflow
     using PEERS = mac_index_lookup_t<{{ connections | map(attribute="mac") | join(", ") }}>;
     constexpr size_t CONNECTIONS = PEERS::N;
+    // TODO: Make source AND target MAC settable via register
+    // MAC address of this node, the source of every CTRL frame
+    constexpr uint64_t LOCAL_MAC = {{ local_mac }};
+    // Cycles after which a NACK is repeated while its gap stays open
+    constexpr unsigned int NACK_REPEAT_INTERVAL = {{ nack_repeat_interval }};
 
     // Streams that connect to the CMAC
     hls_thread_local hls::stream<beat_t, CMAC_BEAT_BUFFER> ingress("ingress");
@@ -67,8 +82,16 @@ void receiver_top(
     hls_thread_local hls::task ingressTask(cmacIngress, fromCMAC, ingress);
     hls_thread_local hls::task egressTask(cmacEgress, egress, egressFrames, toCMAC);
 
-    // Dispatch the ingress frames by source MAC address to the connections
+    // Dispatch the ingress frames by source MAC address to the connections.
+    // The C simulation model of hls::task passes a stream array as a pointer, which does not convert
+    // back to the array reference of manager and writeToEgress, so in C simulation these tasks get a
+    // lambda instead. It binds the streams explicitly: they are thread_local there, so a lambda that
+    // only names them would use the (unconnected) streams of the task's own thread.
+#ifdef __SYNTHESIS__
     hls_thread_local hls::task dispatchTask(manager<PEERS>, ingress, macStreams);
+#else
+    hls_thread_local hls::task dispatchTask([&in = ingress, &out = macStreams]() { manager<PEERS>(in, out); });
+#endif
 {% for conn in connections %}
 {%- set c = loop.index0 %}
     // Connection {{ c }}, peer {{ conn.mac }}
@@ -80,8 +103,19 @@ void receiver_top(
         c{{ c }}_s{{ loop.index0 }}
         {%- endfor %}
     );
-    hls_thread_local hls::task controllerTX{{ c }}Task(controllerTX<{{ conn.streams | length }}>, ctrl{{ c }}, ctrlTx[{{ c }}]);
+    hls_thread_local hls::task controllerTX{{ c }}Task(
+        controllerTX<{{ conn.streams | length }}, NACK_REPEAT_INTERVAL, LOCAL_MAC, {{ conn.mac }}, utils::LOCAL_ETHTYPE_1>,
+        ctrl{{ c }},
+        ctrlTx[{{ c }}]
+    );
 {% endfor %}
-    // Forward the CTRL frames of all controller TXs round robin to the CMAC
+    // Forward the CTRL frames of all controller TXs round robin to the CMAC (lambda in C simulation:
+    // see dispatchTask)
+#ifdef __SYNTHESIS__
     hls_thread_local hls::task egressDispatchTask(writeToEgress<CONNECTIONS>, egress, egressFrames, ctrlTx);
+#else
+    hls_thread_local hls::task egressDispatchTask(
+        [&out = egress, &frames = egressFrames, &in = ctrlTx]() { writeToEgress<CONNECTIONS>(out, frames, in); }
+    );
+#endif
 }

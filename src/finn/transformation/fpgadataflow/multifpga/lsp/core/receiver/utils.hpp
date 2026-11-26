@@ -10,7 +10,48 @@
 
 namespace lsp {
     namespace receiver {
-        using beat_t = ap_axiu<constants::BEAT_WIDTH, 1, 0, 0>;
+        /** AXI Stream word of the CMAC ports. HLS accepts AXI Stream types only on top level ports,
+        so it is converted to beat_t at the CMAC boundary (cmacIngress, cmacEgress). */
+        using axis_beat_t = ap_axiu<constants::BEAT_WIDTH, 1, 0, 0>;
+
+        /** One beat inside the kernel: the fields of axis_beat_t in a plain struct, since internal
+        streams must not carry AXI Stream types. user is set by the CMAC RX on the last beat of a
+        frame with a bad FCS. */
+        struct beat_t {
+            ap_uint<constants::BEAT_WIDTH> data;
+            ap_uint<constants::BEAT_WIDTH / 8> keep;
+            ap_uint<constants::BEAT_WIDTH / 8> strb;
+            ap_uint<1> user;
+            ap_uint<1> last;
+
+            /** Mark every byte as valid (keep only, like ap_axiu::keep_all). */
+            void keep_all() {
+                #pragma HLS inline
+                keep = ~ap_uint<constants::BEAT_WIDTH / 8>(0);
+            }
+
+            static beat_t fromAxis(const axis_beat_t& axis) {
+                #pragma HLS inline
+                beat_t beat;
+                beat.data = axis.data;
+                beat.keep = axis.keep;
+                beat.strb = axis.strb;
+                beat.user = axis.user;
+                beat.last = axis.last;
+                return beat;
+            }
+
+            axis_beat_t toAxis() const {
+                #pragma HLS inline
+                axis_beat_t axis;
+                axis.data = data;
+                axis.keep = keep;
+                axis.strb = strb;
+                axis.user = user;
+                axis.last = last;
+                return axis;
+            }
+        };
 
         // Depth of a CMAC side FIFO: it has to hold at least one whole frame, because CMAC RX cannot
         // be paused and CMAC TX must not see a gap in a frame.
@@ -203,13 +244,13 @@ namespace lsp {
         process does nothing else: a stalled manager backs up into the FIFO instead of losing beats on
         the port. */
         inline void cmacIngress(
-            hls::stream<beat_t>& fromCMAC,
-            hls::stream<beat_t, CMAC_BEAT_BUFFER>& ingress
+            hls::stream<axis_beat_t>& fromCMAC,
+            hls::stream<beat_t>& ingress
         ) {
             beat_t beat;
             do {
                 #pragma HLS PIPELINE II=1
-                beat = fromCMAC.read();
+                beat = beat_t::fromAxis(fromCMAC.read());
                 ingress.write(beat);
             } while (!beat.last);
         }
@@ -218,21 +259,21 @@ namespace lsp {
         complete, so that the CMAC never sees a gap inside the frame. The controller_tx writes one
         token on egressFrames after the last beat of each frame. */
         inline void cmacEgress(
-            hls::stream<beat_t, CMAC_BEAT_BUFFER>& egress,
+            hls::stream<beat_t>& egress,
             hls::stream<bool, CMAC_BEAT_BUFFER>& egressFrames,
-            hls::stream<beat_t>& toCMAC
+            hls::stream<axis_beat_t>& toCMAC
         ) {
             egressFrames.read();
             beat_t beat;
             do {
                 #pragma HLS PIPELINE II=1
                 beat = egress.read();
-                toCMAC.write(beat);
+                toCMAC.write(beat.toAxis());
             } while (!beat.last);
         }
 
         /** Forward from source to egress until the tlast signal is set. */
-        inline void forwardCtrlToEgress(hls::stream<beat_t, CMAC_BEAT_BUFFER>& egress, hls::stream<beat_t>& source) {
+        inline void forwardCtrlToEgress(hls::stream<beat_t>& egress, hls::stream<beat_t>& source) {
             beat_t beat;
             do {
                 beat = source.read();
@@ -245,7 +286,7 @@ namespace lsp {
         and its the turn of the next stream. */
         template<size_t N>
         void writeToEgress(
-            hls::stream<beat_t, CMAC_BEAT_BUFFER>& egress,
+            hls::stream<beat_t>& egress,
             hls::stream<bool, CMAC_BEAT_BUFFER>& egressFrames,
             hls::stream<beat_t> (&ctrlStreams)[N]
         ) {
