@@ -247,3 +247,6 @@ Bench (Extended):
   parallel:
     matrix:
       - BENCH_CFG: [microbenchmark_basic]
+      # distributed-arithmetic MVU vs HLS MVAU with embedded weights (calibration data
+      # for the DA resource estimate, see finn-rtllib/mvu_da/README.md)
+      - BENCH_CFG: [microbenchmark_da_baseline, microbenchmark_da]

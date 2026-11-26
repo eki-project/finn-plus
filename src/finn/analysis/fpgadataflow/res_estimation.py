@@ -31,7 +31,9 @@ from itertools import product
 from typing import TYPE_CHECKING
 
 from finn.util.basic import getHWCustomOp
+from finn.util.exception import FINNUserError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+from finn.util.logging import log
 
 if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
@@ -59,9 +61,25 @@ def res_estimation(model: "ModelWrapper", fpgapart: str) -> dict[str, dict[str, 
     for node in model.graph.node:
         if is_hls_node(node) or is_rtl_node(node):
             inst = getHWCustomOp(node)
+            _prepare_da_solution(inst, model)
             res_dict[node.name] = inst.node_res_estimation(fpgapart)
 
     return res_dict
+
+
+def _prepare_da_solution(inst: "HWCustomOp", model: "ModelWrapper") -> None:
+    """Run the solver of a distributed-arithmetic MVAU (MVAU_rtl with embedded weights)
+    if it has not run yet for this node: its LUT estimate is derived from the adder
+    graph of its weights, which only the model holds."""
+    is_da = getattr(inst, "_is_da_mode", None)
+    if is_da is None or not is_da() or inst.get_nodeattr("da_cost") > 0:
+        return
+    try:
+        inst.prepare_da_solution(model)
+    except FINNUserError as e:
+        # constraint violations are reported by the code generation, the
+        # estimate falls back to the coarse per-weight figure
+        log.warning(f"{inst.onnx_node.name}: DA solver skipped for the estimate: {e}")
 
 
 def _resource_attr_variants(inst: "HWCustomOp") -> list[tuple[str, list[str]]]:

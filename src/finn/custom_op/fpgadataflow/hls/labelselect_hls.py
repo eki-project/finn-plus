@@ -135,6 +135,16 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
             )
         ]
 
+    def pragmas(self) -> None:
+        """Emit the HLS interface pragmas and pipeline the top if a call is one beat."""
+        HLSBackend.pragmas(self)
+        if self.get_nodeattr("PE") == self.get_nodeattr("Labels") and self.get_nodeattr("K") == 1:
+            # all labels arrive in a single beat and a single label leaves: the pipelined
+            # input loop has one iteration and is flattened away, and the unpipelined top
+            # then takes three cycles per frame; pipeline the top itself (as for the MVAU
+            # and the TLastMarker, only when nothing is left to iterate over)
+            self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS pipeline II=1 style=flp")
+
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
         in_bits = self.get_input_datatype().bitwidth()

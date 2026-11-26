@@ -70,6 +70,7 @@ onnxoptimizer = "^0.4.2"
 pydantic = ">2.0"
 mashumaro = { extras = ["yaml"], version = "^3.15" }
 
+alkaid = "0.8.1"                                # distributed-arithmetic MVU: the solver output defines the emitted RTL, pin exactly
 # Tooling for the test suite (extra "test"). The suite itself is the tests/ directory of the
 # repository and is not packaged, see "finn test --help". Keep in sync with the dev group.
 pytest = { version = "~9.1.1", optional = true }
