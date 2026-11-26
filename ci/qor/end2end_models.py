@@ -134,6 +134,21 @@ def experiment_power(reports_dir: Path, experiment: str, rail: str = POWER_RAIL)
     return float(np.mean(samples)) if samples else np.nan
 
 
+def node_report(report: dict[str, Any], node: str) -> dict[str, Any]:
+    """Entry of one hardware node in a per-node resource report.
+
+    The post-synthesis report names the nodes by their instance path in the stitched design
+    (``StreamingDataflowPartition_1_<node>``), the estimate and feature reports by the bare
+    node name; both spellings are accepted.
+    """
+    if node in report:
+        return report[node]
+    for key, entry in report.items():
+        if key.endswith(f"_{node}") and key.startswith("StreamingDataflowPartition_"):
+            return entry
+    return {}
+
+
 def load_runs(artifacts_dir: Path, followup: bool = False) -> tuple[pd.DataFrame, dict[int, dict]]:
     """Load the hardware nodes of every run with their measured and reference resources.
 
@@ -181,10 +196,10 @@ def load_runs(artifacts_dir: Path, followup: bool = False) -> tuple[pd.DataFrame
                 "features": entry.get("features"),
                 "error": entry.get("error"),
             }
-            for res, value in normalize_resources(measured.get(node, {})).items():
+            for res, value in normalize_resources(node_report(measured, node)).items():
                 row[f"measured.{res}"] = value
             for key, report in references.items():
-                for res, value in normalize_resources(report.get(node, {})).items():
+                for res, value in normalize_resources(node_report(report, node)).items():
                     row[f"{key}.{res}"] = value
             rows.append(row)
     df = pd.DataFrame(rows)

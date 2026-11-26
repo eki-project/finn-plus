@@ -76,8 +76,19 @@ def artifacts(tmp_path):
     _write(
         reports / "post_synth_resources.json",
         {
-            "MVAU_hls_0": {"LUT": 100, "BRAM_36K": 1, "DSP48E": 2, "URAM": 0},
-            "StreamingFIFO_rtl_0": {"LUT": 10, "BRAM_36K": 0, "DSP48E": 0, "URAM": 0},
+            # synthesis names the nodes by their instance path in the stitched design
+            "StreamingDataflowPartition_1_MVAU_hls_0": {
+                "LUT": 100,
+                "BRAM_36K": 1,
+                "DSP48E": 2,
+                "URAM": 0,
+            },
+            "StreamingDataflowPartition_1_StreamingFIFO_rtl_0": {
+                "LUT": 10,
+                "BRAM_36K": 0,
+                "DSP48E": 0,
+                "URAM": 0,
+            },
             "(top)": {"LUT": 130, "BRAM_36K": 1, "DSP48E": 2, "URAM": 0},
         },
     )
