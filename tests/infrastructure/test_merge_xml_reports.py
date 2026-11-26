@@ -21,6 +21,8 @@ FAILED_CASE = """
 </testcase>
 """
 PASSED_CASE = '<testcase classname="pkg.TestX" name="test_a" time="3.0"/>'
+# pytest-rerunfailures 16 with pytest 9 writes the retried attempt without any result element
+ATTEMPT_CASE = '<testcase classname="pkg.TestX" name="test_a" time="1.0"/>'
 OTHER_CASE = '<testcase classname="pkg.TestX" name="test_b" time="0.1"/>'
 
 
@@ -80,6 +82,29 @@ def test_later_pass_replaces_earlier_failure(tmp_path: Path) -> None:
         [
             write_report(tmp_path / "main3.xml", PASSED_CASE),
             write_report(tmp_path / "rerun3.xml", FAILED_CASE),
+        ],
+        out,
+    )
+    assert merged_status(out, "test_a") == "passed"
+
+
+def test_unmarked_attempt_does_not_hide_final_failure(tmp_path: Path) -> None:
+    """pytest-rerunfailures 16 writes the retried attempt as a testcase without a result
+    element, which looks like a pass: the final outcome that follows it in the same file is
+    what counts, a failure as much as a pass."""
+    out = tmp_path / "merged.xml"
+    merge_reports([write_report(tmp_path / "main.xml", ATTEMPT_CASE, FAILED_CASE, OTHER_CASE)], out)
+    assert merged_status(out, "test_a") == "failure"
+    assert merged_status(out, "test_b") == "passed"
+
+    merge_reports([write_report(tmp_path / "main2.xml", ATTEMPT_CASE, PASSED_CASE)], out)
+    assert merged_status(out, "test_a") == "passed"
+
+    # a crash rerun in a later file still turns the failure into a pass
+    merge_reports(
+        [
+            write_report(tmp_path / "main3.xml", ATTEMPT_CASE, FAILED_CASE),
+            write_report(tmp_path / "rerun.xml", PASSED_CASE),
         ],
         out,
     )

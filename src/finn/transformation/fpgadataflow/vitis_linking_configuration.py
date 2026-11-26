@@ -837,7 +837,14 @@ class BuildBasicVitisLinkConfig(Transformation):
         cu_outputs: dict[str, int] = {}
 
         # Loop through all SDPs and add all nodes
-        check_all_sdp_nodes(model)
+        try:
+            check_all_sdp_nodes(model)
+        except FINNUserError as e:
+            raise FINNUserError(
+                f"Not all nodes are StreamingDataflowPartition nodes. Make sure to run "
+                f"step_prepare_synthesis before step_synthesize_bitfile. "
+                f"Original error: {e}"
+            ) from None
         total_idmas = 0
         total_odmas = 0
         for node in model.graph.node:

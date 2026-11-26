@@ -2,13 +2,10 @@
 
 import importlib.util
 import os
-import re
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
-from re import Pattern
 
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import status
@@ -92,8 +89,8 @@ CI_TEST_TIMEOUT_S = 3 * 3600
 # bytecodes. A test blocked inside a C extension - which is where our hangs are, xsim
 # simulation via XSI - never returns to the interpreter, so the alarm is never handled
 # and the test hangs anyway. The timer thread dumps the stacks of all threads and kills
-# the process; under pytest-xdist that surfaces as a crashed worker, which the crash
-# rerun below picks up.
+# the process; under pytest-xdist that surfaces as a crashed worker, whose test
+# pytest-rerunfailures retries like any other failure.
 # The stack dump pytest-timeout prints on the way out goes to the worker's captured
 # stderr and never reaches the job log under xdist, so pytest's own faulthandler
 # plugin dumps all threads a minute earlier through the C-level faulthandler on the
@@ -179,84 +176,8 @@ def run_test(variant: str, num_workers: str, tests_dir: Path, args: str = "") ->
                 )
             )
         case "full_ci":
-            # Only this variant parses JUnit reports, keep the test-only dependency local
-            from junitparser import JUnitXml, TestCase
-
             main_xml = f"{ci_project_dir}/reports/main.xml"
             main_html = f"{ci_project_dir}/reports/main.html"
-            crash_xml = f"{ci_project_dir}/reports/crash_rerun.xml"
-            crash_html = f"{ci_project_dir}/reports/crash_rerun.html"
-            crash_re: Pattern[str] = re.compile(
-                r"(worker.*crash|worker.*terminated|segmentation fault|sigsegv|signal 11|fatal python error)",  # noqa
-                re.IGNORECASE,
-            )
-
-            @dataclass(frozen=True)
-            class CrashDetectionResult:
-                """Result of scanning a JUnit XML report for crash-like and non-crash failures."""
-
-                crashed_nodeids: list[str]
-                has_non_crash_failures: bool
-
-            def make_nodeid(case: TestCase) -> str:
-                """Return pytest-like nodeid from junit testcase."""
-                classname: str = getattr(case, "classname", "") or ""
-                name: str = getattr(case, "name", "") or ""
-                return f"{classname}::{name}" if classname else name
-
-            def detect_crashed_nodeids(junit_xml_path: str) -> CrashDetectionResult:
-                """Parse a JUnit XML file and classify failing testcases.
-
-                A testcase is considered:
-                - crash-like failure: if any failure/error message matches CRASH_RE
-                - non-crash failure: failure/error exists but no crash marker matched
-
-                Skipped/passed cases are ignored for failure classification.
-
-                Args:
-                    junit_xml_path: Path to JUnit XML file.
-
-                Returns:
-                    CrashDetectionResult with:
-                    - crashed_nodeids: deduplicated list of crash-like testcase nodeids
-                    - has_non_crash_failures: True if any failure/error is non-crash-like
-                """
-                xml = JUnitXml.fromfile(junit_xml_path)
-
-                crashed_nodeids: list[str] = []
-                seen: set[str] = set()
-                has_non_crash_failures = False
-
-                for suite in xml:
-                    for case in suite:
-                        # Collect failure/error blocks only (ignore skipped)
-                        failure_blocks: list[str] = []
-                        for res in case.result:
-                            tag = getattr(res, "_tag", "")
-                            if tag not in {"failure", "error"}:
-                                continue
-                            msg: str = getattr(res, "message", "") or ""
-                            txt: str = getattr(res, "text", "") or ""
-                            failure_blocks.append(f"{msg}\n{txt}".strip())
-
-                        if not failure_blocks:
-                            continue  # passed or skipped-only
-
-                        combined_failure_text = "\n".join(failure_blocks)
-                        is_crash_like = bool(crash_re.search(combined_failure_text))
-
-                        if is_crash_like:
-                            nodeid = make_nodeid(case)
-                            if nodeid and nodeid not in seen:
-                                seen.add(nodeid)
-                                crashed_nodeids.append(nodeid)
-                        else:
-                            has_non_crash_failures = True
-
-                return CrashDetectionResult(
-                    crashed_nodeids=crashed_nodeids,
-                    has_non_crash_failures=has_non_crash_failures,
-                )
 
             # --------------------------
             # 1) Main suite
@@ -277,51 +198,10 @@ def run_test(variant: str, num_workers: str, tests_dir: Path, args: str = "") ->
             test_1_process.communicate()
             test_1_returncode = test_1_process.returncode
 
-            # --------------------------
-            # 2) Detect crashed tests
-            # --------------------------
-            crashed_tests: list[str] = []
-            if Path(main_xml).exists():
-                try:
-                    result = detect_crashed_nodeids(main_xml)
-                    crashed_tests = result.crashed_nodeids
-                    has_non_crash_failures = result.has_non_crash_failures
-                    test_1_returncode = 1 if has_non_crash_failures else 0
-                except Exception as exc:
-                    print(f"[WARN] Failed to parse {main_xml}: {exc}")
-            else:
-                print(f"[WARN] Main XML not found: {main_xml}")
-
-            print(f"[INFO] Crashed tests detected: {len(crashed_tests)}")
+            main_returncode = test_1_returncode
 
             # --------------------------
-            # 3) Rerun only crashed tests
-            # --------------------------
-            test_2_returncode = 0
-            if crashed_tests:
-                nodeids = " ".join(shlex.quote(t) for t in crashed_tests)
-                rerun_cmd = (
-                    f"{sys.executable} -m pytest -v "
-                    f"--junitxml={shlex.quote(crash_xml)} "
-                    f"--html={shlex.quote(crash_html)} "
-                    f"{CI_TEST_TIMEOUT_ARGS} "
-                    f"--reruns 3 -n 1 "
-                    f"{nodeids}"
-                )
-                test_2_process = subprocess.Popen(
-                    shlex.split(
-                        rerun_cmd,
-                        posix=IS_POSIX,
-                    )
-                )
-                test_2_process.communicate()
-                test_2_returncode = test_2_process.returncode
-            else:
-                print("[INFO] No crash-like tests to rerun.")
-            main_returncode = test_1_returncode or test_2_returncode
-
-            # --------------------------
-            # 4) Run doctests and merge all reports into a single HTML and XML report
+            # 2) Run doctests and merge all reports into a single HTML and XML report
             # --------------------------
             test_3_returncode = run_doctests(int(num_workers))
 
@@ -340,7 +220,7 @@ def run_test(variant: str, num_workers: str, tests_dir: Path, args: str = "") ->
                     (
                         f"{sys.executable} {script_dir} "
                         f"-o {ci_project_dir}/reports/full_test_suite.xml "
-                        f"{main_xml} {crash_xml}"
+                        f"{main_xml}"
                     ),
                     posix=IS_POSIX,
                 )
@@ -349,11 +229,10 @@ def run_test(variant: str, num_workers: str, tests_dir: Path, args: str = "") ->
                 print(f"[WARN] Merging XML reports failed with exit code {success}.")
             else:
                 # Remove individual XML reports to avoid confusion with the merged report
-                for xml_file in [main_xml, crash_xml]:
-                    if Path(xml_file).exists():
-                        Path(xml_file).unlink()
+                if Path(main_xml).exists():
+                    Path(main_xml).unlink()
 
-            if main_returncode or test_2_returncode or test_3_returncode:
+            if main_returncode or test_3_returncode:
                 sys.exit(1)
 
         case _:

@@ -70,6 +70,7 @@ onnxoptimizer = "^0.4.2"
 pydantic = ">2.0"
 mashumaro = { extras = ["yaml"], version = "^3.15" }
 
+alkaid = "0.8.1"                                # distributed-arithmetic MVU: the solver output defines the emitted RTL, pin exactly
 # Tooling for the test suite (extra "test"). The suite itself is the tests/ directory of the
 # repository and is not packaged, see "finn test --help". Keep in sync with the dev group.
 pytest = { version = "~9.1.1", optional = true }
@@ -127,7 +128,7 @@ build-backend = "poetry_dynamic_versioning.backend"
 addopts = ["--verbose"]
 markers = [
     "slow: marks tests as slow",
-    "xslow: marks tests that take hours each and are not run by the CI test variants",
+    "xslow: marks tests that the CI test variants do not run: tests that take hours each and the non-representative combinations of exhaustive test grids",
     "infrastructure: marks tests that refer to infrastructure functionality",
     "vivado: mark tests that require Vivado or Vivado HLS",
     "vitis: mark tests that require Vitis",
