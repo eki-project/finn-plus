@@ -8,6 +8,7 @@ from onnx import TensorProto, helper
 from pathlib import Path
 from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
@@ -16,6 +17,7 @@ import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
 from finn.benchmarking.bench_base import bench
 from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.custom_op.fpgadataflow.rtl.da_codegen import da_cost_estimate
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.util.exception import FINNUserError
@@ -85,7 +87,8 @@ class bench_mvau_multi_dnn(bench):
         elif backend == "rtl":
             customop_name = "MVAU_rtl"
             domain = "finn.custom_op.fpgadataflow.rtl"
-            res_type = "dsp"
+            # embedded weights select the LUT-only distributed-arithmetic core
+            res_type = "lut" if mem_mode == "internal_embedded" else "dsp"
         else:
             raise FINNUserError(f"Unsupported backend: {backend} (supported: 'hls', 'rtl')")
 
@@ -132,6 +135,12 @@ class bench_mvau_multi_dnn(bench):
             model.set_tensor_datatype("thresh", tdt)
             model.set_initializer("thresh", thresholds)
 
+        if backend == "rtl" and mem_mode == "internal_embedded":
+            inst = getCustomOp(model.graph.node[0])
+            inst.set_nodeattr("da_hard_dc", self._params.get("da_hard_dc", 2))
+            if "da_latency_cutoff" in self._params:
+                inst.set_nodeattr("da_latency_cutoff", self._params["da_latency_cutoff"])
+
         model = model.transform(MinimizeWeightBitWidth())
         model = model.transform(MinimizeAccumulatorWidth())
         model = model.transform(InferDataTypes())
@@ -158,13 +167,28 @@ class bench_mvau_multi_dnn(bench):
         wdt = DataType[self._params["wdt"]]
 
         num_input_vectors = self._params["nhw"]
-        mw = self._params["mw"]
-        mh = self._params["mh"]
-        pe, simd = self._params["pe_simd"]
+        if "mw_mh" in self._params:
+            # paired matrix sizes, so that a sweep does not cross every MW with every MH
+            mw, mh = self._params["mw_mh"]
+        else:
+            mw = self._params["mw"]
+            mh = self._params["mh"]
+        if "pe_simd_div" in self._params:
+            # folding relative to the matrix size: PE = MH / div_pe, SIMD = MW / div_simd
+            div_pe, div_simd = self._params["pe_simd_div"]
+            pe, simd = mh // div_pe, mw // div_simd
+        else:
+            pe, simd = self._params["pe_simd"]
         m = self._params["m"]
         ram_style = self._params["ram_style"]
         ram_style_thr = self._params["ram_style_thr"]
         backend = self._params["backend"]
+        da_core = backend == "rtl" and mem_mode == "internal_embedded"
+        if da_core and scenario == 3:
+            raise FINNUserError(
+                "Selectable weights (scenario 3) need streamed weights (internal_decoupled), "
+                "the distributed-arithmetic MVAU (rtl, internal_embedded) has none"
+            )
         output_dict = {}
         if pe > mh or simd > mw:
             print("Invalid pe/simd configuration, skipping")
@@ -186,6 +210,7 @@ class bench_mvau_multi_dnn(bench):
         output_dict["ram_style"] = ram_style
         output_dict["backend"] = backend
         output_dict["scenario"] = scenario
+        output_dict["da_core"] = da_core
 
         np.random.seed(123456)  # noqa: NPY002  (seeds the legacy global RNG used below)
         weights_a = gen_finn_dt_tensor(wdt, (mw, mh))
@@ -227,6 +252,19 @@ class bench_mvau_multi_dnn(bench):
         weights_b = gen_finn_dt_tensor(actual_wdt, (mw, mh))
         weights_b = self._apply_sparsity(weights_b, mw, mh)
         model_b.set_initializer(weight_tensor_name, weights_b)
+
+        if da_core:
+            # alkaid cost of both weight matrices: the two DA cores differ in size, which
+            # sets the co-location LUTs and the size the reconfigurable region needs
+            da_hard_dc = self._params.get("da_hard_dc", 2)
+            output_dict["da_hard_dc"] = da_hard_dc
+            for label, w in (("A", weights_a), ("B", weights_b)):
+                try:
+                    cost = da_cost_estimate(w, idt, hard_dc=da_hard_dc)
+                except Exception as e:  # informational only, must not fail the build
+                    print(f"DA cost estimate for weights {label} failed: {e}")
+                    continue
+                output_dict.update({f"{k}_{label}": v for k, v in cost.items()})
 
         model_a_path = str(Path(self._build_dir) / "model_A.onnx")
         model_b_path = str(Path(self._build_dir) / "model_B.onnx")
