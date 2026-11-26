@@ -1,0 +1,6 @@
+outs:
+- md5: 6dd970e6c82cd8bec6733a3f4940feda.dir
+  size: 569815
+  nfiles: 27
+  hash: md5
+  path: reports
