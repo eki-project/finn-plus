@@ -101,6 +101,15 @@ class ApplyFIFODepthsFromFile(Transformation):
             if depth == old_depth:
                 continue
             impl_style = fifo_info["impl_style"][node.name]
+            # The Vivado FIFO implementation was retired upstream (fifo.sv covers every
+            # depth), but FIFO configs written before that still name it, as ApplyConfig
+            # tolerates for folding configs.
+            if impl_style == "vivado":
+                log.warning(
+                    f"impl_style=vivado for {node.name} in {self.fifo_config_file} is no "
+                    "longer supported, using the RTL FIFO instead."
+                )
+                impl_style = "rtl"
             ram_style = fifo_info["ram_style"][node.name]
             n_inst.set_nodeattr("depth", depth)
             n_inst.set_nodeattr("impl_style", impl_style)

@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import (
+    STITCH_LIBRARY_REPOS_PROP,
     CreateStitchedIP,
     stitched_ip_library_repos,
 )
@@ -309,6 +310,11 @@ class MakeZYNQProject(Transformation):
                 kernel_model.set_metadata_prop(
                     "vivado_stitch_ifnames",
                     _require_metadata_prop(body_model, "vivado_stitch_ifnames"),
+                )
+                # finn-rtllib repositories of the body's stitched IP (see collect_ip_dirs)
+                kernel_model.set_metadata_prop(
+                    STITCH_LIBRARY_REPOS_PROP,
+                    _require_metadata_prop(body_model, STITCH_LIBRARY_REPOS_PROP),
                 )
                 kernel_model.save(dataflow_model_filename)
 
