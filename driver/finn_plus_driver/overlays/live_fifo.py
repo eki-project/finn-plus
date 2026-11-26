@@ -7,9 +7,11 @@ import random
 import time
 import warnings
 
+from finn_plus_driver.overlays.fifo_capacity import CapacityModel
 from finn_plus_driver.overlays.fifo_search import (
     STALL_IVLD,
     STALL_STICKY_SHIFT,
+    UNBOUNDED_DEPTH,
     EvalResult,
     EvaluationCache,
     FeasibilityCheck,
@@ -245,7 +247,8 @@ class LiveFIFOOracle:
         ov = self.overlay
         depths = [int(d) for d in depths]
         ov.reset_accelerator()
-        ov.configure_fifos_bounded(depths)
+        # every virtual FIFO gets the capacity fifo.sv builds for the requested depth
+        ov.configure_fifos_bounded(ov.capacity_registers(depths))
         t0 = time.monotonic()
         ov.start_accelerator(
             throttle_interval=self.throttle_interval,
@@ -325,6 +328,12 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # implementation that are not present in real FIFOs.
         # This results in a minimum possible FIFO depth of 1 + 1 = 2.
         self.fifo_depth_offset = 1
+
+        # The capacity fifo.sv builds for a requested depth, per FIFO (padded stream width and
+        # ram_style from the cost tables; without tables the data width rounded up to bytes
+        # and ram_style "auto"). The virtual FIFOs are configured with it, see
+        # capacity_registers(), and the storage of a configuration is reported with it.
+        self.capacity_model = self.make_capacity_model()
 
         # Capabilities of the virtual FIFO hardware, probed in experiment_fifosizing:
         # - peak_occupancy: READ_FILL reports the peak occupancy of a bounded run
@@ -487,12 +496,55 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         return max_occupancy, latency, interval
 
-    def total_fifo_size(self, depths: list[int]) -> float:
-        """Calculate total FIFO size in kB."""
+    def make_capacity_model(self):
+        """The ``CapacityModel`` of this design from ``fifo_cost_tables`` and ``fifo_widths``.
+
+        ``None`` without FIFOs (e.g. an emulated overlay that sets its own model).
+        """
+        if self.num_fifos == 0:
+            return None
+        tables = (self.fifo_cost_tables or {}).get("fifos", {})
+        padded, styles = [], []
+        for i in range(self.num_fifos):
+            entry = tables.get(str(i), {})
+            width = self.fifo_widths[str(i)]
+            padded.append(int(entry.get("width", (int(width) + 7) // 8 * 8)))
+            styles.append(entry.get("ram_style", "auto"))
+        return CapacityModel(padded, styles)
+
+    def capacity_registers(self, depths):
+        """Capacity register values of a configuration: what ``fifo.sv`` builds for the depths.
+
+        Register values stay register values (capacity minus the depth offset); an unbounded
+        FIFO stays unbounded. Without a capacity model the depths are passed through.
+        """
+        if self.capacity_model is None:
+            return [int(d) for d in depths]
+        off = self.fifo_depth_offset
+        return [
+            int(d) if d >= UNBOUNDED_DEPTH else self.capacity_model.capacity(i, int(d) + off) - off
+            for i, d in enumerate(depths)
+        ]
+
+    def fifo_capacities(self, depths):
+        """Items every FIFO of a configuration (register values) really holds."""
+        return [r + self.fifo_depth_offset for r in self.capacity_registers(depths)]
+
+    def total_fifo_size(self, depths: list[int], requested: bool = False) -> float:
+        """Total FIFO storage of a configuration (register values) in kB.
+
+        The realized storage, capacity times data width, unless ``requested`` asks for the
+        storage of the requested depths.
+        """
         # Assuming FIFO SDP/AXI-Lite interfaces are ordered consistently with FIFO IDs
         total_size_bits = 0
-        for i, depth in enumerate(depths):
-            total_size_bits += (depth + self.fifo_depth_offset) * self.fifo_widths[str(i)]
+        items = (
+            [d + self.fifo_depth_offset for d in depths]
+            if requested
+            else self.fifo_capacities(depths)
+        )
+        for i, n in enumerate(items):
+            total_size_bits += n * self.fifo_widths[str(i)]
         return total_size_bits / 8.0 / 1000.0
 
     def fifo_width_list(self):
@@ -512,14 +564,30 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         return cost_model
 
     def make_cost_model(self, cost_model, start_depths):
-        """The cost model and lattice of a search: ``"bits"`` (kB of storage, integer depths)
-        or ``"primitives"`` (FPGA primitives from the exported tables, candidate depths at the
-        steps of the cost ladder). The lattice spans ``[1, start]`` per FIFO like the default
-        of ``SearchContext``; the exact searches widen it to their box."""
+        """The cost model and lattice of a search: ``"bits"`` (kB of realized storage, the
+        capacity ``fifo.sv`` builds times the data width, candidate depths at the tops of the
+        capacity plateaus) or ``"primitives"`` (FPGA primitives from the exported tables,
+        candidate depths at the steps of the cost ladder). The lattice spans ``[min, start]``
+        per FIFO, ``min`` being the top of the shift-register floor (depth 5) with a capacity
+        model and 1 otherwise, like the default of ``SearchContext``; the exact searches widen
+        it to their box."""
         lower = [1] * self.num_fifos
         if cost_model == "bits":
-            model = TotalBitsCost(self.fifo_width_list(), offset=self.fifo_depth_offset)
-            return model, Lattice(lower, start_depths)
+            model = TotalBitsCost(
+                self.fifo_width_list(),
+                offset=self.fifo_depth_offset,
+                capacities=self.capacity_model,
+            )
+            lower = [model.min_depth(i) for i in range(self.num_fifos)]
+            # plateau tops up to four start depths: the box of the exact searches (default
+            # upper_bound_factor 2); beyond, the lattice continues the last plateau width
+            candidates = [
+                model.breakpoints(i, max(4 * int(d), lower[i] + 1))
+                for i, d in enumerate(start_depths)
+            ]
+            if all(c is None for c in candidates):
+                candidates = None
+            return model, Lattice(lower, start_depths, candidates=candidates)
         if cost_model == "primitives":
             model = self.primitive_cost_model()
             if model is None:
@@ -605,11 +673,14 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             evaluation that reaches the cap is rejected; the target measurement reaching it
             aborts the search with a ``RuntimeError``.
         cost_model : str
-            ``"bits"`` minimises the storage in kB over integer depths; ``"primitives"``
-            minimises the FPGA primitives of the RTL FIFO (LUT equivalents of the device
-            capacity, from the ``fifo_cost_tables`` of ``settings.json``) over the depths at
-            which that cost changes, and ``realized_fifo_depths`` are the (deeper or equal)
-            depths that attain the cost of the found configuration.
+            ``"bits"`` minimises the realized storage in kB (the capacity ``fifo.sv`` builds
+            for a depth times the data width) over the tops of the capacity plateaus;
+            ``"primitives"`` minimises the FPGA primitives of the RTL FIFO (LUT equivalents of
+            the device capacity, from the ``fifo_cost_tables`` of ``settings.json``) over the
+            depths at which that cost changes. ``realized_fifo_depths`` are the (deeper or
+            equal) depths that attain the cost of the found configuration. Every evaluated
+            configuration is applied to the virtual FIFOs with the capacities ``fifo.sv``
+            would build for it (``capacity_registers``).
         strategy_kwargs :
             Passed on to the strategy (seed_strategy, upper_bound_factor, node_order, pareto,
             pareto_cost_limit, allow_unreliable_flags).
@@ -627,6 +698,9 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         widths = self.fifo_width_list()
         cost_model_name = cost_model
         cost_model, lattice = self.make_cost_model(cost_model_name, start_depths)
+        # a start depth below the lattice (a peak occupancy under the shift-register floor)
+        # builds the same FIFO as the floor: search from there
+        start_depths = tuple(max(d, lo) for d, lo in zip(start_depths, lattice.lower))
         oracle = LiveFIFOOracle(
             self,
             iteration_runtime,
@@ -877,9 +951,13 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         ``seed_strategy``, ``upper_bound_factor``, ``node_order``, ``pareto``,
         ``pareto_cost_limit``, ``allow_unreliable_flags``.
 
-        The exported ``fifo_config.json`` holds the realized depths (for ``"primitives"`` the
-        depths attaining the cost of the found configuration, never shallower); the report
-        lists the primitive vector of that configuration whenever cost tables are available.
+        The exported ``fifo_config.json`` holds the realized depths (the tops of the capacity
+        plateaus of ``fifo.sv`` for ``"bits"``, the depths attaining the cost of the found
+        configuration for ``"primitives"``; never shallower). The report gives the storage
+        of that configuration as realized bits (``fifo_size_total_kB``: the capacity every
+        FIFO really gets, ``fifo_capacities``, times its data width), the storage of the
+        depths the search found (``fifo_size_requested_kB``) and the primitive vector
+        whenever cost tables are available.
 
         Steady-state detection (``LiveFIFOOracle``, needs the steady-state registers of the
         instrumentation wrapper; older bitfiles fall back to the fixed runtime):
@@ -931,7 +1009,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         print("FIFO ID | MAX OCCUPANCY")
         for fifo_id, occupancy in enumerate(max_occupancy):
             print(f"{fifo_id:7} | {occupancy:13}")
-        print("TOTAL FIFO SIZE @ MAX OCCUPANCY (kB): %f" % self.total_fifo_size(max_occupancy))
+        print(
+            "TOTAL FIFO SIZE @ MAX OCCUPANCY (kB): %f realized (%f requested)"
+            % (self.total_fifo_size(max_occupancy), self.total_fifo_size(max_occupancy, True))
+        )
         # Detect the virtual FIFO extensions (peak occupancy, run-sticky stall flags)
         if hw_capabilities == "auto":
             self.probe_hw_capabilities()
@@ -992,9 +1073,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             **strategy_kwargs,
         )
 
-        # The depths to build: the found configuration, lifted onto the cost envelope of a
-        # primitive cost model (equal or deeper, so still feasible)
+        # The depths to build: the found configuration, lifted onto the tops of the capacity
+        # plateaus (bits) or the cost envelope (primitives); equal or deeper, so still feasible
         fifo_depths = search_log["realized_fifo_depths"]
+        requested_depths = list(search_log["fifo_depths"])
         cost_unit = search_log["cost_model_obj"].unit
         log_total_fifo_size = search_log["log_total_fifo_size"]
         log_interval = search_log["log_interval"]
@@ -1029,6 +1111,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             final_latency = log_latency[-1]
             final_min_latency = log_min_latency[-1]
         final_total_fifo_size = self.total_fifo_size(fifo_depths)
+        final_capacities = self.fifo_capacities(fifo_depths)
 
         interval_degradation = (
             (final_interval - target_interval) / target_interval if target_interval != 0 else 0
@@ -1106,7 +1189,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         search_summary = search_log["search"]
         fifo_report = {
             "error": self.error,
+            # realized storage: the capacity fifo.sv builds for every depth times the data width
             "fifo_size_total_kB": final_total_fifo_size,
+            # storage of the depths the search found before lifting them onto the plateau tops
+            "fifo_size_requested_kB": self.total_fifo_size(requested_depths, requested=True),
             "cost_model": cost_model,
             "cost_unit": cost_unit,
             "total_cost": search_log["cost_model_obj"].cost(fifo_depths),
@@ -1119,10 +1205,12 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             "final_latency_cycles": final_latency,
             "latency_degradation": latency_degradation,
             "fifo_depths": {},
+            "fifo_capacities": {},
             "fifo_sizes": {},
             "search": {
                 **search_summary,
                 "realized_fifo_depths": list(fifo_depths),
+                "fifo_capacities": list(final_capacities),
                 "all_iterations": search_log["all_iterations"],
             },
         }
@@ -1144,9 +1232,9 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         if relaxation_sweep_results:
             fifo_report["relaxation_sweep"] = relaxation_sweep_results
         for fifo, depth in enumerate(fifo_depths):
-            size = (depth + self.fifo_depth_offset) * self.fifo_widths[str(fifo)]
             fifo_report["fifo_depths"][fifo] = depth + self.fifo_depth_offset
-            fifo_report["fifo_sizes"][fifo] = size
+            fifo_report["fifo_capacities"][fifo] = final_capacities[fifo]
+            fifo_report["fifo_sizes"][fifo] = final_capacities[fifo] * self.fifo_widths[str(fifo)]
         with (Path(report_dir) / "fifo_sizing_report.json").open("w") as f:
             json.dump(fifo_report, f, indent=2)
 

@@ -83,6 +83,9 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         self.fifo_cost_tables = fifo_cost_tables
         self.folding_config = {"Defaults": {}}
         self.fifo_depth_offset = 1
+        # the mock predicate is defined on the requested depths: no capacity rounding unless a
+        # test installs a CapacityModel
+        self.capacity_model = None
         self.hw_capabilities = {
             "peak_occupancy": False,
             "sticky_stall_flags": False,
@@ -643,6 +646,63 @@ class _nowarn:
     def __exit__(self, *exc):
         """Exit without suppressing anything."""
         return False
+
+
+def test_experiment_fifosizing_with_capacity_model(tmp_path):
+    """With a CapacityModel the gauges get fifo.sv's capacities and the report realized bits."""
+    from finn_plus_driver.overlays.fifo_capacity import CapacityModel
+
+    # a predicate on the register values the hardware really gets: FIFO 1 needs 300 slots
+    mock = MockOracle(4, [({0}, 3), ({1}, 299), ({2}, 1), ({3}, 1)])
+    widths = [8, 64, 16, 32]
+    overlay = EmulatedLiveFIFOOverlay(mock, widths, paced_peaks=[6, 400, 5, 4])
+    overlay.capacity_model = CapacityModel([8, 64, 16, 32])
+    written = []
+    original = overlay.configure_fifos_bounded
+
+    def record(depths):
+        """Record the register values the hardware is configured with."""
+        written.append(list(depths))
+        return original(depths)
+
+    overlay.configure_fifos_bounded = record
+    overlay.experiment_fifosizing(
+        report_dir=str(tmp_path), search_strategy="binary_forward", window_frames=WINDOW
+    )
+    with open(tmp_path / "binary_forward" / "both" / "fifo_sizing_report.json") as f:
+        sizing = json.load(f)
+    with open(tmp_path / "binary_forward" / "both" / "fifo_config.json") as f:
+        fifo_config = json.load(f)
+
+    # every register value written is a capacity of fifo.sv minus the offset: never below the
+    # 5-slot shift-register floor, 515 slots for a block RAM request between 258 and 513
+    assert written and all(all(r >= 4 for r in regs) for regs in written)
+    assert all(
+        regs[1] in (514, 516, 1026) or regs[1] >= 1026 or regs[1] == 514
+        for regs in written
+        if regs[1] > 256
+    )
+    # the search starts at the floor-lifted peaks and ends on plateau tops
+    search = sizing["search"]
+    requested = search["fifo_depths"]
+    realized = search["realized_fifo_depths"]
+    assert realized == [4, 512, 4, 4] and requested[1] <= 512 and requested[1] >= 257
+    assert sizing["fifo_depths"] == {str(i): d + 1 for i, d in enumerate(realized)}
+    assert sizing["fifo_capacities"] == {"0": 5, "1": 515, "2": 5, "3": 5}
+    assert search["fifo_capacities"] == [5, 515, 5, 5]
+    assert sizing["fifo_sizes"] == {"0": 40, "1": 515 * 64, "2": 80, "3": 160}
+    assert sizing["fifo_size_total_kB"] == pytest.approx((40 + 515 * 64 + 80 + 160) / 8000)
+    assert sizing["fifo_size_requested_kB"] == pytest.approx(
+        sum((d + 1) * w for d, w in zip(requested, widths)) / 8000
+    )
+    assert sizing["fifo_size_requested_kB"] <= sizing["fifo_size_total_kB"]
+    assert search["total_kB"] == pytest.approx(sizing["fifo_size_total_kB"])
+    assert [fifo_config["fifo_depths"][f"StreamingFIFO_rtl_{i}"] for i in range(4)] == [
+        5,
+        513,
+        5,
+        5,
+    ]
 
 
 @pytest.mark.parametrize(

@@ -480,6 +480,44 @@ def test_primitive_cost_table_lookup():
         PrimitiveCost({"resources": ["lut"], "weights": {}, "fifos": {"0": {"steps": []}}})
 
 
+def test_total_bits_cost_with_capacity_model():
+    """Realized bits: capacity of fifo.sv times width, plateau tops as realization and lattice."""
+    from finn_plus_driver.overlays.fifo_capacity import CapacityModel
+
+    cm = TotalBitsCost([8, 32, 4], offset=1, capacities=CapacityModel([8, 32, 4], ["auto"] * 3))
+    # register value 1 is depth 2, which fifo.sv builds with 5 slots
+    assert cm.capacity(0, 1) == 5 and cm.capacity(0, 4) == 5 and cm.capacity(0, 5) == 6
+    assert cm.cost_fifo(0, 1) == pytest.approx(5 * 8 / 8000)
+    assert cm.cost_fifo(1, 257) == pytest.approx(515 * 32 / 8000)  # depth 258: 512 BRAM rows
+    assert cm.cost_fifo(2, 999) == pytest.approx(1000 * 4 / 8000)  # narrow: LUTRAM, exact
+    assert cm.cost_fifo(0, UNBOUNDED_DEPTH) == float("inf")
+    assert cm.realize([1, 299, 999]) == (4, 512, 999)
+    assert cm.realize([UNBOUNDED_DEPTH, 4, 5]) == (UNBOUNDED_DEPTH, 4, 5)
+    assert cm.min_depth(0) == 4 and cm.min_depth(2) == 4
+    assert cm.breakpoints(0, 40) == list(range(4, 41))
+    bp = cm.breakpoints(1, 600)  # register values: depth 5, 6, ..., 33, then 513, 515, ...
+    assert bp[:3] == [4, 5, 6] and bp[-1] == 600
+    assert [b for b in bp if 256 <= b < 530] == [256, 512, 514, 516, 520, 528]
+    assert cm.breakpoints(2, 600) is None  # identity above the floor: integer lattice
+    # the cost is non-decreasing in the register value
+    costs = [cm.cost_fifo(1, r) for r in range(1, 3000)]
+    assert all(a <= b for a, b in zip(costs, costs[1:]))
+    with pytest.raises(ValueError):
+        TotalBitsCost([8], capacities=CapacityModel([8, 8]))
+    # without a model the storage of the requested depth is counted and nothing is realized
+    plain = TotalBitsCost([8, 32])
+    assert plain.capacity(0, 1) == 2 and plain.realize([1, 7]) == (1, 7)
+    assert plain.breakpoints(0, 10) is None and plain.min_depth(0) == 1
+
+
+def test_lattice_with_per_fifo_integer_range():
+    """A None candidate list keeps the integer range for that FIFO only."""
+    lat = Lattice([4, 1], [20, 10], candidates=[[5, 8, 12], None])
+    assert lat.cands(0) == [4, 5, 8, 12, 16, 20] and lat.cands(1) is None
+    assert lat.next_up(1, 3) == 4 and lat.mid(1, 1, 10) == 5 and lat.clamp([6, 0]) == (8, 1)
+    assert lat.restrict([5, 2], [12, 4]).cands(1) is None
+
+
 def test_lattice_with_candidates():
     """Candidates inside the bounds plus the bounds; the last spacing continues beyond."""
     lat = Lattice([1, 3], [20, 10], candidates=[[4, 8, 12], [2, 5, 9, 30]])

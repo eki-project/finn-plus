@@ -32,7 +32,6 @@
 accelerator from an ONNX model.
 """
 import json
-import math
 import numpy as np
 import os
 import re
@@ -213,6 +212,7 @@ from finn.util.basic import (
 from finn.util.config import extract_model_config_to_json
 from finn.util.exception import FINNInternalError, FINNMultiFPGAUserError, FINNUserError
 from finn.util.execution import execute_parent
+from finn.util.fifo_cost import geometry as fifo_geometry
 from finn.util.fpgadataflow import is_mlo, warn_hls_rtl_dsp_conflict
 from finn.util.logging import log
 from finn.util.slurmutil import detect_slurm_hosts, get_local_cores, parse_hosts
@@ -906,9 +906,13 @@ def step_set_fifo_depths(
             if node_inst.resolve_ram_style() in ("block", "ultra"):
                 node_inst.set_nodeattr("ram_style", cfg.large_fifo_mem_style.value)
 
-    # Generate a dedicated report about final FIFO sizes.
+    # Generate a dedicated report about final FIFO sizes: the storage of the requested depths
+    # and the "effective" storage, the capacity fifo.sv really builds for a depth (its
+    # DEPTH_ACTUAL: at least five slots for a shift register, whole address spaces plus the
+    # read pipeline for BRAM/URAM) times the data width.
     fifo_info: dict[str, Any] = {
         "fifo_depths": {},
+        "fifo_capacities": {},
         "fifo_sizes": {},
         "fifo_sizes_effective": {},
         "impl_style": {},
@@ -920,10 +924,14 @@ def step_set_fifo_depths(
         node_inst = getHWCustomOp(node)
         depth = cast("int", node_inst.get_nodeattr("depth"))
         fifo_size = node_inst.get_instream_width() * depth
-        # Round up to nearest multiple of 32 to reflect actual hardware usage
-        # TODO: refine this "effective FIFO size" metric and calculate a "FIFO efficiency" metric
-        fifo_size_effective = node_inst.get_instream_width() * math.ceil(depth / 32) * 32
+        capacity = fifo_geometry(
+            depth,
+            node_inst.get_instream_width_padded(),
+            cast("str", node_inst.get_nodeattr("ram_style")),
+        ).capacity
+        fifo_size_effective = node_inst.get_instream_width() * capacity
         fifo_info["fifo_depths"][node.name] = depth
+        fifo_info["fifo_capacities"][node.name] = capacity
         fifo_info["fifo_sizes"][node.name] = fifo_size
         fifo_info["fifo_sizes_effective"][node.name] = fifo_size_effective
         fifo_info["impl_style"][node.name] = node_inst.get_nodeattr("impl_style")

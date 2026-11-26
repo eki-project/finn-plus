@@ -160,28 +160,70 @@ class CostModel(Protocol):
 
 
 class TotalBitsCost:
-    """Total FIFO storage in kB: ``sum((depth + offset) * width)`` as reported by the driver."""
+    """Total FIFO storage in kB: ``sum(capacity(depth + offset) * width)``.
+
+    With a ``CapacityModel`` (``fifo_capacity``) the capacity is the one ``fifo.sv`` builds for
+    the requested depth ("realized bits"): constant over a plateau of depths, so ``realize``
+    maps a found configuration onto the plateau tops (the depth that says what gets built,
+    never shallower) and ``breakpoints`` lists the tops as the candidate set of the lattice.
+    Without a capacity model the capacity is the depth itself (the storage requested).
+    """
 
     unit = "kB"
 
-    def __init__(self, widths: Sequence[int], offset: int = 1):
-        """Widths in bits per FIFO (indexed by FIFO ID) and the depth offset of the driver."""
+    def __init__(self, widths: Sequence[int], offset: int = 1, capacities=None):
+        """Widths in bits per FIFO (indexed by FIFO ID), the depth offset of the driver and
+        the optional ``CapacityModel`` of the design."""
         self.widths = list(widths)
         self.offset = offset
+        self.capacities = capacities
+        if capacities is not None and capacities.num_fifos != len(self.widths):
+            raise ValueError("the capacity model must cover every FIFO")
+
+    def capacity(self, i: int, depth: int) -> int:
+        """Items FIFO ``i`` holds at register value ``depth`` (its real depth without a model)."""
+        if depth >= UNBOUNDED_DEPTH:
+            return depth
+        real = depth + self.offset
+        return real if self.capacities is None else self.capacities.capacity(i, real)
 
     def cost_fifo(self, i: int, depth: int) -> float:
         """Storage of one FIFO in kB; unbounded FIFOs are infinitely expensive."""
         if depth >= UNBOUNDED_DEPTH:
             return math.inf
-        return (depth + self.offset) * self.widths[i] / 8.0 / 1000.0
+        return self.capacity(i, depth) * self.widths[i] / 8.0 / 1000.0
 
     def cost(self, depths: Sequence[int]) -> float:
         """Total storage of a configuration in kB."""
         return sum(self.cost_fifo(i, d) for i, d in enumerate(depths))
 
     def realize(self, depths: Sequence[int]) -> Tuple[int, ...]:
-        """Bits are monotone in the depth: the found configuration is the one to build."""
-        return tuple(int(d) for d in depths)
+        """The plateau top of every depth (the depth itself without a capacity model)."""
+        if self.capacities is None:
+            return tuple(int(d) for d in depths)
+        return tuple(
+            int(d)
+            if d >= UNBOUNDED_DEPTH
+            else self.capacities.plateau_top(i, d + self.offset) - self.offset
+            for i, d in enumerate(depths)
+        )
+
+    def breakpoints(self, i: int, max_depth: int) -> Optional[List[int]]:
+        """Register values of the plateau tops of FIFO ``i`` up to register value ``max_depth``.
+
+        ``None`` when every depth above the shift-register floor is its own plateau (an
+        integer lattice above the floor is exact then) or without a capacity model.
+        """
+        if self.capacities is None or self.capacities.identity_above_shift(i):
+            return None
+        tops = self.capacities.plateau_tops(i, max(max_depth, 0) + self.offset)
+        return [t - self.offset for t in tops]
+
+    def min_depth(self, i: int) -> int:
+        """Smallest register value worth requesting: the top of the shift-register floor."""
+        if self.capacities is None:
+            return 1
+        return self.capacities.plateau_top(i, 1 + self.offset) - self.offset
 
 
 class PrimitiveCost:
@@ -326,7 +368,8 @@ class Lattice:
 
     Without ``candidates`` the candidates of a FIFO are the integers of its range at a common
     ``step``. With ``candidates`` (one ascending list per FIFO, e.g. ``PrimitiveCost.
-    breakpoints``) they are the listed depths inside the range plus the two bounds; beyond the
+    breakpoints`` or ``TotalBitsCost.breakpoints``, ``None`` keeping the integer range for
+    that FIFO) they are the listed depths inside the range plus the two bounds; beyond the
     last listed depth the spacing of the last two is continued, which is the right thing for
     a cost ladder whose top tier has a constant period. Every access of the search strategies
     to neighbouring or intermediate depths goes through this class.
@@ -337,9 +380,12 @@ class Lattice:
         lower: Sequence[int],
         upper: Sequence[int],
         step: int = 1,
-        candidates: Optional[Sequence[Sequence[int]]] = None,
+        candidates: Optional[Sequence[Optional[Sequence[int]]]] = None,
     ):
-        """Per-FIFO bounds (inclusive), the integer step and/or the candidate lists."""
+        """Per-FIFO bounds (inclusive), the integer step and/or the candidate lists.
+
+        A ``None`` entry in ``candidates`` keeps the integer range for that FIFO.
+        """
         if len(lower) != len(upper):
             raise ValueError("lower and upper bounds must have the same length")
         self.lower = tuple(int(x) for x in lower)
@@ -349,7 +395,9 @@ class Lattice:
         if candidates is not None:
             if len(candidates) != len(self.lower):
                 raise ValueError("one candidate list per FIFO is required")
-            self.candidates = [sorted(set(int(c) for c in cs)) for cs in candidates]
+            self.candidates = [
+                None if cs is None else sorted(set(int(c) for c in cs)) for cs in candidates
+            ]
         self._cands: Dict[int, List[int]] = {}
 
     @property
@@ -363,7 +411,7 @@ class Lattice:
 
     def cands(self, i: int) -> Optional[List[int]]:
         """Ascending candidate depths of FIFO ``i`` (``None`` for an integer range)."""
-        if self.candidates is None:
+        if self.candidates is None or self.candidates[i] is None:
             return None
         cached = self._cands.get(i)
         if cached is not None:

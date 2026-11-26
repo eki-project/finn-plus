@@ -239,6 +239,44 @@ def test_breakpoints_match_full_scan():
 
 
 @pytest.mark.fpgadataflow
+def test_driver_capacity_mirror_agrees_with_geometry():
+    """The PYNQ driver's dependency-free mirror (``fifo_capacity``) matches ``geometry``.
+
+    The live FIFO sizing driver configures the virtual FIFOs with the capacity ``fifo.sv``
+    builds and runs without finn, so it carries its own copy of the ladder; this scan keeps the
+    two in sync. The module is loaded by path, the driver package is not installed here.
+    """
+    import importlib.util
+
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "driver",
+        "finn_plus_driver",
+        "overlays",
+        "fifo_capacity.py",
+    )
+    spec = importlib.util.spec_from_file_location("fifo_capacity", path)
+    mirror = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mirror)
+    assert tuple(mirror.STYLES) == STYLES and mirror.MIN_DEPTH == MIN_DEPTH
+    depths = list(range(MIN_DEPTH, 4200)) + [
+        2**k + o for k in range(13, 19) for o in (-20, -2, -1, 0, 1, 2, 17, 18, 19, 100)
+    ]
+    for style in STYLES:
+        for width in (1, 4, 5, 8, 11, 12, 32, 72, 256):
+            for depth in depths:
+                geom = geometry(depth, width, style)
+                assert mirror.resolve_style(depth, width, style) == geom.style
+                assert mirror.capacity(depth, width, style) == geom.capacity
+            # the plateau tops are the depths after which the capacity changes
+            caps = [geometry(d, width, style).capacity for d in range(MIN_DEPTH, 3002)]
+            scan = [d for d in range(MIN_DEPTH, 3001) if d == 3000 or caps[d - 1] != caps[d - 2]]
+            assert mirror.plateau_tops(width, 3000, style) == scan
+
+
+@pytest.mark.fpgadataflow
 def test_scalarize_envelope_and_realize():
     """Default weights are the ZU7EV capacity; the envelope is monotone; realize rounds up."""
     lut, ff, bram18, uram, _ = ZU7EV_Platform().compute_resources[0]
