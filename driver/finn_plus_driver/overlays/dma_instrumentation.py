@@ -84,6 +84,12 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
 
             for socket in self.socket_dict_paths.keys():
                 self.restart_with_status(vsm=socket, is_full=True, rm_id=0)
+            # status state of a socket with its RM loaded and active (RM 0 from the full
+            # bitstream), the state load_rm waits for after a reconfiguration
+            self.active_state = {
+                socket: self.get_status(vsm=socket)["state"]
+                for socket in self.socket_dict_paths.keys()
+            }
 
         def _map_socket(self, socket_name: str | int) -> int:
             """Map a socket name or integer index to its numeric index."""
@@ -195,6 +201,42 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             reg_sel = (bs_row << 2) | 2
             addr = self._reg_addr(vsm, bank=3, reg_select=reg_sel)
             self.dfx_controller_inst.write(addr, size)
+
+        def trigger(self, trigger_id: int, vsm: str | int) -> None:
+            """Issue a software trigger (bank 0, register 1, see PG374)."""
+            vsm = self._map_socket(vsm)
+            addr = self._reg_addr(vsm, bank=0, reg_select=1)
+            self.dfx_controller_inst.write(addr, trigger_id)
+
+        def load_rm(self, rm_id: int, vsm: str | int, timeout_s: float = 2.0) -> bool:
+            """Load an RM into a socket unless it is loaded already.
+
+            The build maps trigger i to RM i. Waits until the controller reports the RM
+            active. The body is not reset; reset the accelerator afterwards.
+
+            Args:
+                rm_id: RM to load.
+                vsm: Socket name or index.
+                timeout_s: Time to wait for the reconfiguration.
+
+            Returns:
+                Whether a reconfiguration was necessary.
+            """
+            socket = vsm if isinstance(vsm, str) else list(self.socket_map)[vsm]
+            active = self.active_state[socket]
+            status = self.get_status(vsm=socket)
+            if status["rm_id"] == rm_id and status["state"] == active and not status["error"]:
+                return False
+            self.trigger(rm_id, vsm=socket)
+            deadline = time.time() + timeout_s
+            while time.time() < deadline:
+                status = self.get_status(vsm=socket)
+                if status["error"]:
+                    break
+                if status["rm_id"] == rm_id and status["state"] == active:
+                    return True
+                time.sleep(0.001)
+            raise RuntimeError(f"Loading RM {rm_id} into {socket} failed, status {status}")
 
         def print_status(self, vsm: str | int) -> None:
             """Print the current status of the given virtual socket manager."""
@@ -411,6 +453,12 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
 
         test_results = {}
         for mux_interval in mux_intervals:
+            # The previous point may have ended with another RM loaded, while the reset
+            # below returns every dfx_wrapper to RM 0: load RM 0 again first, so that the
+            # first frames of this point do not run on the wrong RM.
+            for socket in socket_names:
+                if dfx.load_rm(0, vsm=socket):
+                    print(f"mux_interval {mux_interval}: reloaded RM 0 into {socket}")
             # reset instrumentation and accelerator (not DFX controller) for clean measurement:
             self.reset_accelerator()
             self.set_current_mode("instr")  # need to set FINN_switch mode again after reset
