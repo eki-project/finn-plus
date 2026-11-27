@@ -15,8 +15,6 @@
  *	instead of being dropped, so no confirmation read is needed between accesses.
  *	Packets returning from the ring are parsed by size, so a response is recognised
  *	even when packets that were not awaited return before it.
- *	A NOP read with FIFO ID 0xFF returns the controller capability word
- *	(CAPS, version in bits [15:8]); the previous controller returns 0 for it.
  */
 
 module fifo_controller #(
@@ -164,11 +162,6 @@ module fifo_controller #(
 		end
 	end
 
-    // Capability word returned by a NOP read with FIFO ID CAPS_ID: [15:8] controller version
-    //  1: write admission (no dropped commands), fire-and-forget WRITE_FILL, parsed returns
-    localparam logic [15:0] CAPS_ID = 16'h00FF;
-    localparam logic [31:0] CAPS    = 32'h0000_0100;
-
 	//-----------------------------------------------------------------------
 	// Main controller logic
 
@@ -306,7 +299,6 @@ module fifo_controller #(
         end
         default: begin
             config_rdata = {24'b0, op}; // Default: return OP code in LSBs
-            if (op == NOP && fifo_id == CAPS_ID)  config_rdata = CAPS;
         end
         endcase
     end

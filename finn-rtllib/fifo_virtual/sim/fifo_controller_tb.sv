@@ -15,10 +15,10 @@
  *	   peaks of the paced run reproduces exactly these peaks and shows no producer stall,
  *	 - a deadlocked bounded run sets the run-sticky producer-blocked flag of every
  *	   gauge while the per-frame flags of the last gauge keep their previous value,
- *	 - the controller reports its capability word, holds AXI-lite accesses that arrive
- *	   while it is busy instead of dropping them (capacities written back to back and a
- *	   RUN read issued right behind them), and recognises a response behind returning
- *	   WRITE_FILL packets whose payload bytes look like opcodes.
+ *	 - the controller holds AXI-lite accesses that arrive while it is busy instead of
+ *	   dropping them (capacities written back to back and a RUN read issued right behind
+ *	   them), and recognises a response behind returning WRITE_FILL packets whose
+ *	   payload bytes look like opcodes.
  */
 module fifo_controller_tb;
 
@@ -183,10 +183,9 @@ module fifo_controller_tb;
 		axi_read(ctrl_addr(op, fifo_id), data);
 	endtask : ctrl_read
 
-	// ctrl_set_depth: asynchronous WRITE_FILL followed by a NOP read to wait for completion
-	// (the per-FIFO path of the driver for controllers without write admission). The NOP
-	// read is issued right behind the write: the controller must hold it until the
-	// WRITE_FILL packet has been issued rather than drop it.
+	// ctrl_set_depth: asynchronous WRITE_FILL followed by a NOP read issued right behind
+	// it: the controller must hold the read until the WRITE_FILL packet has been issued
+	// rather than drop it.
 	task automatic ctrl_set_depth(input int unsigned fifo_id, input logic [31:0] depth);
 		automatic logic [31:0]  ret;
 		axi_write(ctrl_addr(WRITE_FILL, fifo_id), depth);
@@ -270,20 +269,6 @@ module fifo_controller_tb;
 		ordy = 0;
 		@(posedge clk iff !rst);
 		repeat(4) @(posedge clk);
-
-		//-------------------------------------------------------------------
-		// Phase 0: capability word (NOP read with FIFO ID 0xFF) and a plain NOP read
-		ctrl_read(NOP, 16'h00FF, ret);
-		assert(ret == 32'h0000_0100) else begin
-			$error("Capability word is 0x%08x instead of 0x00000100.", ret);
-			errors++;
-		end
-		ctrl_read(NOP, 0, ret);
-		assert(ret == NOP) else begin
-			$error("NOP read returned 0x%08x.", ret);
-			errors++;
-		end
-		$display("[%0t] CAPS = 0x%08x", $time, 32'h0000_0100);
 
 		//-------------------------------------------------------------------
 		// Phase 1: detached run to determine the bottleneck period, exactly as the

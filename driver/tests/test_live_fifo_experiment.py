@@ -24,8 +24,6 @@ from finn_plus_driver.overlays.fifo_search import (
     TotalBitsCost,
 )
 from finn_plus_driver.overlays.live_fifo import (
-    CTRL_CAPS_FIFO_ID,
-    CTRL_CAPS_VERSION_SHIFT,
     DEFAULT_WINDOW_FRAMES,
     OP_BARRIER_CLEAN,
     OP_COMP_PERIOD,
@@ -97,14 +95,11 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
             "peak_occupancy": False,
             "sticky_stall_flags": False,
             "steady_state_registers": False,
-            "batched_fifo_writes": False,
         }
-        # emulated controller: capability version (0 = old controller) and the mapped
-        # register array of the batched capacity writes (FIFO IDs 1 KiB apart)
-        self.controller_caps_version = 0
+        # emulated controller: the mapped register array that receives the strided store of
+        # the capacities (FIFO IDs 1 KiB apart)
         ctrl_array = np.zeros(256 * self.num_fifos + 256, dtype=np.uint32)
         self.fifo_controller_0 = SimpleNamespace(mmio=SimpleNamespace(array=ctrl_array))
-        self.ip_dict = {"fifo_controller_0": {"addr_range": 1 << 20}}
         self.fclk_mhz_actual = 100.0
         self.seed = 1
         self.mock = mock
@@ -140,20 +135,13 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         """Stop the emulated run."""
         self.running = False
 
-    def ctrl_write(self, opcode=0x00, fifo_id=0x0000, value=0x00000000):
-        """Only WRITE_FILL is written."""
-        assert opcode == OP_WRITE_FILL
-        self.depth_regs[fifo_id] = value
-
     def ctrl_read(self, opcode=0x00, fifo_id=0x0000, check_success=False):
         """Emulate the ring operations of the FIFO controller."""
         if opcode == OP_NOP:
-            if fifo_id == CTRL_CAPS_FIFO_ID:
-                return self.controller_caps_version << CTRL_CAPS_VERSION_SHIFT
             return OP_NOP
         if opcode in (OP_RUN_BOUNDED, OP_RUN_PACED, OP_RUN_DETACHED4):
             self.mode = {OP_RUN_BOUNDED: "bounded", OP_RUN_PACED: "paced"}.get(opcode, "detached")
-            if opcode == OP_RUN_BOUNDED and self.hw_capabilities.get("batched_fifo_writes"):
+            if opcode == OP_RUN_BOUNDED:
                 # the strided store landed in the register array: the controller applies it
                 array = self.fifo_controller_0.mmio.array
                 self.depth_regs = [
@@ -370,7 +358,6 @@ def test_experiment_fifosizing_writes_reports(tmp_path, kwargs):
         "peak_occupancy": True,
         "sticky_stall_flags": True,
         "steady_state_registers": True,
-        "batched_fifo_writes": False,
     }
     assert search["all_iterations"]["0"]["fifo_depths"] == [6, 6, 5, 4]
     assert search["num_evaluations"] == len(search["all_iterations"]) == overlay.num_runs - 1
@@ -446,7 +433,6 @@ def test_old_hardware_is_detected_and_bottom_up_refuses(tmp_path, clock):
         "peak_occupancy": False,
         "sticky_stall_flags": False,
         "steady_state_registers": False,
-        "batched_fifo_writes": False,
     }
     # old bitfile: every evaluation slept for the fixed runtime and read once
     assert not search["steady_state_detection"] and search["window_frames"] is None
@@ -487,41 +473,19 @@ def test_relaxation_sweep_only_for_binary(tmp_path):
 
 
 def test_batched_capacity_writes(tmp_path):
-    """A controller with write admission gets all capacities in one strided store.
+    """The capacities of every evaluated configuration go out as one strided store.
 
-    The probe reads the capability word (NOP read with FIFO ID 0xFF), the search then writes
-    the register array instead of one WRITE_FILL plus confirmation read per FIFO, and the
-    result is the same as with the per-FIFO path. A mapped range too small for the probe's
-    address, or a controller answering 0, keeps the per-FIFO path.
+    The FIFO IDs are 1 KiB apart in the controller's address space, so the register array
+    holds the capacity registers of the last configuration at word ``WRITE_FILL + 256 * id``.
     """
     overlay, mock = make_overlay()
-    overlay.controller_caps_version = 1
     overlay.experiment_fifosizing(report_dir=str(tmp_path), search_strategy="binary_forward")
     with open(tmp_path / "binary_forward" / "both" / "fifo_sizing_report.json") as f:
-        batched = json.load(f)
-    assert batched["search"]["hw_capabilities"]["batched_fifo_writes"]
-    # the register array holds the capacities of the final configuration, FIFO IDs 1 KiB apart
+        search = json.load(f)["search"]
     array = overlay.fifo_controller_0.mmio.array
-    final = batched["search"]["all_iterations"][str(batched["search"]["num_evaluations"] - 1)]
+    final = search["all_iterations"][str(search["num_evaluations"] - 1)]
     written = [int(array[OP_WRITE_FILL + 256 * i]) for i in range(4)]
     assert written == overlay.capacity_registers(final["fifo_depths"])
-
-    reference, _ = make_overlay()
-    reference.experiment_fifosizing(
-        report_dir=str(tmp_path / "ref"), search_strategy="binary_forward"
-    )
-    with open(tmp_path / "ref" / "binary_forward" / "both" / "fifo_sizing_report.json") as f:
-        per_fifo = json.load(f)
-    assert not per_fifo["search"]["hw_capabilities"]["batched_fifo_writes"]
-    assert per_fifo["fifo_depths"] == batched["fifo_depths"]
-    assert per_fifo["search"]["num_evaluations"] == batched["search"]["num_evaluations"]
-
-    # the probe is skipped when the mapped range does not reach the capability FIFO ID
-    small, _ = make_overlay()
-    small.controller_caps_version = 1
-    small.ip_dict["fifo_controller_0"]["addr_range"] = 4 * 256 * 4
-    assert small.controller_version() == 0
-    assert overlay.controller_version() == 1
 
 
 def test_size_iteratively_binary_search_compat(tmp_path):
