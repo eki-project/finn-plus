@@ -236,7 +236,8 @@ def make_overlay(cost_tables=False, **kwargs):
     mock = MockOracle(4, [({0, 1}, 8), ({1}, 2), ({2}, 3), ({3}, 1)])
     widths = [8, 64, 16, 32]
     paced_peaks = [6, 6, 5, 4]
-    tables = synthetic_tables(widths, max_depth=16) if cost_tables else None
+    # deep enough for the cost-derived box corner of the exact searches to lie within the tables
+    tables = synthetic_tables(widths, max_depth=4096) if cost_tables else None
     overlay = EmulatedLiveFIFOOverlay(mock, widths, paced_peaks, fifo_cost_tables=tables, **kwargs)
     return overlay, mock
 
@@ -711,9 +712,18 @@ def test_experiment_fifosizing_with_primitive_cost(tmp_path, kwargs):
     assert sum(prim["fifos"][str(i)]["lut"] for i in range(4)) == prim["total"]["lut"]
     # the search only evaluated candidate depths (or the unbounded probes / start depths)
     lattice = overlay.make_cost_model("primitives", (6, 6, 5, 4))[1]
+    lattices = [lattice]
+    if not strategy.startswith("binary_"):
+        # the lower-bound probes and the seed use the start lattice, the exact search its
+        # cost-derived box
+        lattices.append(lattice.restrict(search["lower_bounds"], search["box_upper"]))
     for it in search["all_iterations"].values():
         for i, d in enumerate(it["fifo_depths"]):
-            assert d >= UNBOUNDED_DEPTH or d in lattice.cands(i) or d == (6, 6, 5, 4)[i]
+            assert (
+                d >= UNBOUNDED_DEPTH
+                or any(d in lat.cands(i) for lat in lattices)
+                or d == (6, 6, 5, 4)[i]
+            )
     optimum = brute_force_optimum(mock, cost_model, [6, 6, 5, 4])
     if strategy.startswith("binary_"):
         assert sizing["total_cost"] >= optimum - 1e-9

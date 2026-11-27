@@ -7,9 +7,9 @@ import pytest
 
 import itertools
 import random
-
 from finn_plus_driver.overlays.fifo_search import (
     BINARY_ORDERS,
+    MAX_SEARCH_DEPTH,
     SEARCH_STRATEGIES,
     UNBOUNDED_DEPTH,
     EvalResult,
@@ -22,6 +22,7 @@ from finn_plus_driver.overlays.fifo_search import (
     TotalBitsCost,
     cache_to_iterations,
     compute_lower_bounds,
+    cost_corner,
     producer_blocked_from_stall,
     resolve_strategy_name,
     run_search,
@@ -361,6 +362,88 @@ def test_bottom_up_aborts_without_flags():
     assert not res.optimal_proven
     assert res.abort_reason is not None
     assert res.depths == tuple(max_depths) and oracle.feasible(res.depths)
+
+
+def test_cost_corner_box_is_exact_over_all_depths():
+    """With the cost-derived corner the exact searches find the optimum over all depths.
+
+    Equal widths keep the corner small enough for a brute force over a box that extends
+    beyond it, which checks that nothing outside the box is cheaper.
+    """
+    rng = random.Random(5)
+    for _ in range(30):
+        n = rng.choice([2, 3])
+        max_depth = rng.randint(4, 7)
+        widths = [rng.choice([8, 16])] * n
+        constraints = [({e}, rng.randint(1, max_depth)) for e in range(n) if rng.random() < 0.8]
+        constraints.append((set(rng.sample(range(n), 2)), rng.randint(2, 2 * max_depth)))
+        oracle = MockOracle(n, constraints)
+        start = tuple([max_depth] * n)
+        for strategy in ("bottom_up_exact", "top_down_bnb"):
+            ctx = make_context(oracle, widths, start)
+            res = run_search(strategy, ctx)
+            assert res.optimal_proven, (strategy, constraints, res.abort_reason)
+            assert res.extra["box_exact"] and not res.extra["box_capped"]
+            corner = res.extra["box_upper"]
+            assert all(c >= s_e for c, s_e in zip(corner, res.seed_depths))
+            optimum = brute_force_optimum(oracle, TotalBitsCost(widths), [c + 2 for c in corner])
+            assert res.cost == pytest.approx(optimum), (strategy, constraints)
+            assert all(lo <= d <= c for d, lo, c in zip(res.depths, res.lower_bounds, corner))
+
+
+def test_cost_corner_budget():
+    """The corner spends the seed's slack over the lower-bound corner on one FIFO at a time."""
+    oracle = MockOracle(3, [({0}, 2), ({1}, 3), ({2}, 1), ({0, 1}, 7)])
+    widths = [8, 16, 32]
+    ctx = make_context(oracle, widths, (6, 6, 6))
+    lb = (2, 3, 1)  # the coupled bound is met by the unbounded partner
+    cost = TotalBitsCost(widths)
+    corner, capped = cost_corner(ctx, lb, (6, 6, 6), cost.cost((6, 6, 6)))
+    assert not capped
+    slack = cost.cost((6, 6, 6)) - cost.cost(lb)
+    for e in range(3):
+        # the largest register value whose cost stays within lb_e's cost plus the slack
+        assert cost.cost_fifo(e, corner[e]) <= cost.cost_fifo(e, lb[e]) + slack + 1e-9
+        assert cost.cost_fifo(e, corner[e] + 1) > cost.cost_fifo(e, lb[e]) + slack + 1e-9
+    # the seed is 4, 3 and 5 elements above the lower bounds: 4 + 6 + 20 = 30 bytes of slack,
+    # spent on 1, 2 or 4 bytes per element
+    assert corner == (2 + 30, 3 + 15, 1 + 7)
+
+
+def test_cost_corner_capped_voids_the_proof():
+    """A FIFO whose cost never exhausts the budget is capped and the claim is dropped."""
+
+    class FreeFirstFIFO(TotalBitsCost):
+        """Bits cost with FIFO 0 free of charge."""
+
+        def cost_fifo(self, i, depth):
+            """Zero for FIFO 0."""
+            return 0.0 if i == 0 else super().cost_fifo(i, depth)
+
+    oracle = MockOracle(2, [({0}, 2), ({1}, 2)])
+    widths = [8, 8]
+    ctx = make_context(oracle, widths, (4, 4), cost_model=FreeFirstFIFO(widths))
+    corner, capped = cost_corner(ctx, (2, 2), (4, 4), ctx.cost((4, 4)))
+    assert capped and corner[0] == MAX_SEARCH_DEPTH and corner[1] == 4
+    for strategy in ("bottom_up_exact", "top_down_bnb"):
+        ctx = make_context(oracle, widths, (4, 4), cost_model=FreeFirstFIFO(widths))
+        res = run_search(strategy, ctx, seed_strategy=None)
+        assert res.extra["box_capped"] and not res.optimal_proven
+        assert oracle.feasible(res.depths)
+
+
+def test_bottom_up_returns_an_optimal_seed_without_searching_above_it():
+    """Once every configuration cheaper than the seed is popped, the seed is proven optimal."""
+    oracle = MockOracle(3, [({0}, 4), ({1}, 3), ({2}, 2)])
+    widths = [8, 8, 8]
+    ctx = make_context(oracle, widths, (4, 3, 2))  # the start is the lower-bound corner
+    res = run_search("bottom_up_exact", ctx)
+    assert res.optimal_proven and res.depths == (4, 3, 2) and res.extra["seed_optimal"]
+    assert res.extra["num_popped"] == 0 and res.lower_bound_cost == pytest.approx(res.cost)
+    # a seed above the optimum is replaced by the optimum, found before the seed's cost
+    ctx = make_context(oracle, widths, (6, 6, 6))
+    res = run_search("bottom_up_exact", ctx)
+    assert res.optimal_proven and res.depths == (4, 3, 2) and not res.extra["seed_optimal"]
 
 
 def test_budget_exhaustion_returns_a_feasible_configuration():

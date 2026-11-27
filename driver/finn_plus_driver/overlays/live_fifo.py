@@ -10,6 +10,7 @@ import warnings
 
 from finn_plus_driver.overlays.fifo_capacity import CapacityModel
 from finn_plus_driver.overlays.fifo_search import (
+    MAX_SEARCH_DEPTH,
     UNBOUNDED_DEPTH,
     EvalResult,
     EvaluationCache,
@@ -496,12 +497,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                 capacities=self.capacity_model,
             )
             lower = [model.min_depth(i) for i in range(self.num_fifos)]
-            # plateau tops up to four start depths: the box of the exact searches (default
-            # upper_bound_factor 2); beyond, the lattice continues the last plateau width
-            candidates = [
-                model.breakpoints(i, max(4 * int(d), lower[i] + 1))
-                for i, d in enumerate(start_depths)
-            ]
+            # plateau tops up to the largest depth the exact searches consider (their box
+            # corner is cost-derived and can lie far above the start depths); the tops are
+            # sparse above 257, so the lists stay short
+            candidates = [model.breakpoints(i, MAX_SEARCH_DEPTH) for i in range(self.num_fifos)]
             if all(c is None for c in candidates):
                 candidates = None
             return model, Lattice(lower, start_depths, candidates=candidates)
@@ -597,7 +596,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             would build for it (``capacity_registers``).
         strategy_kwargs :
             Passed on to the strategy (seed_strategy, upper_bound_factor, node_order, pareto,
-            pareto_cost_limit).
+            pareto_cost_limit). The exact searches run on the cost-derived box of
+            ``fifo_search.cost_corner`` unless ``upper_bound_factor`` is set.
 
         Returns a dict with the keys of the original binary search (duration, fifo_depths,
         log_total_fifo_size, log_interval, log_min_latency, log_latency, all_iterations) plus

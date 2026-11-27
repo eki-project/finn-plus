@@ -32,6 +32,12 @@ from typing import Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 #: clear because the gauge reserves it as a sticky overflow bit in its running-max logic.
 UNBOUNDED_DEPTH = 0x7FFFFFFF
 
+#: Largest register value the exact searches consider for one FIFO. The cost-derived box
+#: corner (``cost_corner``) spends the whole cost slack of the seed on one FIFO, which for a
+#: narrow FIFO can be hundreds of thousands of elements; the gauge holds 31 bits, so this cap
+#: is practical, not physical. A corner at the cap is reported and voids the optimality claim.
+MAX_SEARCH_DEPTH = 2**24
+
 #: Bit layout of the ``READ_STALL`` status byte of the virtual FIFO gauge (``fifo_gauge_pkg``).
 #: Bits [3:0] are latched per frame, bits [7:4] accumulate since the last ``RUN_*`` command.
 STALL_IVLD = 1 << 0  #: irdy && !ivld: producer idle
@@ -351,6 +357,10 @@ class PrimitiveCost:
     def breakpoints(self, i: int) -> List[int]:
         """Register values at which the envelope cost of FIFO ``i`` changes (ascending)."""
         return list(self._breakpoints[i])
+
+    def exact_up_to(self, i: int) -> int:
+        """Largest register value of FIFO ``i`` the tables cover; beyond it the cost is extrapolated."""
+        return self._max_depths[i][-1] - self.offset
 
     def describe(self) -> Dict:
         """The weighting, for the report."""
@@ -843,6 +853,71 @@ def _upper_bounds(ctx: SearchContext, upper_bound_factor: float) -> Tuple[int, .
     )
 
 
+def cost_corner(
+    ctx: SearchContext, lb: Sequence[int], seed_depths: Sequence[int], seed_cost: float
+) -> Tuple[Tuple[int, ...], bool]:
+    """Upper corner of the box that holds every configuration cheaper than the seed.
+
+    Every feasible configuration satisfies ``d >= lb`` (``compute_lower_bounds``) and the cost
+    is additive and non-decreasing per FIFO, so a feasible ``d`` costs at least
+    ``cost_fifo(e, d_e) + cost(lb) - cost_fifo(e, lb_e)`` for every FIFO ``e``. A configuration
+    cheaper than the seed ``s`` therefore has ``cost_fifo(e, d_e) < cost(s) - cost(lb) +
+    cost_fifo(e, lb_e)`` for every ``e``; the largest depth within that budget is the corner.
+    Nothing outside the box ``[lb, corner]`` is cheaper than the seed, and the corner dominates
+    the seed (``s >= lb``), so it is feasible: a search that is exact on this box is exact
+    overall. The depth within the budget is found by bisection on the (monotone) per-FIFO cost;
+    it lands on the top of a cost plateau by itself.
+
+    Returns the corner and whether any FIFO hit ``MAX_SEARCH_DEPTH`` (the budget could not
+    bound it; the claim is then relative to the cap).
+    """
+    cost_fifo = ctx.cost_model.cost_fifo
+    lb_cost = ctx.cost(lb)
+    corner = []
+    capped = False
+    for e in range(ctx.num_fifos):
+        budget = seed_cost - lb_cost + cost_fifo(e, lb[e]) + 1e-9
+        lo, hi = int(lb[e]), MAX_SEARCH_DEPTH
+        if cost_fifo(e, hi) <= budget:
+            depth, capped = hi, True
+        else:
+            # largest depth in [lo, hi) within the budget; lo itself always is
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                if cost_fifo(e, mid) <= budget:
+                    lo = mid
+                else:
+                    hi = mid
+            depth = lo
+        corner.append(max(depth, int(seed_depths[e]), int(lb[e])))
+    return tuple(corner), capped
+
+
+def _search_box(
+    ctx: SearchContext,
+    lb: Tuple[int, ...],
+    seed: "SearchResult",
+    upper_bound_factor: Optional[float],
+) -> Tuple[Tuple[int, ...], bool, bool]:
+    """Upper corner of the exact searches' box, whether it was capped and whether it is exact.
+
+    ``upper_bound_factor`` None takes the cost-derived corner (``cost_corner``, exact overall);
+    a number keeps the heuristic box ``factor * start`` (exact only within it). The box is
+    exact when the cost model is exact up to the corner (``exact_up_to``, e.g. the end of the
+    primitive cost tables; ``None`` means everywhere).
+    """
+    if upper_bound_factor is None:
+        ub, capped = cost_corner(ctx, lb, seed.depths, seed.cost)
+    else:
+        ub, capped = _upper_bounds(ctx, upper_bound_factor), False
+    exact_up_to = getattr(ctx.cost_model, "exact_up_to", None)
+    exact = not capped and (
+        exact_up_to is None
+        or all(exact_up_to(e) is None or u <= exact_up_to(e) for e, u in enumerate(ub))
+    )
+    return ub, capped, exact
+
+
 def _run_seed(ctx: SearchContext, seed_strategy: Optional[str], **kwargs) -> SearchResult:
     """Run the seed strategy (or take the start configuration) to obtain a feasible incumbent."""
     if seed_strategy is None:
@@ -874,7 +949,7 @@ def _unit(ctx: SearchContext) -> str:
 
 def search_bottom_up_exact(
     ctx: SearchContext,
-    upper_bound_factor: float = 2.0,
+    upper_bound_factor: Optional[float] = None,
     seed_strategy: Optional[str] = None,
     pareto: bool = False,
     pareto_cost_limit: Optional[float] = None,
@@ -888,7 +963,11 @@ def search_bottom_up_exact(
     blocked its producer could be made unbounded without changing a single event of the
     execution, so every feasible configuration above the popped one must enlarge a blocked
     FIFO: the expansion is complete and the first feasible configuration popped from the
-    cost-ordered heap is a global optimum.
+    cost-ordered heap is a global optimum. The search runs on the box ``[lb, corner]`` of
+    ``cost_corner`` (``upper_bound_factor`` None), which holds every configuration cheaper
+    than the seed; once the cheapest open configuration costs as much as the seed, the seed
+    itself is the proven optimum. A numeric ``upper_bound_factor`` keeps the heuristic box
+    ``factor * start`` instead, exact only within it.
 
     ``producer_blocked`` comes from the run-sticky stall flags of the gauges (the per-frame
     flags are stale in a deadlock, where most of the visited configurations end up); an
@@ -903,12 +982,12 @@ def search_bottom_up_exact(
     seed_result_cost = seed.cost
 
     lb = tuple(lower_bounds) if lower_bounds is not None else compute_lower_bounds(ctx)
-    ub = _upper_bounds(ctx, upper_bound_factor)
+    ub, box_capped, box_exact = _search_box(ctx, lb, seed, upper_bound_factor)
     lattice = ctx.lattice.restrict(lb, ub)
     lb_cost = _lower_bound_entry_cost(ctx, lb)
     ctx.log(
         f"Lower bounds: {list(lb)} (cost {lb_cost:.3f} {_unit(ctx)}), "
-        f"box upper corner: {list(ub)}"
+        f"box upper corner: {list(ub)}{' (capped)' if box_capped else ''}"
     )
 
     heap: List[Tuple[float, Tuple[int, ...]]] = [(round(lb_cost, 9), lb)]
@@ -919,6 +998,7 @@ def search_bottom_up_exact(
     abort_reason = None
     budget_exhausted = False
     found: Optional[LogEntry] = None
+    seed_optimal = False
     pareto_points: List[Dict] = []
     if pareto and pareto_cost_limit is None:
         pareto_cost_limit = seed_result_cost
@@ -929,6 +1009,13 @@ def search_bottom_up_exact(
             budget_exhausted = True
             break
         cost, depths = heapq.heappop(heap)
+        if found is None and cost >= seed_result_cost - 1e-9:
+            # every configuration cheaper than the seed has been popped and found infeasible:
+            # the (feasible) seed is the optimum (pareto mode keeps enumerating up to its limit)
+            seed_optimal = True
+            if not pareto or cost > pareto_cost_limit:
+                heapq.heappush(heap, (cost, depths))
+                break
         if found is not None and pareto and cost > pareto_cost_limit:
             heapq.heappush(heap, (cost, depths))
             break
@@ -1025,8 +1112,18 @@ def search_bottom_up_exact(
             depths=depths,
             cost=ctx.cost(depths),
             result=found.result,
-            optimal_proven=True,
+            optimal_proven=box_exact,
             lower_bound_cost=ctx.cost(depths),
+        )
+    elif seed_optimal and abort_reason is None:
+        # Nothing cheaper than the seed is feasible: the seed is the optimum
+        result = SearchResult(
+            strategy="bottom_up_exact",
+            depths=seed.depths,
+            cost=seed.cost,
+            result=seed.result,
+            optimal_proven=box_exact,
+            lower_bound_cost=seed.cost,
         )
     else:
         # No feasible configuration found: return the seed. Nothing cheaper than the heap
@@ -1037,7 +1134,7 @@ def search_bottom_up_exact(
             cost=seed.cost,
             result=seed.result,
             optimal_proven=False,
-            lower_bound_cost=heap_min if heap_min is not None else lb_cost,
+            lower_bound_cost=min(seed.cost, heap_min) if heap_min is not None else lb_cost,
         )
     result.lower_bounds = lb
     result.lower_bounds_cost = lb_cost
@@ -1055,6 +1152,9 @@ def search_bottom_up_exact(
         "num_popped": num_popped,
         "box_upper": list(ub),
         "box_cap_hit": cap_hit,
+        "box_capped": box_capped,
+        "box_exact": box_exact,
+        "seed_optimal": seed_optimal,
         "num_cache_hits": ctx.cache.num_cache_hits,
     }
     return result
@@ -1082,7 +1182,7 @@ def _branch_fifo(ctx: SearchContext, lo: Tuple[int, ...], hi: Tuple[int, ...]) -
 
 def search_top_down_bnb(
     ctx: SearchContext,
-    upper_bound_factor: float = 2.0,
+    upper_bound_factor: Optional[float] = None,
     seed_strategy: Optional[str] = "binary_largest_first",
     node_order: str = "dfs",
     lower_bounds: Optional[Sequence[int]] = None,
@@ -1102,20 +1202,23 @@ def search_top_down_bnb(
     not shrink the box itself: other points of the box with smaller depths elsewhere can need
     more than the observed peak of a FIFO, so the box must be kept for completeness.
 
-    The search is exact relative to the box ``[lb, ub]`` with ``ub = upper_bound_factor *
-    start``; on budget exhaustion the incumbent and the proven lower bound are reported.
+    The search box is ``[lb, corner]`` with the cost-derived corner of ``cost_corner``
+    (``upper_bound_factor`` None), which holds every configuration cheaper than the seed, so a
+    completed search is exact overall; a numeric ``upper_bound_factor`` keeps the heuristic
+    box ``factor * start``, exact only within it. On budget exhaustion the incumbent and the
+    proven lower bound are reported.
     """
     t0 = time.time()
     seed = _run_seed(ctx, seed_strategy)
     seed_num_evaluations = ctx.cache.num_evaluations
 
     lb = tuple(lower_bounds) if lower_bounds is not None else compute_lower_bounds(ctx)
-    ub = _upper_bounds(ctx, upper_bound_factor)
+    ub, box_capped, box_exact = _search_box(ctx, lb, seed, upper_bound_factor)
     lattice = ctx.lattice.restrict(lb, ub)
     lb_cost = _lower_bound_entry_cost(ctx, lb)
     ctx.log(
         f"Lower bounds: {list(lb)} (cost {lb_cost:.3f} {_unit(ctx)}), "
-        f"box upper corner: {list(ub)}"
+        f"box upper corner: {list(ub)}{' (capped)' if box_capped else ''}"
     )
 
     # Incumbent: the seed. ``inferred`` marks an incumbent derived from peaks that has not been
@@ -1255,7 +1358,7 @@ def search_top_down_bnb(
         optimal_proven = False
         lower_bound_cost = min(incumbent_cost, remaining) if remaining is not None else lb_cost
     else:
-        optimal_proven = confirmed
+        optimal_proven = confirmed and box_exact
         lower_bound_cost = incumbent_cost if confirmed else lb_cost
 
     return SearchResult(
@@ -1282,6 +1385,8 @@ def search_top_down_bnb(
             "num_pruned_bound": num_pruned_bound,
             "num_pruned_infeasible": num_pruned_infeasible,
             "box_upper": list(ub),
+            "box_capped": box_capped,
+            "box_exact": box_exact,
             "seed_num_evaluations": seed_num_evaluations,
             "incumbent_confirmed": confirmed,
             "num_cache_hits": ctx.cache.num_cache_hits,
