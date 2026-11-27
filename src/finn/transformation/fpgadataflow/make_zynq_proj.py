@@ -973,6 +973,7 @@ class MakeZYNQProject(Transformation):
         pr_config.append("current_bd_design $curdesign")
         rtllib = Path(get_settings().finn_rtllib)
         for wrapper_file in [
+            rtllib / "dfx" / "tuser_track" / "tuser_track.sv",
             rtllib / "dfx" / "dfx_wrapper" / "dfx_wrapper.sv",
             rtllib / "dfx" / "dfx_wrapper" / "dfx_wrapper_wrapper.v",
             rtllib / "dfx" / "dfx_tuser_passthrough" / "dfx_tuser_passthrough.sv",

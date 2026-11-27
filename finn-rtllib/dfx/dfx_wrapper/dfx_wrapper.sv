@@ -15,8 +15,10 @@
 //     to the same value on every beat of a frame. The wrapper peeks at it on the
 //     first beat of each frame (before accepting the beat, i.e. tready=0) to
 //     decide whether reconfiguration is needed before processing the frame.
-//   m_axis_tuser: the full tUSER vector of the current frame, forwarded unchanged
-//     so downstream wrappers receive their own RM-selection bits.
+//   m_axis_tuser: the full tUSER vector of the frame that is leaving the BDC,
+//     forwarded unchanged so downstream wrappers receive their own RM-selection
+//     bits. A tuser_track remembers it for every frame inside the BDC, since the
+//     frame leaving is not necessarily the last one that entered.
 //
 // State machine:
 //   CHECK_TUSER  : look at the first beat of the next frame. When tvalid goes high,
@@ -48,6 +50,7 @@ module dfx_wrapper #(
     parameter int RESET_CYCLES    = 16,  // clock cycles to assert accel_reset_n after reconfig
     parameter int RESET_LATENCY   = 3,   // cycles until the BDC's nodes follow accel_reset_n
                                          // (reset_pipeline_stages + 1, 0 without reset pipeline)
+    parameter int TUSER_TRACK_DEPTH = 256, // frames the BDC may hold (see tuser_track)
     parameter int NUM_OUTPUT_BEATS = 1   // AXI-Stream beats per output frame; used to
                                          // regenerate m_axis_tlast without relying on the
                                          // BDC generating rp_s_axis_tlast internally
@@ -121,7 +124,7 @@ module dfx_wrapper #(
     logic [RM_ID_W-1:0]     pending_rm_id;
     logic [RESET_CNT_W-1:0] reset_cnt;
     logic [INFLIGHT_W-1:0]  frames_in_flight;
-    logic [TUSER_WIDTH-1:0] tuser_reg;     // holds full tUSER of the current/most-recent frame
+    logic                   in_first;      // the next beat entering the BDC starts a frame
     logic                   decouple_prev; // for edge detection
     logic [OUT_CNT_W-1:0]   out_beat_cnt;  // counts accepted output beats for tLast regeneration
 
@@ -130,11 +133,14 @@ module dfx_wrapper #(
     //   In S_INFERENCE, and in S_CHECK_TUSER for the first beat of a frame that
     //   the loaded RM processes (decided combinationally from its tUSER, so frames
     //   follow each other without a bubble). Gated with tready from the BDC.
+    //   A frame's first beat also needs room in the tUSER tracker.
     // --------------------------------------------------------------------------
+    logic tq_in_ready;
     logic input_active;
-    assign input_active = (state == S_INFERENCE) ||
-                          ((state == S_CHECK_TUSER) && s_axis_tvalid &&
-                           (s_axis_tuser[RM_ID_W-1:0] == current_rm_id));
+    assign input_active = ((state == S_INFERENCE) ||
+                           ((state == S_CHECK_TUSER) && s_axis_tvalid &&
+                            (s_axis_tuser[RM_ID_W-1:0] == current_rm_id))) &&
+                          (!in_first || tq_in_ready);
     assign rp_m_axis_tdata  = s_axis_tdata;
     assign rp_m_axis_tvalid = s_axis_tvalid & input_active;
     assign rp_m_axis_tlast  = s_axis_tlast;
@@ -164,12 +170,10 @@ module dfx_wrapper #(
     assign m_axis_tdata     = rp_s_axis_tdata;
     assign m_axis_tvalid    = rp_s_axis_tvalid & output_forward;
     assign m_axis_tlast     = out_beat_last;
-    // Forward the full upstream tUSER vector so downstream wrappers (dfx or passthrough)
-    // receive the RM-selection bits intended for their own stage. tuser_reg is latched
-    // in S_CHECK_TUSER from the first beat of each frame; since the FSM blocks new
-    // input during reconfiguration all in-flight frames share the same tUSER value,
-    // so a single hold register is sufficient.
-    assign m_axis_tuser     = tuser_reg;
+    // Forward the full upstream tUSER vector of the leaving frame so downstream
+    // wrappers (dfx, sw or passthrough) receive the selection bits of their stage.
+    logic [TUSER_WIDTH-1:0] tq_out_tuser;
+    assign m_axis_tuser     = tq_out_tuser;
     assign rp_s_axis_tready = output_forward ? m_axis_tready : 1'b1;
 
     // --------------------------------------------------------------------------
@@ -196,6 +200,30 @@ module dfx_wrapper #(
     logic frame_out;
     assign frame_in  = rp_m_axis_tvalid & rp_m_axis_tready & rp_m_axis_tlast;
     assign frame_out = output_forward & rp_s_axis_tvalid & rp_s_axis_tready & out_beat_last;
+
+    // --------------------------------------------------------------------------
+    // Per-frame tUSER of the frames inside the BDC
+    //   A frame enters with its first beat (in_first) and leaves with frame_out.
+    // --------------------------------------------------------------------------
+    always_ff @(posedge aclk or negedge aresetn) begin
+        if (!aresetn)
+            in_first <= 1'b1;
+        else if (rp_m_axis_tvalid & rp_m_axis_tready)
+            in_first <= rp_m_axis_tlast;
+    end
+
+    tuser_track #(
+        .TUSER_WIDTH(TUSER_WIDTH),
+        .DEPTH      (TUSER_TRACK_DEPTH)
+    ) tuser_track_i (
+        .aclk     (aclk),
+        .aresetn  (aresetn),
+        .in_frame (rp_m_axis_tvalid & rp_m_axis_tready & in_first),
+        .in_tuser (s_axis_tuser),
+        .in_ready (tq_in_ready),
+        .out_frame(frame_out),
+        .out_tuser(tq_out_tuser)
+    );
 
     always_ff @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
@@ -231,7 +259,6 @@ module dfx_wrapper #(
             current_rm_id  <= '0;
             pending_rm_id  <= '0;
             reset_cnt      <= RESET_CNT_W'((RESET_LATENCY > 0) ? RESET_LATENCY - 1 : 0);
-            tuser_reg      <= '0;
             decouple_prev  <= 1'b0;
             controller_trigger <= '0;
         end else begin
@@ -248,7 +275,6 @@ module dfx_wrapper #(
                 S_CHECK_TUSER: begin
                     if (s_axis_tvalid) begin
                         pending_rm_id <= s_axis_tuser[RM_ID_W-1:0];
-                        tuser_reg     <= s_axis_tuser;
                         if (s_axis_tuser[RM_ID_W-1:0] == current_rm_id)
                             // the first beat passes in this cycle (input_active); a
                             // single-beat frame ends with it already

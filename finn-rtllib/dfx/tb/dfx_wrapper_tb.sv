@@ -16,11 +16,12 @@
  * The source sends NFRAMES identical-length frames and selects the RM
  * (frame / N) % 2 via tUSER, as the instrumentation does with mux_interval N.
  *
- * Checks: every output beat comes from the expected frame, beat and RM, every
+ * Checks: every output beat comes from the expected frame, beat and RM and
+ * carries that frame's tUSER, every
  * frame leaves the body after the source has stopped, and without switching
  * (N >= NFRAMES) and without random stalls a frame takes exactly OLEN cycles.
  *
- * Run: xvlog -sv ../dfx_wrapper/dfx_wrapper.sv dfx_wrapper_tb.sv &&
+ * Run: xvlog -sv ../tuser_track/tuser_track.sv ../dfx_wrapper/dfx_wrapper.sv dfx_wrapper_tb.sv &&
  *      xelab dfx_wrapper_tb -s sim [-generic_top N=1 ...] && xsim sim -R
  * Prints "PASS" or stops with $fatal.
  *****************************************************************************/
@@ -35,6 +36,7 @@ module dfx_wrapper_tb;
 	parameter int RANDVALID     = 0;    // random gaps in the source
 	parameter int GARBAGE       = 1;    // body drives random tvalid while reconfigured
 	parameter int RECONF_CYCLES = 200;  // DFX controller: decouple time per reconfiguration
+	parameter int TUSER_TRACK_DEPTH = 256;
 
 	localparam int  W = 32;
 	localparam int  DEPTH = LAT + 4*OLEN;
@@ -79,7 +81,7 @@ module dfx_wrapper_tb;
 	logic  accel_reset_n;
 	dfx_wrapper #(
 		.IN_DATA_WIDTH(W), .OUT_DATA_WIDTH(W), .TUSER_WIDTH(2), .NUM_RM(2),
-		.RESET_LATENCY(RESET_LATENCY), .NUM_OUTPUT_BEATS(OLEN)
+		.RESET_LATENCY(RESET_LATENCY), .TUSER_TRACK_DEPTH(TUSER_TRACK_DEPTH), .NUM_OUTPUT_BEATS(OLEN)
 	) dut (
 		.aclk(clk), .aresetn,
 		.s_axis_tdata(s_tdata), .s_axis_tvalid(s_tvalid), .s_axis_tready(s_tready),
@@ -183,7 +185,7 @@ module dfx_wrapper_tb;
 	logic  rr;
 	always @(posedge clk)  rr <= RANDREADY? $urandom_range(0, 1) : 1;
 	assign	m_tready = rr;
-	int  out_beats = 0, out_frames = 0, errors = 0, bad_intervals = 0;
+	int  out_beats = 0, out_frames = 0, errors = 0, tuser_errors = 0, bad_intervals = 0;
 	longint  last_frame_cyc = -1;
 	always @(posedge clk) begin
 		if(m_tvalid && m_tready) begin
@@ -199,9 +201,9 @@ module dfx_wrapper_tb;
 				errors <= errors + 1;
 			end
 			if(m_tuser != 2'(exp_r)) begin
-				// tUSER of a frame whose first beat left after the next frame entered
-				// may already be the next frame's (single hold register), so only report it
-				if(exp_b == 0)  $display("[%0t] note: frame %0d left with tUSER %0d", $time, exp_f, m_tuser);
+				if(tuser_errors < 8)  $display("[%0t] output beat %0d (frame %0d): tUSER %0d, expected %0d",
+				                               $time, out_beats, exp_f, m_tuser, exp_r);
+				tuser_errors <= tuser_errors + 1;
 			end
 			out_beats <= out_beats + 1;
 			if(exp_b == OLEN-1) begin
@@ -228,6 +230,7 @@ module dfx_wrapper_tb;
 		if(out_frames != NFRAMES)      $fatal(1, "FAIL: %0d of %0d frames left the body", out_frames, NFRAMES);
 		if(out_beats != NFRAMES*OLEN)  $fatal(1, "FAIL: %0d output beats, expected %0d", out_beats, NFRAMES*OLEN);
 		if(errors != 0)                $fatal(1, "FAIL: %0d wrong output beats", errors);
+		if(tuser_errors != 0)          $fatal(1, "FAIL: %0d output beats with a wrong tUSER", tuser_errors);
 		if(reconfigs != (NFRAMES-1) / N)  $fatal(1, "FAIL: %0d reconfigurations, expected %0d", reconfigs, (NFRAMES-1) / N);
 		if((N >= NFRAMES) && !RANDREADY && !RANDVALID && (bad_intervals != 0))
 			$fatal(1, "FAIL: %0d frames took longer than %0d cycles", bad_intervals, OLEN);

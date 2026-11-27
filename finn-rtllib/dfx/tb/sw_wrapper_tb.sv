@@ -10,11 +10,12 @@
  * tags every output beat with the frame, beat and selected set.
  * The source selects the set (frame / N) % NUM_SETS via tUSER.
  *
- * Checks: every output beat comes from the expected frame, beat and set,
+ * Checks: every output beat comes from the expected frame, beat and set and
+ * carries that frame's tUSER,
  * every frame leaves after the source has stopped, and without random stalls a
  * frame takes exactly OLEN cycles.
  *
- * Run: xvlog -sv ../sw_wrapper/sw_wrapper.sv sw_wrapper_tb.sv &&
+ * Run: xvlog -sv ../tuser_track/tuser_track.sv ../sw_wrapper/sw_wrapper.sv sw_wrapper_tb.sv &&
  *      xelab sw_wrapper_tb -s sim [-generic_top N=1 ...] && xsim sim -R
  * Prints "PASS" or stops with $fatal.
  *****************************************************************************/
@@ -28,6 +29,8 @@ module sw_wrapper_tb;
 	parameter int RANDREADY = 0;
 	parameter int RANDVALID = 0;
 	parameter int SLOWTAP   = 0;   // token buffer accepts only every few cycles
+	parameter int TUSER_TRACK_DEPTH = 256;
+	parameter int FULL_RATE = 1;   // expect one frame per OLEN cycles (enough tracker entries)
 
 	localparam int  W = 32;
 	localparam int  DEPTH = LAT + 4*OLEN;
@@ -72,7 +75,7 @@ module sw_wrapper_tb;
 	logic  setsel_tvalid, setsel_tready;
 	sw_wrapper #(
 		.DATA_IN_WIDTH(W), .DATA_OUT_WIDTH(W), .TUSER_WIDTH(2), .NUM_SETS(NUM_SETS),
-		.NUM_OUTPUT_BEATS(OLEN), .SETSEL_WIDTH(SETSEL_WIDTH)
+		.TUSER_TRACK_DEPTH(TUSER_TRACK_DEPTH), .NUM_OUTPUT_BEATS(OLEN), .SETSEL_WIDTH(SETSEL_WIDTH)
 	) dut (
 		.aclk(clk), .aresetn,
 		.s_axis_tdata(s_tdata), .s_axis_tvalid(s_tvalid), .s_axis_tready(s_tready),
@@ -154,7 +157,7 @@ module sw_wrapper_tb;
 	logic  rr;
 	always @(posedge clk)  rr <= RANDREADY? $urandom_range(0, 1) : 1;
 	assign	m_tready = rr;
-	int  out_beats = 0, out_frames = 0, errors = 0, bad_intervals = 0, tokens = 0;
+	int  out_beats = 0, out_frames = 0, errors = 0, tuser_errors = 0, bad_intervals = 0, tokens = 0;
 	longint  last_frame_cyc = -1;
 	always @(posedge clk)  if(setsel_tvalid && setsel_tready)  tokens <= tokens + 1;
 	always @(posedge clk) begin
@@ -169,6 +172,11 @@ module sw_wrapper_tb;
 				if(errors < 8)  $display("[%0t] output beat %0d: frame %0d beat %0d set %0d tlast %0b, expected frame %0d beat %0d set %0d",
 				                         $time, out_beats, f, b, r, m_tlast, exp_f, exp_b, exp_r);
 				errors <= errors + 1;
+			end
+			if(m_tuser != 2'(exp_r)) begin
+				if(tuser_errors < 8)  $display("[%0t] output beat %0d (frame %0d): tUSER %0d, expected %0d",
+				                               $time, out_beats, exp_f, m_tuser, exp_r);
+				tuser_errors <= tuser_errors + 1;
 			end
 			out_beats <= out_beats + 1;
 			if(exp_b == OLEN-1) begin
@@ -195,8 +203,9 @@ module sw_wrapper_tb;
 		if(out_frames != NFRAMES)      $fatal(1, "FAIL: %0d of %0d frames left the container", out_frames, NFRAMES);
 		if(out_beats != NFRAMES*OLEN)  $fatal(1, "FAIL: %0d output beats, expected %0d", out_beats, NFRAMES*OLEN);
 		if(errors != 0)                $fatal(1, "FAIL: %0d wrong output beats", errors);
+		if(tuser_errors != 0)          $fatal(1, "FAIL: %0d output beats with a wrong tUSER", tuser_errors);
 		if(tokens != NFRAMES)          $fatal(1, "FAIL: %0d set-selection tokens for %0d frames", tokens, NFRAMES);
-		if(!RANDREADY && !RANDVALID && !SLOWTAP && (bad_intervals != 0))
+		if(FULL_RATE && !RANDREADY && !RANDVALID && !SLOWTAP && (bad_intervals != 0))
 			$fatal(1, "FAIL: %0d frames took longer than %0d cycles", bad_intervals, OLEN);
 		$display("PASS");
 		$finish;
