@@ -97,6 +97,9 @@ class LiveFIFOOracle:
     - ``instrumentation_error``: timestamp overflow/underflow (deadlock), negative;
     - ``idle_timeout``: no frame completed for longer than ``FeasibilityCheck.stall_bound``
       (the relaxed latency plus one relaxed interval), negative for every stop condition;
+      before the first frame of a run the time since the start of the run counts, so a
+      configuration that deadlocks before its first frame is rejected without waiting for
+      the cap;
     - ``pending_timeout``: the oldest frame in flight is older than the relaxed latency
       threshold (stop conditions with latency), negative;
     - ``latency_violation``: the window maximum of the latency exceeds its threshold (stop
@@ -127,7 +130,7 @@ class LiveFIFOOracle:
         throttle_interval,
         hw_capabilities,
         window_frames=None,
-        poll_interval_s=0.0003,
+        poll_interval_s=0.0001,
         cap_s=None,
         feasibility=None,
     ):
@@ -199,9 +202,13 @@ class LiveFIFOOracle:
             # the first frame of a run has no valid interval: the window is full once it holds
             # ``window`` frames after it
             window_full = frames >= window + 1 and s["avg_fill"] >= window
+            # idle time: since the last completed frame, or, before the first one, since the
+            # start of the run (``idle_cycles`` counts from the reset, which precedes the
+            # configuration of the FIFOs over AXI-lite and would fire at the first poll)
+            idle = s["idle_cycles"] if frames >= 1 else s["run_cycles"]
             if s["overflow"] or s["underflow"]:
                 decided_by = "instrumentation_error"
-            elif fb is not None and frames >= 1 and s["idle_cycles"] > fb.stall_bound:
+            elif fb is not None and idle > fb.stall_bound:
                 decided_by = "idle_timeout"
             elif check_latency and s["oldest_pending_age"] > fb.relaxed_latency_threshold:
                 decided_by = "pending_timeout"
@@ -228,7 +235,7 @@ class LiveFIFOOracle:
         interval = s["int_win_max"]
         latency = s["lat_win_max"]
         if decided_by in ("idle_timeout", "cap_expired"):
-            interval = max(interval, s["idle_cycles"])
+            interval = max(interval, idle)
         if decided_by in ("pending_timeout", "cap_expired"):
             latency = max(latency, s["oldest_pending_age"])
         deadlock = frames == 0 or decided_by == "instrumentation_error"
@@ -631,7 +638,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         max_evaluations=None,
         max_runtime_s=None,
         window_frames=None,
-        poll_interval_s=0.0003,
+        poll_interval_s=0.0001,
         evaluation_cap_s=None,
         evaluation_cap_frames=None,
         cost_model="bits",
@@ -964,7 +971,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         ``steady_state_detection`` ("auto", or False to force the fixed runtime),
         ``window_frames`` (frames of a clean sliding window that count as steady state,
         default ``DEFAULT_WINDOW_FRAMES``; at most the build's ``instrumentation_avg_n``),
-        ``poll_interval_s`` (default 300 us), ``cap_factor`` and ``cap_floor_s`` (wall-clock
+        ``poll_interval_s`` (default 100 us; one poll is a single block read of the registers), ``cap_factor`` and ``cap_floor_s`` (wall-clock
         cap of an evaluation, see ``evaluation_cap``; defaults 4 and 2 ms). The target
         interval and latency are the window maxima of the clean window of the paced start
         configuration, so they are free of the warm-up transient.

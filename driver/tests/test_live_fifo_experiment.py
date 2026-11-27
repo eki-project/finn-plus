@@ -60,8 +60,11 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
     completes ``frames_per_poll`` frames per poll with a constant window (minimum = maximum);
     a degraded one (mock: ``DEGRADED_*``) runs steadily slow, its whole window growing by
     ``degrade_step`` per poll; a severely violated one (mock: deadlock) completes one frame and
-    then idles with a growing pending-frame age. ``stall_mode`` makes every bounded run look
-    frozen before its first frame (no frames, no pending age) to exercise the wall-clock cap.
+    then idles with a growing pending-frame age. ``frozen_mode`` makes every bounded run look
+    frozen before its first frame (no frames, no pending age, only the run cycle counter
+    advancing); ``oscillate_mode`` makes it complete frames whose window minimum is within
+    and whose window maximum is above the interval threshold, which no rule decides, to
+    exercise the wall-clock cap. The run cycle counter advances by ``cycles_per_poll``.
     """
 
     def __init__(
@@ -99,7 +102,9 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         self.steady_state_hw = steady_state_hw
         self.frames_per_poll = frames_per_poll
         self.degrade_step = degrade_step
-        self.stall_mode = False
+        self.frozen_mode = False
+        self.oscillate_mode = False
+        self.cycles_per_poll = 1000
         self.depth_regs = [0] * self.num_fifos
         self.mode = "bounded"
         self.running = False
@@ -192,7 +197,11 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         polls = self.polls
         cls = self._bounded_class()
         window = self.avg_window_sizes[-1]
-        regs = {"overflow": False, "underflow": False}
+        regs = {
+            "overflow": False,
+            "underflow": False,
+            "run_cycles": self.cycles_per_poll * polls,
+        }
 
         def win(frames, interval, latency):
             """Set the window registers of a run with a constant interval and latency."""
@@ -200,9 +209,15 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
             regs.update(int_win_min=interval, int_win_max=interval)
             regs.update(lat_win_min=latency, lat_win_max=latency)
 
-        if self.stall_mode:
+        if self.frozen_mode:
             win(0, 0, 0)
             regs.update(idle_cycles=0, oldest_pending_age=0)
+        elif self.oscillate_mode:
+            win(self.frames_per_poll * polls, FEASIBLE_INTERVAL, FEASIBLE_LATENCY)
+            regs.update(int_win_max=FEASIBLE_INTERVAL + 20)
+            regs.update(
+                idle_cycles=FEASIBLE_INTERVAL // 2, oldest_pending_age=FEASIBLE_LATENCY // 2
+            )
         elif cls == "feasible":
             win(self.frames_per_poll * polls, FEASIBLE_INTERVAL, FEASIBLE_LATENCY)
             regs.update(
@@ -593,19 +608,40 @@ def test_oracle_degradation_within_threshold_is_clean(clock):
     assert not oracle.feasibility.feasible(r)
 
 
+@pytest.mark.parametrize("stop_condition", ["interval", "both"])
+def test_oracle_frozen_before_first_frame_is_idle(stop_condition, clock):
+    """A run that never completes a frame is rejected by the idle rule on the run cycles.
+
+    ``idle_cycles`` counts from the reset and is meaningless before the first frame (it
+    includes the FIFO configuration phase), so the rule uses the cycles since the start of
+    the run there instead of waiting for the cap.
+    """
+    overlay, mock = make_overlay()
+    overlay.frozen_mode = True
+    oracle = make_oracle(overlay, stop_condition)
+    fb = oracle.feasibility
+    r = oracle.evaluate([6, 6, 5, 4])
+    assert r.decided_by == "idle_timeout" and r.frames == 0 and r.deadlock and not r.undecided
+    assert overlay.polls == 2  # 2000 run cycles > stall bound of 1500 at the 2nd poll
+    assert r.interval == 2000 > fb.stall_bound == FEASIBLE_LATENCY + FEASIBLE_INTERVAL
+    assert not fb.feasible(r)
+
+
 def test_oracle_cap_rejects(clock):
     """When no rule fires before the cap, the evaluation is undecided and never feasible."""
     overlay, mock = make_overlay()
-    overlay.stall_mode = True  # frozen before the first frame: no rule can fire
+    # the window minimum stays within and its maximum above the interval threshold: neither a
+    # slow nor a clean window
+    overlay.oscillate_mode = True
     oracle = make_oracle(overlay, "interval", cap_s=0.004)
     t0 = clock.now
     r = oracle.evaluate([6, 6, 5, 4])
-    assert r.decided_by == "cap_expired" and r.frames == 0 and r.undecided and r.deadlock
+    assert r.decided_by == "cap_expired" and r.frames > 0 and r.undecided and not r.deadlock
     assert clock.now - t0 == pytest.approx(oracle.cap_s, abs=oracle.poll_interval_s)
     assert not oracle.feasibility.feasible(r)
     # a slow start that never fills the window within the cap is rejected the same way, even
     # though its values are within the thresholds
-    overlay.stall_mode = False
+    overlay.oscillate_mode = False
     overlay.frames_per_poll = 1
     oracle = make_oracle(overlay, "interval", cap_s=0.0006)  # 3 polls: 3 frames < window + 1
     r = oracle.evaluate([6, 6, 5, 4])
@@ -632,7 +668,7 @@ def test_target_without_steady_state_aborts(tmp_path):
             report_dir=str(tmp_path),
             search_strategy="binary_forward",
             cap_factor=0.0,
-            cap_floor_s=0.0005,  # 2 polls, 2 frames: the window never fills
+            cap_floor_s=0.0002,  # 3 polls at 100 us, 3 frames: the window never fills
         )
 
 
