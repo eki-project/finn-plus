@@ -14,7 +14,11 @@
  *	 - the peak occupancy (READ_FILL) of a bounded run with the capacities set to the
  *	   peaks of the paced run reproduces exactly these peaks and shows no producer stall,
  *	 - a deadlocked bounded run sets the run-sticky producer-blocked flag of every
- *	   gauge while the per-frame flags of the last gauge keep their previous value.
+ *	   gauge while the per-frame flags of the last gauge keep their previous value,
+ *	 - the controller reports its capability word, holds AXI-lite accesses that arrive
+ *	   while it is busy instead of dropping them (capacities written back to back and a
+ *	   RUN read issued right behind them), and recognises a response behind returning
+ *	   WRITE_FILL packets whose payload bytes look like opcodes.
  */
 module fifo_controller_tb;
 
@@ -179,21 +183,25 @@ module fifo_controller_tb;
 		axi_read(ctrl_addr(op, fifo_id), data);
 	endtask : ctrl_read
 
-	// ctrl_set_depth: asynchronous WRITE_FILL followed by a NOP read to wait for completion.
-	// The controller only accepts a request in its IDLE state, so the NOP read must not
-	// arrive while the WRITE_FILL packet is still being issued. On hardware, the latency
-	// of the AXI-lite access from the processing system guarantees this; here, it is
-	// modelled by an explicit delay.
+	// ctrl_set_depth: asynchronous WRITE_FILL followed by a NOP read to wait for completion
+	// (the per-FIFO path of the driver for controllers without write admission). The NOP
+	// read is issued right behind the write: the controller must hold it until the
+	// WRITE_FILL packet has been issued rather than drop it.
 	task automatic ctrl_set_depth(input int unsigned fifo_id, input logic [31:0] depth);
 		automatic logic [31:0]  ret;
 		axi_write(ctrl_addr(WRITE_FILL, fifo_id), depth);
-		repeat(32) @(posedge clk);
 		ctrl_read(NOP, 0, ret);
 		assert(ret == NOP) else begin
 			$error("NOP read after WRITE_FILL returned 0x%08x.", ret);
 			$stop;
 		end
 	endtask : ctrl_set_depth
+
+	// ctrl_set_depths: WRITE_FILL for every FIFO back to back without any read in between
+	// (the batched path of the driver: one strided store of all capacities)
+	task automatic ctrl_set_depths(input logic [31:0] depths[0:LAYERS]);
+		for(int unsigned  l = 0; l <= LAYERS; l++)  axi_write(ctrl_addr(WRITE_FILL, l), depths[l]);
+	endtask : ctrl_set_depths
 
 	task automatic ctrl_run(input ring_opcode_e op);
 		automatic logic [31:0]  ret;
@@ -262,6 +270,20 @@ module fifo_controller_tb;
 		ordy = 0;
 		@(posedge clk iff !rst);
 		repeat(4) @(posedge clk);
+
+		//-------------------------------------------------------------------
+		// Phase 0: capability word (NOP read with FIFO ID 0xFF) and a plain NOP read
+		ctrl_read(NOP, 16'h00FF, ret);
+		assert(ret == 32'h0000_0100) else begin
+			$error("Capability word is 0x%08x instead of 0x00000100.", ret);
+			errors++;
+		end
+		ctrl_read(NOP, 0, ret);
+		assert(ret == NOP) else begin
+			$error("NOP read returned 0x%08x.", ret);
+			errors++;
+		end
+		$display("[%0t] CAPS = 0x%08x", $time, 32'h0000_0100);
 
 		//-------------------------------------------------------------------
 		// Phase 1: detached run to determine the bottleneck period, exactly as the
@@ -350,10 +372,20 @@ module fifo_controller_tb;
 		end
 
 		//-------------------------------------------------------------------
-		// Phase 4: the unbounded capacity register value reproduces the paced execution
-		$display("[%0t] RUN_BOUNDED with unbounded capacities", $time);
+		// Phase 4: the unbounded capacity register value reproduces the paced execution.
+		// The capacities are written back to back and RUN_BOUNDED is read right behind
+		// them, so its response returns behind the WRITE_FILL packets; their payload bytes
+		// are chosen to look like the opcodes a naive response match would trip over.
+		$display("[%0t] RUN_BOUNDED with unbounded capacities (batched writes)", $time);
 		reset_accelerator();
-		for(int unsigned  l = 0; l <= LAYERS; l++)  ctrl_set_depth(l, 32'h7FFF_FFFF);
+		begin
+			automatic logic [31:0]  depths[0:LAYERS];
+			for(int unsigned  l = 0; l <= LAYERS; l++)  depths[l] = 32'h7FFF_FFFF;
+			depths[0] = 32'h7FFF_0404;	// RUN_BOUNDED bytes in the payload
+			depths[1] = 32'h7FFF_0C0D;	// READ_FILL / READ_STALL bytes
+			depths[2] = 32'h7FFF_0A08;	// COMP_PERIOD / BARRIER_CLEAN bytes
+			ctrl_set_depths(depths);
+		end
 		ctrl_run(RUN_BOUNDED);
 		run_paced_traffic(6);
 		for(int unsigned  l = 0; l <= LAYERS; l++) begin
@@ -368,9 +400,12 @@ module fifo_controller_tb;
 		// Phase 5: bounded run with a blocked output must deadlock, the sticky flags
 		// must show every producer blocked while the per-frame flags of the last
 		// gauge (which never completes a frame) keep their previous value.
-		$display("[%0t] RUN_BOUNDED with blocked output (deadlock)", $time);
+		$display("[%0t] RUN_BOUNDED with blocked output (deadlock, batched writes)", $time);
 		reset_accelerator();
-		for(int unsigned  l = 0; l <= LAYERS; l++)  ctrl_set_depth(l, 2);
+		begin
+			automatic logic [31:0]  depths[0:LAYERS] = '{ default: 2 };
+			ctrl_set_depths(depths);
+		end
 		ctrl_run(RUN_BOUNDED);
 		ivld <= 1;
 		ordy <= 0;

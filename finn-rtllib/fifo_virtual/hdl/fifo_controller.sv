@@ -2,6 +2,21 @@
  * Copyright (c) 2025, Paderborn University
  *
  * @author	Felix P. Jentzsch <felix.jentzsch@upb.de>
+ *
+ * @brief	AXI-lite controller of the gauging ring (see fifo_gauge_pkg).
+ *
+ * @description
+ *	Every AXI-lite access issues one ring operation: the opcode is in address bits
+ *	[7:0], the FIFO ID in [23:8] (word addresses). A read blocks until the response
+ *	packet has returned from the ring and delivers its payload; a write (WRITE_FILL)
+ *	is acknowledged as soon as its packet has been issued and does not await its
+ *	return, so capacities can be written back to back. An access that arrives while
+ *	the controller is busy is held on the AXI-lite channels (ready deasserted)
+ *	instead of being dropped, so no confirmation read is needed between accesses.
+ *	Packets returning from the ring are parsed by size, so a response is recognised
+ *	even when packets that were not awaited return before it.
+ *	A NOP read with FIFO ID 0xFF returns the controller capability word
+ *	(CAPS, version in bits [15:8]); the previous controller returns 0 for it.
  */
 
 module fifo_controller #(
@@ -54,6 +69,23 @@ module fifo_controller #(
 	uwire  config_rack;
 	uwire [IP_DATA_WIDTH-1:0]  config_wdata;
 	logic [IP_DATA_WIDTH-1:0]  config_rdata;
+	// Command admission: the FSM below takes one command at a time and the adapter
+	// acknowledges a write at once, so a command arriving while the FSM is busy would
+	// be lost. The AXI-lite channels are therefore held (ready low) until the FSM is
+	// idle and no earlier command is still on its way from the adapter to the FSM:
+	//  - AwCap/WCap/RCap: a channel handshake happened, the command has not reached
+	//    the FSM yet (cleared when config_en delivers it);
+	//  - writes have priority over a read offered in the same cycle, so that the
+	//    adapter never holds a read behind a write it issues first.
+	uwire  accept_w;
+	uwire  accept_r;
+	uwire  awready_i;
+	uwire  wready_i;
+	uwire  arready_i;
+	assign	awready = awready_i && accept_w;
+	assign	wready  = wready_i  && accept_w;
+	assign	arready = arready_i && accept_r;
+
 	axilite #(
 		.ADDR_WIDTH(ADDR_WIDTH),
 		.DATA_WIDTH(DATA_WIDTH),
@@ -62,12 +94,12 @@ module fifo_controller #(
 		.aclk(aclk), .aresetn(aresetn),
 
 		// Write Channels
-		.awready, .awvalid, .awaddr, .awprot,
-		.wready,  .wvalid,  .wdata,  .wstrb,
+		.awready(awready_i), .awvalid(awvalid && accept_w), .awaddr, .awprot,
+		.wready(wready_i),   .wvalid(wvalid && accept_w),   .wdata,  .wstrb,
 		.bready,  .bvalid,  .bresp,
 
 		// Read Channels
-		.arready, .arvalid, .araddr, .arprot,
+		.arready(arready_i), .arvalid(arvalid && accept_r), .araddr, .arprot,
 		.rready,  .rvalid,  .rresp,  .rdata,
 
 		// IP-side Interface
@@ -96,6 +128,47 @@ module fifo_controller #(
 		end
 	end
 
+    // Packet size of a ring opcode (payload bytes included)
+    function automatic logic [2:0] size_of(input logic [7:0] b);
+        casex (b)
+        M_RUN:         return 3'd1; // 1 byte packet [OP]
+        BARRIER_CLEAN: return 3'd1; // 1 byte packet [OP]
+        COMP_PERIOD:   return 3'd5; // 5 byte packet [OP, 32 bit value]
+        READ_STALL:    return 3'd7; // 7 byte packet [OP, 16 bit ID, 32 bit value (status in LSB)]
+        READ_FILL:     return 3'd7; // 7 byte packet [OP, 16 bit ID, 32 bit value]
+        WRITE_FILL:    return 3'd7; // 7 byte packet [OP, 16 bit ID, 32 bit value]
+        default:       return 3'd1; // NOP or unknown -> treat as NOP
+        endcase
+    endfunction
+
+    // Returning packet parser: tags the opcode byte of every packet coming back from the
+    // ring (is_op_buffer[i] belongs to icfg_buffer[i]). Packets that were not awaited
+    // (fire-and-forget WRITE_FILLs) may return ahead of a response, and their payload
+    // bytes can look like opcodes; the parser skips a packet's payload by the size of
+    // its opcode, so only true opcode bytes are tagged. Opcodes are never patched by the
+    // gauges (BARRIER_CLEAN becomes BARRIER_DIRTY, same size), so the sizes hold.
+    logic [2:0] ret_skip;   // payload bytes of the current returning packet still to come
+    logic is_op_buffer[6:0];
+    uwire is_op_in = (ret_skip == 3'd0) && (icfg != NOP);
+	always_ff @(posedge aclk) begin
+		if (!aresetn) begin
+			ret_skip <= 3'd0;
+			is_op_buffer <= '{default: 1'b0};
+		end else begin
+			if (is_op_in)               ret_skip <= size_of(icfg) - 3'd1;
+			else if (ret_skip != 3'd0)  ret_skip <= ret_skip - 3'd1;
+			is_op_buffer[0] <= is_op_in;
+			for (int i = 1; i < 7; i++) begin
+				is_op_buffer[i] <= is_op_buffer[i-1];
+			end
+		end
+	end
+
+    // Capability word returned by a NOP read with FIFO ID CAPS_ID: [15:8] controller version
+    //  1: write admission (no dropped commands), fire-and-forget WRITE_FILL, parsed returns
+    localparam logic [15:0] CAPS_ID = 16'h00FF;
+    localparam logic [31:0] CAPS    = 32'h0000_0100;
+
 	//-----------------------------------------------------------------------
 	// Main controller logic
 
@@ -120,18 +193,28 @@ module fifo_controller #(
     uwire [7:0] op = instr_addr[7:0];
     uwire [15:0] fifo_id = instr_addr[23:8];
     // Packet size lookup
-    logic [2:0] packet_size;
-    always_comb begin
-        unique casex (op)
-        M_RUN:         packet_size = 3'd1; // 1 byte packet [OP]
-        BARRIER_CLEAN: packet_size = 3'd1; // 1 byte packet [OP]
-        COMP_PERIOD:   packet_size = 3'd5; // 5 byte packet [OP, 32 bit value]
-        READ_STALL:    packet_size = 3'd7; // 7 byte packet [OP, 16 bit ID, 32 bit value (status in LSB)]
-        READ_FILL:     packet_size = 3'd7; // 7 byte packet [OP, 16 bit ID, 32 bit value]
-        WRITE_FILL:    packet_size = 3'd7; // 7 byte packet [OP, 16 bit ID, 32 bit value]
-        default:       packet_size = 3'd1; // NOP or unknown -> treat as NOP
-        endcase
-    end
+    uwire [2:0] packet_size = size_of(op);
+
+    // Command admission trackers (see the AXI-lite adapter above)
+    logic AwCap, WCap, RCap;
+	always_ff @(posedge aclk) begin
+		if (!aresetn) begin
+			AwCap <= 1'b0;
+			WCap  <= 1'b0;
+			RCap  <= 1'b0;
+		end else begin
+			if (awvalid && awready)  AwCap <= 1'b1;
+			if (wvalid  && wready)   WCap  <= 1'b1;
+			if (arvalid && arready)  RCap  <= 1'b1;
+			if (config_en && config_wen) begin
+				AwCap <= 1'b0;
+				WCap  <= 1'b0;
+			end
+			if (config_en && !config_wen)  RCap <= 1'b0;
+		end
+	end
+    assign accept_w = (state == IDLE) && !RCap && !(AwCap && WCap);
+    assign accept_r = (state == IDLE) && !AwCap && !WCap && !RCap && !awvalid && !wvalid;
 
 	// State register
 	always_ff @(posedge aclk) begin
@@ -177,22 +260,26 @@ module fifo_controller #(
 				if (counter < packet_size-1) begin
 					counter_next = counter + 1'b1;
 				end else begin
-					state_next = WAIT;
+					// A write has no response: done once its packet is on the ring
+					state_next = (op == WRITE_FILL) ? IDLE : WAIT;
 				end
 			end
 
 			WAIT: begin
-                // Wait until the entire package has been read into icfg_buffer
-                if (icfg_buffer[6] != NOP) begin
-                    state_next = ACK;
-                    if (icfg_buffer[6] == BARRIER_DIRTY) begin
-                        // Re-issue BARRIER_CLEAN instruction
-                        state_next = ISSUE;
-                        counter_next = 3'd0;
-                    end
-                    if (icfg_buffer[6] == WRITE_FILL) begin
-                        // Skip ACK for write instruction
-                        state_next = IDLE;
+                // Wait until the response packet (the one whose opcode byte is the issued
+                // opcode; a barrier returns as BARRIER_CLEAN or BARRIER_DIRTY) has been read
+                // into icfg_buffer; other returning packets are passed over
+                if (is_op_buffer[6]) begin
+                    if (op == BARRIER_CLEAN) begin
+                        if (icfg_buffer[6] == BARRIER_CLEAN) begin
+                            state_next = ACK;
+                        end else if (icfg_buffer[6] == BARRIER_DIRTY) begin
+                            // Re-issue BARRIER_CLEAN instruction
+                            state_next = ISSUE;
+                            counter_next = 3'd0;
+                        end
+                    end else if (icfg_buffer[6] == op) begin
+                        state_next = ACK;
                     end
                 end
 			end
@@ -219,6 +306,7 @@ module fifo_controller #(
         end
         default: begin
             config_rdata = {24'b0, op}; // Default: return OP code in LSBs
+            if (op == NOP && fifo_id == CAPS_ID)  config_rdata = CAPS;
         end
         endcase
     end

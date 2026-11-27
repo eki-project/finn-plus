@@ -3,6 +3,7 @@
 import json
 import math
 import matplotlib.pyplot as plt
+import numpy as np
 import random
 import time
 import warnings
@@ -41,6 +42,12 @@ OP_COMP_PERIOD = 0x0A
 OP_READ_FILL = 0x0C
 OP_READ_STALL = 0x0D
 OP_WRITE_FILL = 0x0E
+#: FIFO ID of the NOP read that returns the controller capability word (version in bits
+#: [15:8]; 0 from a controller without it). Version 1: accesses arriving while the
+#: controller is busy are held instead of dropped and WRITE_FILL does not await its packet,
+#: so the capacities of all FIFOs can be written back to back.
+CTRL_CAPS_FIFO_ID = 0x00FF
+CTRL_CAPS_VERSION_SHIFT = 8
 
 #: Kwargs of experiment_fifosizing that are passed on to the search strategy
 STRATEGY_KWARGS = (
@@ -347,10 +354,13 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # - sticky_stall_flags: READ_STALL reports run-sticky stall flags in bits [7:4]
         # - steady_state_registers: the instrumentation wrapper has the sliding-window
         #   extremes, idle_cycles and oldest_pending_age registers
+        # - batched_fifo_writes: the controller holds accesses while busy and does not await
+        #   WRITE_FILL packets, so all capacities are written with one strided store
         self.hw_capabilities = {
             "peak_occupancy": False,
             "sticky_stall_flags": False,
             "steady_state_registers": False,
+            "batched_fifo_writes": False,
         }
 
         # Sanity check
@@ -397,21 +407,54 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # Read to confirm controller has returned to idle state
         self.ctrl_read(check_success=True)
 
+    def controller_version(self) -> int:
+        """Version of the FIFO controller from its capability word (0 without one).
+
+        The capability word is a NOP read with FIFO ID ``CTRL_CAPS_FIFO_ID``; a controller
+        without it answers a NOP read with 0. The read is skipped (version 0) when the mapped
+        address range of the controller does not reach that FIFO ID.
+        """
+        offset = ((CTRL_CAPS_FIFO_ID << 8) | OP_NOP) << 2
+        addr_range = self.ip_dict["fifo_controller_0"].get("addr_range")
+        if addr_range is not None and offset + 4 > addr_range:
+            return 0
+        return (
+            self.ctrl_read(opcode=OP_NOP, fifo_id=CTRL_CAPS_FIFO_ID) >> CTRL_CAPS_VERSION_SHIFT
+        ) & 0xFF
+
+    def write_fifo_capacities(self, values: list[int]) -> None:
+        """Write the capacity register of every FIFO (``WRITE_FILL``), one value per FIFO ID.
+
+        With ``batched_fifo_writes`` the values go out as one strided store into the mapped
+        register array of the controller (the FIFO ID is part of the address, 1 KiB apart):
+        one C loop of 32-bit stores instead of a Python write and a confirmation read per
+        FIFO; the controller holds every store until the previous packet has been issued.
+        Without it, each FIFO is written and confirmed separately.
+        """
+        if self.hw_capabilities.get("batched_fifo_writes", False):
+            array = self.fifo_controller_0.mmio.array
+            start = OP_WRITE_FILL  # word index of (fifo_id 0, WRITE_FILL)
+            stride = 1 << 8  # words between consecutive FIFO IDs
+            array[start : start + stride * len(values) : stride] = np.asarray(
+                values, dtype=np.uint32
+            )
+            return
+        for i, value in enumerate(values):
+            self.ctrl_set_depth(i, value)
+
     def configure_fifos_bounded(self, depths: int | list[int]) -> None:
         """Configure all FIFOs with bounded depths.
 
         Caller can supply a list of depths or a single depth for all FIFOs.
         """
         if isinstance(depths, (list, tuple)):
-            fifo_depths = list(depths)
+            fifo_depths = [int(d) for d in depths]
         else:
-            fifo_depths = [depths] * self.num_fifos
+            fifo_depths = [int(depths)] * self.num_fifos
 
-        # Set depth for each FIFO
-        for i in range(self.num_fifos):
-            self.ctrl_set_depth(i, fifo_depths[i])
-
-        # Issue RUN_BOUNDED instruction once all depths have been set
+        self.write_fifo_capacities(fifo_depths)
+        # Issue RUN_BOUNDED instruction once all depths have been set (a controller with
+        # write admission holds this read until the last WRITE_FILL packet is on the ring)
         self.ctrl_read(opcode=OP_RUN_BOUNDED, check_success=True)
 
     def read_peak_occupancy(self):
@@ -443,6 +486,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             "peak_occupancy": sticky,
             "sticky_stall_flags": sticky,
             "steady_state_registers": self.has_steady_state_registers(),
+            "batched_fifo_writes": self.controller_version() >= 1,
         }
         print(
             "HW CAPABILITIES: %s (stall flags after paced run: %s)"
@@ -1028,6 +1072,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                 "peak_occupancy": bool(hw_capabilities),
                 "sticky_stall_flags": bool(hw_capabilities),
                 "steady_state_registers": self.has_steady_state_registers(),
+                "batched_fifo_writes": bool(hw_capabilities) and self.controller_version() >= 1,
             }
             print("HW CAPABILITIES (from kwargs): %s" % self.hw_capabilities)
         if steady_state_detection != "auto" and not steady_state_detection:
