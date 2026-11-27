@@ -28,7 +28,15 @@
 //   TRIGGER      : assert controller_trigger[pending_rm_id] for one cycle -> WAIT_DECOUPLE.
 //   WAIT_DECOUPLE: wait for controller_decouple to go high -> RECONFIGURING.
 //   RECONFIGURING: wait for controller_decouple to fall -> RESET. Update current_rm_id.
-//   RESET        : hold accel_reset_n low for RESET_CYCLES cycles -> CHECK_TUSER.
+//   RESET        : hold accel_reset_n low for RESET_CYCLES+1 cycles, then keep the input
+//                  blocked for RESET_LATENCY more cycles -> CHECK_TUSER.
+//
+// Reset latency: the stitched BDC registers its reset in front of every node
+// (reset_pipe, DataflowBuildConfig.reset_pipeline_stages), so its nodes enter and
+// leave reset RESET_LATENCY cycles after accel_reset_n does, while their input may
+// already report tready. Beats sent earlier would be wiped by the delayed reset, so
+// the input stays blocked until the nodes are out of reset, after every
+// reconfiguration and after the system reset (aresetn) alike.
 
 `timescale 1ns/1ps
 module dfx_wrapper #(
@@ -37,6 +45,8 @@ module dfx_wrapper #(
     parameter int TUSER_WIDTH     = 2,   // tUSER width (bits); RM_ID is TUSER_WIDTH bits
     parameter int NUM_RM          = 2,   // number of Reconfigurable Modules
     parameter int RESET_CYCLES    = 16,  // clock cycles to assert accel_reset_n after reconfig
+    parameter int RESET_LATENCY   = 3,   // cycles until the BDC's nodes follow accel_reset_n
+                                         // (reset_pipeline_stages + 1, 0 without reset pipeline)
     parameter int NUM_OUTPUT_BEATS = 1   // AXI-Stream beats per output frame; used to
                                          // regenerate m_axis_tlast without relying on the
                                          // BDC generating rp_s_axis_tlast internally
@@ -82,7 +92,7 @@ module dfx_wrapper #(
     // Derived parameters
     // --------------------------------------------------------------------------
     localparam int RM_ID_W      = (NUM_RM > 1) ? $clog2(NUM_RM) : 1;
-    localparam int RESET_CNT_W  = $clog2(RESET_CYCLES + 1);
+    localparam int RESET_CNT_W  = $clog2(RESET_CYCLES + RESET_LATENCY + 1);
     localparam int OUT_CNT_W    = (NUM_OUTPUT_BEATS > 1) ? $clog2(NUM_OUTPUT_BEATS) : 1;
     // Width of the frames-in-flight counter. 8 bits supports up to 255 concurrent
     // frames inside the BDC pipeline, which is far more than any realistic FINN pipeline.
@@ -160,9 +170,12 @@ module dfx_wrapper #(
                                (state == S_CHECK_TUSER) ? 1'b0 : 1'b1;
 
     // --------------------------------------------------------------------------
-    // Accelerator reset: active-low, de-asserted except in S_RESET
+    // Accelerator reset: active-low, asserted during the first RESET_CYCLES+1 cycles
+    //   of S_RESET; the last RESET_LATENCY cycles of S_RESET only block the input
+    //   until the BDC's nodes have left their (pipelined) reset.
     // --------------------------------------------------------------------------
-    assign accel_reset_n = (state != S_RESET) & aresetn;
+    assign accel_reset_n = !((state == S_RESET) &&
+                             (reset_cnt >= RESET_CNT_W'(RESET_LATENCY))) & aresetn;
 
     // --------------------------------------------------------------------------
     // Frames-in-flight tracking
@@ -209,10 +222,11 @@ module dfx_wrapper #(
     // --------------------------------------------------------------------------
     always_ff @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
-            state          <= S_CHECK_TUSER;
+            // after the system reset, wait for the BDC's nodes to leave their reset too
+            state          <= (RESET_LATENCY > 0) ? S_RESET : S_CHECK_TUSER;
             current_rm_id  <= '0;
             pending_rm_id  <= '0;
-            reset_cnt      <= '0;
+            reset_cnt      <= RESET_CNT_W'((RESET_LATENCY > 0) ? RESET_LATENCY - 1 : 0);
             tuser_reg      <= '0;
             decouple_prev  <= 1'b0;
             controller_trigger <= '0;
@@ -281,13 +295,14 @@ module dfx_wrapper #(
                 S_RECONFIGURING: begin
                     if (!controller_decouple & decouple_prev) begin
                         current_rm_id <= pending_rm_id;
-                        reset_cnt     <= RESET_CYCLES[RESET_CNT_W-1:0];
+                        reset_cnt     <= RESET_CNT_W'(RESET_CYCLES + RESET_LATENCY);
                         state         <= S_RESET;
                     end
                 end
 
                 // ------------------------------------------------------------------
-                // Hold BDC in reset for RESET_CYCLES cycles.
+                // Hold BDC in reset for RESET_CYCLES+1 cycles, then wait RESET_LATENCY
+                // cycles for its nodes to leave their pipelined reset.
                 // ------------------------------------------------------------------
                 S_RESET: begin
                     if (reset_cnt == '0) begin

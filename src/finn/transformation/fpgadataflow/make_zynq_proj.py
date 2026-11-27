@@ -256,11 +256,24 @@ class MakeZYNQProject(Transformation):
         enable_debug: bool = False,
         enable_finn_switch: bool = False,
         live_fifo_sizing: bool = False,
+        reset_pipeline_stages: int = 0,
     ) -> None:
-        """Initialize MakeZYNQProject with the target platform and clock period."""
+        """Initialize MakeZYNQProject with the target platform and clock period.
+
+        Args:
+            platform: Target board name.
+            period_ns: Target clock period.
+            enable_debug: Whether to insert debug cores.
+            enable_finn_switch: Whether to insert the FINN switch.
+            live_fifo_sizing: Whether this is a live FIFO-sizing build.
+            reset_pipeline_stages: Reset stages the kernels were stitched with (see
+                `CreateStitchedIP`); the DFX wrappers wait for this pipelined reset
+                after every partial reconfiguration.
+        """
         super().__init__()
         self.platform = platform
         self.period_ns = period_ns
+        self.reset_pipeline_stages = reset_pipeline_stages
         self.enable_finn_switch = enable_finn_switch
         self.live_fifo_sizing = live_fifo_sizing
         self.enable_debug = 1 if enable_debug else 0
@@ -1236,7 +1249,11 @@ class MakeZYNQProject(Transformation):
             out_shape = last_node_inst.get_folded_output_shape()
             num_output_beats = int(math.prod(out_shape[1:-1]))
 
-            # Create per-region DFX Wrapper (replaces global dfx_schedule + dfx_finn_decouple)
+            # Create per-region DFX Wrapper (replaces global dfx_schedule + dfx_finn_decouple).
+            # The body's nodes follow its ap_rst_n reset_pipeline_stages + 1 cycles late
+            # (see DataflowBuildConfig.reset_pipeline_stages); the wrapper waits that long
+            # after every reset before it sends data into the body.
+            reset_latency = self.reset_pipeline_stages + 1 if self.reset_pipeline_stages > 0 else 0
             pr_config.append(
                 f"create_bd_cell -type module -reference dfx_wrapper_wrapper dfx_wrapper_{sdp_name}"
             )
@@ -1246,6 +1263,7 @@ class MakeZYNQProject(Transformation):
                 f"CONFIG.OUT_DATA_WIDTH {{{out_data_width}}} "
                 f"CONFIG.TUSER_WIDTH {{{global_tuser_width}}} "
                 f"CONFIG.NUM_RM {{{num_bodies}}} "
+                f"CONFIG.RESET_LATENCY {{{reset_latency}}} "
                 f"CONFIG.NUM_OUTPUT_BEATS {{{num_output_beats}}}] "
                 f"[get_bd_cells dfx_wrapper_{sdp_name}]"
             )
@@ -1907,6 +1925,7 @@ class ZynqBuild(Transformation):
                 enable_debug=self.enable_debug,
                 enable_finn_switch=enable_finn_switch,
                 live_fifo_sizing=self.live_fifo_sizing,
+                reset_pipeline_stages=self.reset_pipeline_stages,
             )
         )
 
