@@ -342,21 +342,25 @@ def test_fifosizing_linear(topology: Literal["tfc", "cnv"]) -> None:
     with (tmp_output_dir / "report/fifo_sizing.json").open() as f:
         fifo_sizing_report = json.load(f)
     assert fifo_sizing_report["fifo_depths"] == expected_fifos["fifo_depths"]
-    assert fifo_sizing_report["fifo_sizes_effective"] == expected_fifos["fifo_sizes"]
     assert fifo_sizing_report["ram_style"] == expected_fifos["ram_style"]
-    assert (
-        fifo_sizing_report["total_fifo_size_effective_kiB"] == expected_fifos["total_fifo_size_kiB"]
-    )
+    # the effective storage is the capacity fifo.sv builds for the depth times the data width:
+    # at least five slots for a shift register, whole address spaces for block RAM
     assert (
         fifo_sizing_report["total_fifo_size_kiB"]
         <= fifo_sizing_report["total_fifo_size_effective_kiB"]
     )
+    total_effective = 0
     for fifo_name, depth in fifo_sizing_report["fifo_depths"].items():
-        rounded_depth = ((depth + 31) // 32) * 32
-        assert (
-            fifo_sizing_report["fifo_sizes"][fifo_name] * rounded_depth
-            == fifo_sizing_report["fifo_sizes_effective"][fifo_name] * depth
+        capacity = fifo_sizing_report["fifo_capacities"][fifo_name]
+        size, effective = (
+            fifo_sizing_report["fifo_sizes"][fifo_name],
+            fifo_sizing_report["fifo_sizes_effective"][fifo_name],
         )
+        assert capacity >= depth and size * capacity == effective * depth
+        if depth <= 33:
+            assert capacity == max(depth, 5)
+        total_effective += effective
+    assert fifo_sizing_report["total_fifo_size_effective_kiB"] == total_effective / 8.0 / 1024.0
     # now run the same build using the generated folding and FIFO config
     tmp_output_dir_cmp = fetch_test_model(topology)
     cfg_cmp = cfg

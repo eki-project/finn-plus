@@ -14,6 +14,7 @@ module fifo_gauge_tb;
 	localparam int unsigned  LAYERS = 3;
 	localparam int unsigned  FM_SIZE[0:LAYERS] = '{ 30, 42, 37, 16 };
 	localparam int unsigned  SLACK[LAYERS]     = '{    7,  2, 13   };
+	parameter int unsigned  LATENCY = 2;	// overridable: xelab -generic_top LATENCY=<n>
 
 	//=======================================================================
 	// Global Control
@@ -52,7 +53,7 @@ module fifo_gauge_tb;
 		assign	irdy = i_rdy[0];
 		assign	cfg[0] = icfg;
 		for(genvar  l = 0; l <= LAYERS; l++) begin : genDUTs
-			fifo_gauge #(.ID(l), .DATA_WIDTH(8), .FM_SIZE(FM_SIZE[l])) dut (
+			fifo_gauge #(.ID(l), .DATA_WIDTH(8), .FM_SIZE(FM_SIZE[l]), .LATENCY(LATENCY)) dut (
 				.clk, .rst,
 				.icfg(cfg[l]), .ocfg(cfg[l+1]),
 				.idat(i_dat[l]), .ivld(i_vld[l]), .irdy(i_rdy[l]),
@@ -62,6 +63,35 @@ module fifo_gauge_tb;
 		assign	ovld = o_vld[LAYERS];
 		assign	o_rdy[LAYERS] = ordy;
 		assign	ocfg = cfg[LAYERS+1];
+
+		//-------------------------------------------------------------------
+		// Latency Check: an item accepted by an empty DUT whose output is
+		// flow-controlled (paced or bounded mode) must become valid exactly
+		// LATENCY cycles later, and not before.
+		for(genvar  l = 0; l <= LAYERS; l++) begin : genLatencyCheck
+			int  Age = -1;	// cycles since the acceptance, -1 while idle
+			int unsigned  Checks = 0;
+			always_ff @(posedge clk) begin
+				if(rst)  Age <= -1;
+				else begin
+					automatic int  age = Age;
+					if(age >= 0) begin
+						age++;
+						assert(o_vld[l] == (age == LATENCY)) else begin
+							$error("FIFO %0d: output valid %0d cycles after acceptance into an empty FIFO, expected after %0d.", l, o_vld[l]? age : age+1, LATENCY);
+							$stop;
+						end
+						if(age == LATENCY) begin
+							age = -1;
+							Checks++;
+						end
+					end
+					if(i_vld[l] && i_rdy[l] && (genDUTs[l].dut.FillCnt == 0) && !genDUTs[l].dut.oflow[1])  age = 0;
+					Age <= age;
+				end
+			end
+			final  $display("FIFO %0d: %0d latency checks of %0d cycles passed.", l, Checks, LATENCY);
+		end : genLatencyCheck
 
 		//-------------------------------------------------------------------
 		// Abstracted Layers
@@ -304,7 +334,9 @@ module fifo_gauge_tb;
 				@(posedge clk iff (ocfg == READ_FILL));
 				repeat(2) @(posedge clk)  id   = { id,   ocfg };
 				repeat(4) @(posedge clk)  fill = { fill, ocfg };
-				$display("Retrieved FIFO Fill [%0d] = %0d (-> Size: %0d)", id, fill, fill+1);
+				// READ_FILL reports the peak occupancy since the RUN_BOUNDED command,
+				// which here predates the shrinking of the terminal FIFOs.
+				$display("Retrieved FIFO Peak Fill [%0d] = %0d (-> Size: %0d)", id, fill, fill+1);
 			end
 		join
 		repeat(3*OFM_SIZE) @(posedge clk iff ovld);
@@ -332,7 +364,13 @@ module fifo_gauge_tb;
 				@(posedge clk iff (ocfg == READ_STALL));
 				repeat(2) @(posedge clk)  id  = { id,  ocfg };
 				repeat(4) @(posedge clk)  ret = { ret, ocfg };
-				$display("Retrieved FIFO stall signature [%0d] = %4b", id, ret);
+				$display("Retrieved FIFO stall signature [%0d] = %8b (per frame: %4b, since run: %4b)", id, ret[7:0], ret[3:0], ret[7:4]);
+				// Bits [7:4] accumulate the stall flags since the last RUN_* command:
+				// the input FIFO bounded to 2 elements must have blocked its producer.
+				if(l == 0)  assert(ret[5]) else begin
+					$error("Producer-blocked flag not set for the shrunk FIFO %0d.", l);
+					$stop;
+				end
 			end
 		join
 

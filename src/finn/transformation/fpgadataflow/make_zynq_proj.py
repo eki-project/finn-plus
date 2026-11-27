@@ -1791,6 +1791,7 @@ class ZynqBuild(Transformation):
         instrumentation_avg_n: int = 64,
         live_fifo_sizing: bool = False,
         partition_model_dir: Path | str | None = None,
+        instrumentation_steady_state: bool = False,
         reset_pipeline_stages: int = 0,
         stream_register_slices: bool = False,
     ) -> None:
@@ -1805,6 +1806,8 @@ class ZynqBuild(Transformation):
             instrumentation_avg_n: Instrumentation averaging window.
             live_fifo_sizing: Whether this is a live FIFO-sizing build.
             partition_model_dir: Where to write SDP child models.
+            instrumentation_steady_state: Generate the steady-state registers of the
+                instrumentation wrapper (always on for live FIFO-sizing builds).
             reset_pipeline_stages: Reset stages in front of every node, passed on to the
                 kernels (see `CreateStitchedIP`).
             stream_register_slices: Register slice in front of every node input another
@@ -1820,6 +1823,7 @@ class ZynqBuild(Transformation):
         self.instrumentation_no_dma = instrumentation_no_dma
         self.instrumentation_avg_n = instrumentation_avg_n
         self.live_fifo_sizing = live_fifo_sizing
+        self.instrumentation_steady_state = instrumentation_steady_state or live_fifo_sizing
         self.reset_pipeline_stages = reset_pipeline_stages
         self.stream_register_slices = stream_register_slices
         self.partition_model_dir = (
@@ -1839,7 +1843,10 @@ class ZynqBuild(Transformation):
             if self.instrumentation_no_dma is True or self.live_fifo_sizing is True:
                 prep_transforms = [
                     GenerateInstrumentationIP(
-                        self.fpga_part, self.period_ns, self.instrumentation_avg_n
+                        self.fpga_part,
+                        self.period_ns,
+                        self.instrumentation_avg_n,
+                        steady_state=self.instrumentation_steady_state,
                     ),
                     Floorplan(),
                     CreateDataflowPartition(partition_model_dir=self.partition_model_dir),
@@ -1848,7 +1855,10 @@ class ZynqBuild(Transformation):
                 # DMA & Instrumentation Wrapper Case
                 prep_transforms = [
                     GenerateInstrumentationIP(
-                        self.fpga_part, self.period_ns, self.instrumentation_avg_n
+                        self.fpga_part,
+                        self.period_ns,
+                        self.instrumentation_avg_n,
+                        steady_state=self.instrumentation_steady_state,
                     ),
                     InsertIODMA(self.axi_port_width),
                     InsertDWC(),

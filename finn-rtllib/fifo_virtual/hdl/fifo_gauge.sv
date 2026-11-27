@@ -9,7 +9,8 @@
 module fifo_gauge #(
 	bit [15:0]  ID,
 	int unsigned  DATA_WIDTH,
-	int unsigned  FM_SIZE
+	int unsigned  FM_SIZE,
+	int unsigned  LATENCY = 2	// cycles from input acceptance to output validity
 )(
 	// Global Control
 	input	logic  clk,
@@ -31,12 +32,22 @@ module fifo_gauge #(
 );
 	import  fifo_gauge_pkg::*;
 
+	initial begin
+		if(LATENCY < 1) begin
+			$error("%m: LATENCY of %0d must be 1 or above.", LATENCY);
+			$finish;
+		end
+	end
+
 	//-----------------------------------------------------------------------
 	// Control & Status Regs
 	logic [31:0]  Period   = 0; // sticky high bit for overflow detection
-	logic [ 3:0]  StallSig = 0;
+	logic [ 3:0]  StallSig = 0; // stall flags latched at frame boundaries
+	logic [ 3:0]  StallAcc = 0; // stall flags accumulated since the last RUN_* command
 	logic [31:0]  FillMax  = 0; // sticky high bit for overflow detection
+	logic [31:0]  FillPeak = 0; // peak occupancy since the last RUN_* command (any mode)
 	logic         fill_put;
+	logic         run_put;  // any RUN_* command: clears FillPeak and StallAcc
 	uwire [31:0]  fill_val;
 
 	//-----------------------------------------------------------------------
@@ -120,6 +131,7 @@ module fifo_gauge #(
 				IStall <= '{ default: 0 };
 				OStall <= '{ default: 0 };
 				StallSig <= '0;
+				StallAcc <= '0;
 			end
 			else begin
 				automatic stall_t  istall = '{
@@ -130,6 +142,15 @@ module fifo_gauge #(
 					rdy: OStall.rdy || (ovld && !ordy),
 					vld: OStall.vld || (ordy && !ovld)
 				};
+
+				// Run-sticky accumulation of the same four conditions, independent of
+				// frame boundaries, so that stalls are visible in deadlocked runs as well.
+				if(run_put)  StallAcc <= '0;
+				else begin
+					StallAcc[3:2] <= StallAcc[3:2] | { ovld && !ordy, ordy && !ovld };
+					StallAcc[1:0] <= StallAcc[1:0] | { ivld && !irdy, irdy && !ivld };
+				end
+
 				if(itxn && ilst) begin
 					StallSig[3:2] <= ostall;
 					istall = '{ default: 0 };
@@ -240,9 +261,9 @@ module fifo_gauge #(
 
 			// Local Patch Value Selection
 			uwire [31:0]  cfg_src =
-				State !=? IsRdWr?      Period  :
-				State !=? ReadIsStall? FillMax :
-				{ 28'b0, StallSig };
+				State !=? IsRdWr?      Period   :
+				State !=? ReadIsStall? FillPeak :
+				{ 24'b0, StallAcc, StallSig };
 			uwire [7:0]  cfg_val_b[4] = '{
 				// Cnt[1:0]
 				/*  2 */ 2: cfg_src[24+:8],
@@ -270,13 +291,15 @@ module fifo_gauge #(
 			cfg_put = 0;
 			cfg_set = 0;
 
-			fill_put =  0;
+			fill_put = 0;
+			run_put  = 0;
 
 			unique casex(State)
 			Start:
 				unique casex(icfg)
 				M_NOP: state_nxt <= Start;
 				M_RUN: begin // Run Control
+					run_put = 1;
 					unique casex(icfg)
 					M_RUN_BOUNDED:  begin fill_put = 0; io_mode_nxt = Bounded; end
 					M_RUN_PACED:    begin fill_put = 1; io_mode_nxt = Paced; end
@@ -285,7 +308,13 @@ module fifo_gauge #(
 					state_nxt = Start;
 				end
 				M_BARRIER: begin
-					cfg_set = IDirty || ODirty || ((IoMode ==? Detached) && (IoMode !=? DetachedDone));
+					// Dirty while a frame is partially transferred or the detached production
+					// of output frames is still in progress. The detached consumption of
+					// input frames is deliberately not awaited: the period is recorded on the
+					// output side and is final once the production is done, whereas the input
+					// side of the first FIFO on the ring depends on an external producer that
+					// need not be running in this phase.
+					cfg_set = IDirty || ODirty || ((IoMode ==? Detached) && IoMode[0]);
 					state_nxt = Start;
 				end
 				M_COMP: begin // Compute
@@ -357,22 +386,59 @@ module fifo_gauge #(
 	//-----------------------------------------------------------------------
 	// Virtual FIFO
 
+	// Output Latency
+	//	An item accepted on the input becomes available on the output LATENCY
+	//	cycles later, matching the pass-through latency of the synthesizable
+	//	fifo.sv (2 cycles on its shift and distributed paths, which first
+	//	write the storage and load the output register one cycle later). The
+	//	items in flight count towards the occupancy, as the output register
+	//	of fifo.sv counts towards its DEPTH, but not towards the availability.
+	localparam int unsigned  PEND_STAGES = LATENCY - 1;
+	uwire [$clog2(PEND_STAGES+2)-1:0]  pend_cnt_nxt;	// items in flight after this cycle
+	if(PEND_STAGES == 0)  assign  pend_cnt_nxt = 0;
+	else begin : genPend
+		logic  Pend[PEND_STAGES] = '{ default: 0 };	// Pend[0] accepted last cycle, ...
+		uwire  pend_nxt[PEND_STAGES];
+		assign	pend_nxt[0] = itxn;
+		for(genvar  k = 1; k < PEND_STAGES; k++)  assign  pend_nxt[k] = Pend[k-1];
+		always_ff @(posedge clk) begin
+			if(rst)  Pend <= '{ default: 0 };
+			else     Pend <= pend_nxt;
+		end
+
+		logic [$clog2(PEND_STAGES+2)-1:0]  cnt;
+		always_comb begin
+			cnt = 0;
+			for(int unsigned  k = 0; k < PEND_STAGES; k++)  cnt += pend_nxt[k];
+		end
+		assign	pend_cnt_nxt = cnt;
+	end : genPend
+
 	// FIFO Pacing & Tracking
 	logic [31:0]  FillCnt = 0;
 	logic  Avl = 0;
 	uwire  cap = FillCnt <= FillMax;
+	uwire [31:0]  fill_nxt = FillCnt + (itxn == otxn? 0 : itxn? 1 : -1);
 	always_ff @(posedge clk) begin
 		if(rst) begin
 			FillCnt <= 0;
 			Avl <= 0;
 			FillMax <= 0;
+			FillPeak <= 0;
 		end
 		else begin
-			FillCnt <= FillCnt + (itxn == otxn? 0 : itxn? 1 : -1);
-			Avl <= itxn || (FillCnt[0] && !otxn) || |FillCnt[31:1];
+			FillCnt <= fill_nxt;
+			Avl <= fill_nxt > pend_cnt_nxt;
 
 			if(!cap && (iflow !=? fifo))  FillMax <= FillCnt;
 			if(fill_put)  FillMax <= fill_val;
+
+			// Peak occupancy in every mode. In paced/detached mode, this coincides with
+			// FillMax (both are the running maximum from 0 after the RUN_* command). In
+			// bounded mode, FillCnt reaches at most FillMax+1, and re-running with the
+			// capacity register set to FillPeak reproduces the execution exactly.
+			if(run_put)                    FillPeak <= 0;
+			else if(FillCnt > FillPeak)    FillPeak <= FillCnt;
 		end
 	end
 	assign	irdy = (iflow ==? free) || ((iflow ==? fifo) && cap);

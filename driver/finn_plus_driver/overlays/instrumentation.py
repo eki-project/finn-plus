@@ -1,6 +1,7 @@
 """Driver for instrumentation-only accelerators without DMA."""
 
 import json
+import numpy as np
 import time
 from finn_plus_driver.hwh import get_clk_wiz_params_from_hwh
 from pathlib import Path
@@ -52,6 +53,63 @@ class FINNInstrumentationOverlay(Overlay):
             offset=self.ip_dict["instrumentation_wrap_0"]["registers"][name]["address_offset"],
             value=value,
         )
+
+    #: Registers of the steady-state extension of the instrumentation wrapper (sliding-window
+    #: extremes, idle cycles, age of the oldest pending frame); absent from older bitfiles.
+    STEADY_STATE_REGISTERS = (
+        "lat_win_min",
+        "lat_win_max",
+        "int_win_min",
+        "int_win_max",
+        "idle_cycles",
+        "oldest_pending_age",
+    )
+
+    #: Registers one poll of the steady-state detection reads, in one block access.
+    POLLED_REGISTERS = (
+        "status",
+        "run_frames",
+        "avg_fill",
+        "run_cycles_lo",
+    ) + STEADY_STATE_REGISTERS
+
+    def read_registers(self, names):
+        """Read several instrumentation registers with one access to the mapped register block.
+
+        PYNQ exposes the mapped AXI-lite region of the IP as a numpy array (``mmio.array``);
+        one fancy-index read of that array fetches every requested word in one C loop of
+        aligned 32-bit loads, i.e. the same AXI-lite read per register as ``read()`` issues,
+        without the Python call overhead per register (tens of microseconds each on the
+        board). Falls back to one ``read()`` per register when no array is available.
+        """
+        ip = self.instrumentation_wrap_0
+        array = getattr(getattr(ip, "mmio", None), "array", None)
+        if array is None:
+            return {name: self.instrumentation_read(name) for name in names}
+        registers = self.ip_dict["instrumentation_wrap_0"]["registers"]
+        index = np.fromiter(
+            (registers[name]["address_offset"] // 4 for name in names), dtype=np.intp
+        )
+        values = array[index]
+        return {name: int(v) for name, v in zip(names, values)}
+
+    def observe_steady_state(self):
+        """Read the registers polled for steady-state detection (see ``live_fifo``).
+
+        Returns a dict with ``overflow``, ``underflow``, ``run_frames``, ``avg_fill``,
+        ``run_cycles`` (cycles since the start of the run, low word), ``int_win_min``,
+        ``int_win_max``, ``lat_win_min``, ``lat_win_max``, ``idle_cycles`` and
+        ``oldest_pending_age``. The window extremes lag a completed frame by up to two window
+        lengths (sequential scan in hardware) and the interval of the first frame of a run is
+        excluded from them. All registers are fetched with one block access
+        (``read_registers``).
+        """
+        regs = self.read_registers(self.POLLED_REGISTERS)
+        status_reg = regs.pop("status")
+        regs["overflow"] = (status_reg & 0x00000001) != 0
+        regs["underflow"] = (status_reg & 0x00000002) != 0
+        regs["run_cycles"] = regs.pop("run_cycles_lo")
+        return regs
 
     def reset_accelerator(self) -> None:
         """Reset the accelerator."""

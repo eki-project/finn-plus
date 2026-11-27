@@ -1,7 +1,8 @@
 module fifo_gauge_wrapper #(
 	parameter [15:0]  ID = 0,
 	parameter integer  DATA_WIDTH = 8,
-	parameter integer  FM_SIZE = 1
+	parameter integer  FM_SIZE = 1,
+	parameter integer  LATENCY = 2
 )(
 	// Global Control
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF in0_V:out0_V, ASSOCIATED_RESET = ap_rst_n" *)
@@ -28,7 +29,8 @@ module fifo_gauge_wrapper #(
 fifo_gauge #(
     .ID(ID),
     .DATA_WIDTH(DATA_WIDTH),
-    .FM_SIZE(FM_SIZE)
+    .FM_SIZE(FM_SIZE),
+    .LATENCY(LATENCY)
 ) fifo_inst (
     .clk(ap_clk),
     .rst(~ap_rst_n),
