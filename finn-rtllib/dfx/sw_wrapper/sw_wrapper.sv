@@ -10,8 +10,8 @@
 //
 // Unlike dfx_wrapper, no DFX Controller, decoupler, or pipeline flushing is
 // involved: weight set selection is synchronised implicitly via AXI-Stream
-// handshaking.  The wrapper simply holds back input until the set selection
-// token has been accepted by the NC's stream tap, then lets the frame through.
+// handshaking.  The wrapper lets a frame's first beat through no earlier than
+// the cycle in which the NC's stream tap accepts its set selection token.
 //
 // Port naming:
 //   s_axis_*       : input from upstream (carries tUSER and tLast, generated
@@ -24,10 +24,13 @@
 //   m_axis_setsel_*: set selection stream to NC s_axis_tap (one token per frame)
 //
 // State machine:
-//   S_CHECK_TUSER : peek at first beat (tready=0). On tvalid, latch tUSER
-//                   and the set ID → S_SEND_SETSEL.
-//   S_SEND_SETSEL : assert m_axis_setsel_tvalid; block input (tready=0). When
-//                   the NC's stream-tap accepts the token → S_PASS.
+//   S_CHECK_TUSER : look at the first beat. On tvalid, latch tUSER and offer
+//                   the set-selection token in the same cycle. If the NC's
+//                   stream tap accepts it, the first beat passes in this cycle
+//                   too → S_PASS (no bubble per frame); else → S_SEND_SETSEL.
+//   S_SEND_SETSEL : assert m_axis_setsel_tvalid; block input (tready=0) until
+//                   the token is accepted; the first beat passes in that
+//                   cycle → S_PASS.
 //   S_PASS        : forward frame data to NC. On consumed tLast → S_CHECK_TUSER.
 //
 // Output tLast generation:
@@ -93,10 +96,15 @@ module sw_wrapper #(
     logic [OUT_CNT_W-1:0]    out_beat_cnt; // counts accepted output beats for tLast
 
     // --------------------------------------------------------------------------
-    // Input path: only active in S_PASS; all other states block input (tready=0)
+    // Input path: active in S_PASS and for a frame's first beat in the cycle its
+    // set selection token is accepted; blocked (tready=0) otherwise
     // --------------------------------------------------------------------------
+    // A frame's first beat passes no earlier than the cycle its set-selection
+    // token is accepted (in S_CHECK_TUSER or S_SEND_SETSEL).
+    logic token_accepted;
+    assign token_accepted = m_axis_setsel_tvalid & m_axis_setsel_tready;
     logic input_active;
-    assign input_active = (state == S_PASS);
+    assign input_active = (state == S_PASS) || token_accepted;
 
     assign rp_m_axis_tdata  = s_axis_tdata;
     assign rp_m_axis_tvalid = s_axis_tvalid & input_active;
@@ -122,11 +130,15 @@ module sw_wrapper #(
     assign rp_s_axis_tready = output_forward ? m_axis_tready : 1'b0;
 
     // --------------------------------------------------------------------------
-    // Set selection stream: only valid in S_SEND_SETSEL.
+    // Set selection stream: valid in S_SEND_SETSEL, and in S_CHECK_TUSER as soon as
+    // the next frame's first beat is presented (its tUSER selects the set).
     // tdata carries the set index from tUSER, zero-extended to SETSEL_WIDTH bits.
     // --------------------------------------------------------------------------
-    assign m_axis_setsel_tdata  = SETSEL_WIDTH'(tuser_reg[SET_ID_W-1:0]);
-    assign m_axis_setsel_tvalid = (state == S_SEND_SETSEL);
+    assign m_axis_setsel_tdata  = SETSEL_WIDTH'((state == S_CHECK_TUSER) ?
+                                                s_axis_tuser[SET_ID_W-1:0] :
+                                                tuser_reg[SET_ID_W-1:0]);
+    assign m_axis_setsel_tvalid = (state == S_SEND_SETSEL) ||
+                                  ((state == S_CHECK_TUSER) && s_axis_tvalid);
 
     // --------------------------------------------------------------------------
     // Output beat counter: counts every beat forwarded downstream.
@@ -148,26 +160,29 @@ module sw_wrapper #(
         end else begin
             case (state)
                 // ------------------------------------------------------------------
-                // Peek at the first beat of the next frame without consuming it
-                // (tready=0 because input_active=0 here). When the upstream master
-                // presents tvalid, latch the full tUSER vector (including the set
-                // ID in the low bits) and advance to send the selection token.
+                // Look at the first beat of the next frame. When the upstream master
+                // presents tvalid, latch the full tUSER vector (including the set ID in
+                // the low bits) and offer the selection token in the same cycle; if it
+                // is accepted, the first beat passes as well.
                 // ------------------------------------------------------------------
                 S_CHECK_TUSER: begin
                     if (s_axis_tvalid) begin
                         tuser_reg <= s_axis_tuser;
-                        state     <= S_SEND_SETSEL;
+                        if (!m_axis_setsel_tready)
+                            state <= S_SEND_SETSEL;
+                        else  // token and first beat pass in this cycle
+                            state <= (s_axis_tready & s_axis_tlast) ? S_CHECK_TUSER : S_PASS;
                     end
                 end
 
                 // ------------------------------------------------------------------
                 // Hold input blocked (tready=0) while asserting the set selection
-                // stream.  The NC's stream tap must accept the token before frame
-                // data is admitted, ensuring the correct weight set is loaded.
+                // stream.  The NC's stream tap must accept the token no later than
+                // the first frame beat is admitted, so the right weight set is used.
                 // ------------------------------------------------------------------
                 S_SEND_SETSEL: begin
-                    if (m_axis_setsel_tready)
-                        state <= S_PASS;
+                    if (m_axis_setsel_tready)  // first beat passes in this cycle
+                        state <= (s_axis_tready & s_axis_tlast) ? S_CHECK_TUSER : S_PASS;
                 end
 
                 // ------------------------------------------------------------------

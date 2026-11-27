@@ -19,9 +19,10 @@
 //     so downstream wrappers receive their own RM-selection bits.
 //
 // State machine:
-//   CHECK_TUSER  : peek at first beat of the next frame (tready=0). When tvalid
-//                  goes high, latch tUSER and pending_rm_id. If pending_rm_id ==
-//                  current_rm_id -> INFERENCE; else -> WAIT_FLUSH.
+//   CHECK_TUSER  : look at the first beat of the next frame. When tvalid goes high,
+//                  latch tUSER and pending_rm_id. If pending_rm_id == current_rm_id,
+//                  the beat passes in the same cycle (no bubble per frame) ->
+//                  INFERENCE; else it is held back (tready=0) -> WAIT_FLUSH.
 //   INFERENCE    : pass-through. On consumed tLast -> CHECK_TUSER.
 //   WAIT_FLUSH   : block new input. Forward rp_s_axis->m_axis until the BDC
 //                  pipeline is empty (frames_in_flight==0 OR last frame exits).
@@ -126,10 +127,14 @@ module dfx_wrapper #(
 
     // --------------------------------------------------------------------------
     // Input pass-through to BDC
-    //   Only allowed in S_INFERENCE. Gate with tready from BDC.
+    //   In S_INFERENCE, and in S_CHECK_TUSER for the first beat of a frame that
+    //   the loaded RM processes (decided combinationally from its tUSER, so frames
+    //   follow each other without a bubble). Gated with tready from the BDC.
     // --------------------------------------------------------------------------
     logic input_active;
-    assign input_active = (state == S_INFERENCE);
+    assign input_active = (state == S_INFERENCE) ||
+                          ((state == S_CHECK_TUSER) && s_axis_tvalid &&
+                           (s_axis_tuser[RM_ID_W-1:0] == current_rm_id));
     assign rp_m_axis_tdata  = s_axis_tdata;
     assign rp_m_axis_tvalid = s_axis_tvalid & input_active;
     assign rp_m_axis_tlast  = s_axis_tlast;
@@ -178,7 +183,8 @@ module dfx_wrapper #(
     // --------------------------------------------------------------------------
     // Frames-in-flight tracking
     //   frame_in : a complete frame boundary (tLast) entered the BDC this cycle.
-    //              Gated by input_active so only counted in S_INFERENCE.
+    //              Gated by input_active (S_INFERENCE and the first beat of a frame
+    //              passed in S_CHECK_TUSER).
     //              Uses rp_m_axis_tlast which is forwarded from s_axis_tlast (DMA).
     //   frame_out: a complete frame boundary exited the BDC this cycle.
     //              Uses out_beat_last (the beat counter) rather than rp_s_axis_tlast
@@ -234,17 +240,20 @@ module dfx_wrapper #(
 
             case (state)
                 // ------------------------------------------------------------------
-                // Peek at the first beat of the next frame without consuming it
-                // (tready=0 because input_active=0 here). When the upstream master
-                // presents tvalid, sample tUSER to decide whether reconfiguration
-                // is needed before this frame enters the BDC.
+                // Look at the first beat of the next frame. When the upstream master
+                // presents tvalid, sample tUSER to decide whether reconfiguration is
+                // needed before this frame enters the BDC; if not, the beat passes in
+                // this cycle already (input_active), otherwise it is held back.
                 // ------------------------------------------------------------------
                 S_CHECK_TUSER: begin
                     if (s_axis_tvalid) begin
                         pending_rm_id <= s_axis_tuser[RM_ID_W-1:0];
                         tuser_reg     <= s_axis_tuser;
                         if (s_axis_tuser[RM_ID_W-1:0] == current_rm_id)
-                            state <= S_INFERENCE;
+                            // the first beat passes in this cycle (input_active); a
+                            // single-beat frame ends with it already
+                            state <= (s_axis_tready & s_axis_tlast) ? S_CHECK_TUSER
+                                                                    : S_INFERENCE;
                         else
                             state <= S_WAIT_FLUSH;
                     end
