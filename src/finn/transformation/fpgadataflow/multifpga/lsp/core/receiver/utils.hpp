@@ -57,10 +57,46 @@ namespace lsp {
         // be paused and CMAC TX must not see a gap in a frame.
         constexpr size_t CMAC_BEAT_BUFFER = constants::MAX_BEATS_PER_FRAME;
 
-        /** CTRL status of one connection with Streams streams, sent by the connection to the
+
+        /** Reads an incoming frame until the frame is complete. Sets the beat.user value to the value
+        of the last one of the incoming frame (effectively moving the frame-is-malformed message to the
+        beginning of the frame instead of to the end). */
+        template <size_t ConnId>
+        void frameGate(hls::stream<beat_t>& incoming, hls::stream<beat_t>& outgoing) {
+        #pragma HLS pipeline II=1
+            // +2: a read and a write in the same call must never make the write block
+            static hls::stream<beat_t, constants::MAX_BEATS_PER_FRAME + 2> beats;
+            // One verdict per buffered frame; at most one frame per beat
+            static hls::stream<ap_uint<1>, constants::MAX_BEATS_PER_FRAME + 2> verdicts;
+            static bool draining = false;
+            static ap_uint<1> badFCS = 0;
+
+            // Start sending a frame once its verdict is known; all its beats are buffered by then
+            if (!draining) {
+                draining = verdicts.read_nb(badFCS);
+            }
+            if (draining) {
+                beat_t out = beats.read();
+                out.user = badFCS;
+                outgoing.write(out);
+                draining = !out.last;
+            }
+
+            beat_t in;
+            if (incoming.read_nb(in)) {
+                beats.write(in);
+                if (in.last) {
+                    verdicts.write(in.user);
+                }
+            }
+        }
+
+
+
+        /** CTRL status of one connection with Streams streams, sent by its parseBeat to the
         controller_tx whenever a CTRL frame becomes due. The controller_tx reads it non-blocking and
-        merges every status into the one it holds per connection (see takeNewer), so the connection
-        never has to wait for the controller_tx.
+        merges every status into the one it holds per connection (see takeNewer), so parseBeat never
+        has to wait for the controller_tx.
 
         There are four cases:
         - NACK immediately (nackImmediately, makeNACKImmediately): a NACK for expectedFSN, at once.
@@ -137,17 +173,17 @@ namespace lsp {
             CREDIT_ACK goes out at once, otherwise when the controller_tx has time. A stream ID the
             connection does not have adds no credit record; the status is then an ACK immediately
             without credit, or an FSN update. */
-            template<bool Immediately, typename ...Rings>
+            template<bool Immediately, typename Buffers>
             static ctrl_status_t makeACK(
                 ap_uint<constants::FSN_WIDTH> expectedFSN,
                 ap_uint<constants::STREAM_ID_WIDTH> stream,
-                std::tuple<Rings...>& buffers
+                Buffers& buffers
             ) {
                 ctrl_status_t ctrl = makeFSNUpdate(expectedFSN);
                 // Bounds check, so that no limit is written outside of the array
                 if (stream < Streams) {
                     ctrl.changed[stream] = 1;
-                    ctrl.limit[stream] = creditUpdate(buffers, stream);
+                    ctrl.limit[stream] = buffers.creditUpdate(stream);
                 }
                 if (Immediately) {
                     ctrl.ackImmediately = true;
@@ -167,17 +203,17 @@ namespace lsp {
             freed enough space. With Immediately the CREDIT_ACK goes out at once, otherwise when the
             controller_tx has time. changed stays 0 if no update is due; without Immediately the
             status is then an FSN update and need not be sent. */
-            template<bool Immediately, typename ...Rings>
+            template<bool Immediately, typename Buffers>
             static ctrl_status_t makeACK(
                 ap_uint<constants::FSN_WIDTH> expectedFSN,
-                std::tuple<Rings...>& buffers
+                Buffers& buffers
             ) {
                 ctrl_status_t ctrl = makeFSNUpdate(expectedFSN);
                 for (int s = 0; s < Streams; ++s) {
                     #pragma HLS unroll
-                    if (creditUpdateDue(buffers, s)) {
+                    if (buffers.creditUpdateDue(s)) {
                         ctrl.changed[s] = 1;
-                        ctrl.limit[s] = creditUpdate(buffers, s);
+                        ctrl.limit[s] = buffers.creditUpdate(s);
                     }
                 }
                 if (Immediately) {
@@ -187,8 +223,8 @@ namespace lsp {
             }
         };
 
-        /** CTRL status collected by a connection and sent to the controller_tx as one status. A call of
-        the connection can produce several statuses, but its CTRL status stream takes only one write per
+        /** CTRL status collected by parseBeat and sent to the controller_tx as one status. A call of
+        parseBeat can produce several statuses, but its CTRL status stream takes only one write per
         cycle, so the statuses are merged here (see takeNewer) and sent together. */
         template<int Streams>
         struct pending_ctrl_status_t {

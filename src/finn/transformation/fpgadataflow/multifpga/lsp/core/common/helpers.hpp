@@ -8,6 +8,7 @@
 #include <cassert>
 #include <hls_stream.h>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 
 namespace lsp {
@@ -37,6 +38,38 @@ namespace lsp {
         struct chunk_offset_t {
             ap_uint<clog2(constants::CHUNKS_PER_BEAT + 1)> index;
         };
+
+
+        template<int Width, typename T, int Depth>
+        struct skid_buffer_t {
+            static_assert(
+                std::is_same<T, ap_int<Width>>::value || std::is_same<T, ap_uint<Width>>::value,
+                "skid_buffer_t can only hold arbitrary precision integers (ap_int / ap_uint)"
+            );
+            static_assert(Depth >= 2, "Depth must be at least 2 (one buffer space, one in flight)");
+
+            ap_uint<clog2(Depth + 1)> credit = 0;
+            hls::stream<T, Depth> fifo;
+
+            /** Write into output stream, only if it has space. Does not block. */
+            void tryPop(hls::stream<T> &out) {
+                if (!fifo.empty() && !out.full()) {
+                    out.write(fifo.read());
+                    credit--;
+                }
+            }
+
+            // Check canPush() first to not stall
+            void push(T value) {
+                credit++;
+                fifo.write(value);
+            }
+
+            bool canPush() const {
+                return credit < Depth;
+            }
+        };
+
 
         /** Round robin selector/priority encoder. Searches and returns index of the first valid stream. Manually
         advance using advancePast() if the stream could be used successfully. Keeps state across calls.

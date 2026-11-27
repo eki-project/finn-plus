@@ -9,19 +9,19 @@
 using namespace lsp;
 using namespace lsp::receiver;
 
-// Abstract away the non-stream parameters from the connection kernels (required for hls::task)
+// Abstract away the non-stream parameters from parseBeat (required for hls::task)
 {%- for conn in connections %}
 {%- set c = loop.index0 %}
 
 // Connection {{ c }}, peer {{ conn.mac }}
-void connection_{{ c }}(
+void parseBeat_{{ c }}(
     hls::stream<beat_t>& macStream,
     hls::stream<ctrl_status_t<{{ conn.streams | length }}>>& controlStream
 {%- for stream in conn.streams %},
     hls::stream<ap_uint<{{ stream.width }}>>& s{{ loop.index0 }}
 {%- endfor %}
 ) {
-    connection<{{ c }}>(
+    parseBeat<{{ c }}>(
         stream_widths_t<{{ conn.streams | map(attribute="width") | join(", ") }}>{},
         ring_depths_t<{{ conn.streams | map(attribute="depth") | join(", ") }}>{},
         macStream,
@@ -67,10 +67,14 @@ void receiver_top(
     hls_thread_local hls::stream<beat_t, CMAC_BEAT_BUFFER> egress("egress");
     hls_thread_local hls::stream<bool, CMAC_BEAT_BUFFER> egressFrames("egressFrames");
 
-    // Streams between the manager (MAC dispatcher) and the connections
+    // Streams between the manager (MAC dispatcher) and the frame gates
     hls_thread_local hls::stream<beat_t> macStreams[CONNECTIONS];
 
-    // Streams between each connection and its controller TX
+    // Streams between the frame gates and parseBeat: whole frames only, with the FCS verdict in
+    // user on every beat
+    hls_thread_local hls::stream<beat_t> gatedStreams[CONNECTIONS];
+
+    // Streams between each connection's parseBeat and its controller TX
 {%- for conn in connections %}
     hls_thread_local hls::stream<ctrl_status_t<{{ conn.streams | length }}>> ctrl{{ loop.index0 }}("ctrl_stream_{{ loop.index0 }}");
 {%- endfor %}
@@ -95,9 +99,10 @@ void receiver_top(
 {% for conn in connections %}
 {%- set c = loop.index0 %}
     // Connection {{ c }}, peer {{ conn.mac }}
-    hls_thread_local hls::task connection{{ c }}Task(
-        connection_{{ c }},
-        macStreams[{{ c }}],
+    hls_thread_local hls::task frameGate{{ c }}Task(frameGate<{{ c }}>, macStreams[{{ c }}], gatedStreams[{{ c }}]);
+    hls_thread_local hls::task parseBeat{{ c }}Task(
+        parseBeat_{{ c }},
+        gatedStreams[{{ c }}],
         ctrl{{ c }}
         {%- for stream in conn.streams %},
         c{{ c }}_s{{ loop.index0 }}

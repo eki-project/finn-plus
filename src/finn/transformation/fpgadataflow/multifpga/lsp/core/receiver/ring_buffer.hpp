@@ -8,6 +8,7 @@
 #include "comptime.hpp"
 #include "constants.hpp"
 #include "common.hpp"
+#include "helpers.hpp"
 
 namespace lsp {
     namespace receiver {
@@ -44,38 +45,40 @@ namespace lsp {
                 static constexpr int WordPointerWidth = BankBits + SlotBits;
 
                 // Dimension 1: Bank, Dimension 2: Buffer Slot
+                // One BRAM per bank, partitioned in writeStaged (HLS pragmas are not allowed at class scope)
                 ap_uint<StreamWidth> buffer[Banks][Depth/Banks];
-#pragma HLS array_partition dim=1 variable=buffer complete
-#pragma HLS bind_storage variable=buffer type=ram_s2p impl=bram
 
                 // Lanes are registers that store the partialWords before putting
-                // them into a buffer
+                // them into a buffer. Completely partitioned in writeStaged
                 ap_uint<StreamWidth> lanes[Banks];
-#pragma HLS array_partition variable=lanes complete
 
                 ap_uint<clog2(1 + Banks)> laneCounter = 0;
                 ap_uint<Banks> validLanes = 0;
 
                 // Pointer across all banks and slots
                 ap_uint<WordPointerWidth> writePointer = 0;
-                ap_uint<WordPointerWidth> committedWritePointer = 0;
-
-                // Store how many words are speculative
-                ap_uint<WordPointerWidth> speculativeWords = 0;
 
                 // Read pointer is also global, just as writePointer
                 ap_uint<WordPointerWidth> readPointer = 0;
 
-                // Store occupied slots in the entire buffer
-                ap_uint<clog2(Depth + 1)> bufferSize = 0;
-                ap_uint<clog2(Depth + 1)> committedBufferSize = 0;
+                // Wrapping word counters. The write side (stage, writeStaged) only updates
+                // written, the read side (tryReadIntoStream) only updates readCount,
+                // so that neither side has a read-modify-write on a register the other side also writes.
+                // The occupancy never exceeds Depth, so the modular differences below are exact:
+                static constexpr int CountBits = clog2(Depth + 1);
+                ap_uint<CountBits> written = 0;
+                ap_uint<CountBits> readCount = 0;
+
+                // Shift register that reports the written words delayed by the number of banks
+                // This makes sure that there is never a RAW clash in one cycle. Needs to be encoded via
+                // a dependence pragma as well.
+                ap_uint<CountBits> writtenDelayed[Banks] = {};
 
                 // Registers to write from. Since segments can only deliver chunks (apart from the last chunk),
                 // the offset is also just in entire chunks, causing smaller shifters necessary.
                 ap_uint<StreamWidth> partialWord = 0;
                 ap_uint<clog2(1 + StreamWidth/constants::CHUNK_SIZE_BITS) + 1> partialWordChunkOffset = 0;
-                ap_uint<StreamWidth> committedPartialWord = 0;
-                ap_uint<clog2(1 + StreamWidth/constants::CHUNK_SIZE_BITS) + 1> committedPartialWordChunkOffset = 0;
+                helpers::skid_buffer_t<StreamWidth, ap_uint<StreamWidth>, 6> skid;
 
                 // Credit bookkeeping
                 ap_uint<constants::CREDIT_LIMIT_WIDTH> creditLimit = Depth;
@@ -117,7 +120,7 @@ namespace lsp {
 
                 Returns: Whether a word is complete in the accumulator register (partialWord).
                 */
-                template<size_t PayloadWidth>
+                template<int PayloadWidth>
                 bool updateRegisters(const data_segment_t<PayloadWidth> &segment) {
                     if (partialWordChunkOffset == 0) {
                         partialWord = ap_uint<StreamWidth>(segment.payload);
@@ -145,14 +148,17 @@ namespace lsp {
                 If more stage() calls happen than the buffer has banks, the bank index wraps
                 and overwrites from the start. Make sure to call writeStaged atleast every <Banks>
                 stage calls. */
-                template<size_t PayloadWidth>
+                template<int PayloadWidth>
                 staging_result stage(const data_segment_t<PayloadWidth> &segment) {
                     // If too many chunks are delivered this _can_ indicate, that the sender
                     // tried to end a word and start a new one in the same beat, which is not allowed.
                     if (partialWordChunkOffset + segment.chunks > WordChunks) {
                         return staging_result::WORD_OVERFLOW;
                     }
-                    if (bufferSize + laneCounter < Depth) {
+                    // The free space does not depend on laneCounter and the counters do not change between
+                    // stage calls, so it is shared across them and each call only compares laneCounter
+                    const ap_uint<CountBits> freeSlots = Depth - ap_uint<CountBits>(written - readCount);
+                    if (laneCounter < freeSlots) {
                         if (updateRegisters(segment)) {
                             ap_uint<BankBits> targetBank = (getCurrentWriteBank() + laneCounter) % Banks;
                             lanes[targetBank] = partialWord;
@@ -175,8 +181,11 @@ namespace lsp {
                 could assume more than 1 write to the same port, leading to II>1.
                 */
                 void writeStaged() {
+#pragma HLS array_partition dim=1 variable=buffer complete
+#pragma HLS bind_storage variable=buffer type=ram_s2p impl=bram
+#pragma HLS array_partition variable=lanes complete
                     ap_uint<SlotBits> currentSlot = getCurrentWriteSlot();
-                    ap_uint<SlotBits> nextSlot = (currentSlot + 1 == Depth/Banks) ? 0 : currentSlot + 1;
+                    ap_uint<SlotBits> nextSlot = (currentSlot + 1 == Depth/Banks) ? ap_uint<SlotBits>(0) : ap_uint<SlotBits>(currentSlot + 1);
                     ap_uint<BankBits> currentBank = getCurrentWriteBank();
                     for (int bank = 0; bank < Banks; bank++) {
 #pragma HLS unroll
@@ -186,19 +195,12 @@ namespace lsp {
 
                     }
                     writePointer += laneCounter;
-                    speculativeWords += laneCounter;
-                    bufferSize += laneCounter;
+                    written += laneCounter;
                     if (writePointer >= Depth) {
                         writePointer -= Depth;
                     }
                     laneCounter = 0;
                     validLanes = 0;
-                }
-
-                /** Return whether nothing was written since the last commit. */
-                bool isCommitted() const {
-                    #pragma HLS inline
-                    return speculativeWords == 0;
                 }
 
                 /** Return whether a credit limit update is due (if more than half of the buffer was freed.) */
@@ -213,51 +215,43 @@ namespace lsp {
                     return creditLimit;
                 }
 
-                /** Commit results into the ring buffer. */
-                void commit() {
-                    #pragma HLS inline
-                    bufferSize -= speculativeWords;
-                    committedWritePointer = writePointer;
-                    speculativeWords = 0;
-                    committedPartialWord = partialWord;
-                    committedPartialWordChunkOffset = partialWordChunkOffset;
-                }
-
-                /** Roll back to last stable state. */
-                void rollback() {
-                    #pragma HLS inline
-                    bufferSize = committedBufferSize;
-                    writePointer = committedWritePointer;
-                    speculativeWords = 0;
-                    validLanes = 0;
-                    laneCounter = 0;
-                    partialWord = committedPartialWord;
-                    partialWordChunkOffset = committedPartialWordChunkOffset;
-                }
-
                 /** Try to write one word into the user stream. The write is non-blocking, so that a full user
                 stream never stalls the free-running kernel: if the stream is full, the word stays in the
                 buffer and is written in a later call. */
                 template<int D>
                 void tryReadIntoStream(hls::stream<ap_uint<StreamWidth>, D>& stream) {
-                    // Only read if the read pointer looks at committed data, and only advance if the write succeeded
-                    if (bufferSize > speculativeWords && stream.write_nb(buffer[getCurrentReadBank()][getCurrentWriteSlot()])) {
+#pragma HLS dependence variable=buffer type=inter direction=RAW dependent=false
+                    // Shift committed words every call
+                    for (int i = Banks - 1; i > 0; i--) {
+#pragma HLS unroll
+                        writtenDelayed[i] = writtenDelayed[i - 1];
+                    }
+
+                    // Insert the current written word count at the beginning of the shifter
+                    writtenDelayed[0] = written;
+
+                    skid.tryPop(stream);
+
+                    // Only read if we have space and words to read
+                    if (writtenDelayed[Banks - 1] != readCount && skid.canPush()) {
+                        skid.push(buffer[getCurrentReadBank()][getCurrentReadSlot()]);
+
                         // Increment and wrap, avoid modulo
                         if (++readPointer == Depth) {
                             readPointer = 0;
                         }
-                        bufferSize--;
+                        readCount++;
                         creditLimit++;
                     }
                 }
             };
 
 
-            template<typename Depths, typename Widths, typename Is = std::make_index_sequence<Widths::count>>
+            template<typename Depths, typename Widths>
             struct ring_buffers_t;
 
-            template<size_t... Ds, int... Ws, size_t... Is>
-            struct ring_buffers_t<utils::ring_depths_t<Ds...>, utils::stream_widths_t<Ws...>, std::index_sequence<Is...>> {
+            template<size_t... Ds, int... Ws>
+            struct ring_buffers_t<utils::ring_depths_t<Ds...>, utils::stream_widths_t<Ws...>> {
                 std::tuple<stream_ring_buffer_t<Ws, Ds>...> rings;
 
                 /** Append a segment to the ring buffer of its stream: ring I (of an lsp_stream_ring_buffers_t)
@@ -271,40 +265,16 @@ namespace lsp {
                     return helpers::visitTuple(
                         rings,
                         segment.stream,
-                        [&segment](auto& ring) { return ring.updateFrom(segment); },
+                        [&segment](auto& ring) { return ring.stage(segment); },
                         staging_result::UNKNOWN_STREAM
                     );
                 }
 
-                /** Commit the writes on the ring with the given index. To be called after the final beat of
-                a frame confirmed via checksum that the frame was transmitted successfully. Returns false if
-                no ring has that index. */
-                bool commit(unsigned index) {
+                /** Move the words staged by dispatchSegment into every ring. To be called once per beat, after
+                its segments were dispatched, so that no ring gets more than Banks staged words. */
+                void writeStagedAll() {
                     #pragma HLS inline
-                    return helpers::visitTuple(rings, index, [](auto& ring) { ring.commit(); return true; }, false);
-                }
-
-                /** Discard the writes since the last commit on the ring with the given index. To be called
-                after the final beat of a frame showed a checksum error. Returns false if no ring has that
-                index. */
-                bool rollback(unsigned index) {
-                    #pragma HLS inline
-                    return helpers::visitTuple(rings, index, [](auto& ring) { ring.rollback(); return true; }, false);
-                }
-
-                /** Commit the writes on every ring. To be called after the final beat of a frame confirmed via
-                checksum that the frame was transmitted successfully. Rings the frame did not touch are
-                unchanged, so the caller does not need to track which streams a frame wrote to. */
-                void commitAll() {
-                    #pragma HLS inline
-                    helpers::forEachInTuple(rings,[](auto& ring) { ring.commit(); });
-                }
-
-                /** Discard the writes since the last commit on every ring. To be called after the final beat
-                of a frame showed a checksum error. Rings the frame did not touch are unchanged. */
-                void rollbackAll() {
-                    #pragma HLS inline
-                    helpers::forEachInTuple(rings,[](auto& ring) { ring.rollback(); });
+                    helpers::forEachInTuple(rings, [](auto& ring) { ring.writeStaged(); });
                 }
 
                 /** Return whether a credit update is due for this ring (if the buffer was filled with over N/2 elements, having a max capacity of N). */
@@ -323,6 +293,7 @@ namespace lsp {
                 }
 
                 /** Implementation of tryReadIntoStream: ring I feeds the I-th stream. */
+                template<size_t... Is>
                 void _tryReadIntoStream(
                     std::index_sequence<Is...>,
                     hls::stream<ap_uint<Ws>>&... streams
@@ -332,11 +303,11 @@ namespace lsp {
                     (void) a;
                 }
 
-                /** Try to write one committed word of every ring into its stream: ring I feeds the I-th stream. In
+                /** Try to write one word of every ring into its stream: ring I feeds the I-th stream. In
                 hardware every ring gets its own copy, all running in parallel. */
                 void tryReadIntoStream(hls::stream<ap_uint<Ws>>&... streams) {
                     #pragma HLS inline
-                    _tryReadIntoStream(std::make_index_sequence<sizeof...(Ws)>(), rings, streams...);
+                    _tryReadIntoStream(std::make_index_sequence<sizeof...(Ws)>(), streams...);
                 }
             };
         }

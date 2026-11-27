@@ -217,7 +217,7 @@ namespace lsp {
                 nackTimer--;
             }
 
-            // NACK if we have to (either via a timeout or because the connection kernel requested it)
+            // NACK if we have to (either via a timeout or because parseBeat requested it)
             // Cannot NACK during ACK sending, because that would interrupt the frame - we have to wait until the ACK is sent
             if ((lastNACKFSN != status.expectedFSN || nackTimer == 0) && status.nackImmediately && fsmState != controller_tx_status::SENDING_ACK) {
                 beat_t nack = constructNACK<SourceMAC, TargetMAC, Tag>(status.expectedFSN);
