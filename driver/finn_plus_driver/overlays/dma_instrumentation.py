@@ -316,24 +316,31 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 pass
 
             self.start_accelerator(avg_window_size=avg_window_size)
-            time.sleep(instr_runtime)
-            (
-                overflow_err,
-                underflow_err,
-                _frame,
-                checksum,
-                min_latency,
-                latency,
-                interval,
-                avg_latency,
-                avg_interval,
-                run_cycles,
-                run_frames,
-            ) = self.observe_instrumentation(debug_print=False)
+            # read num_measurements times, the pipeline must complete frames in between
+            stalled = False
+            prev_run_frames = 0
+            for _ in range(num_measurements):
+                time.sleep(instr_runtime)
+                (
+                    overflow_err,
+                    underflow_err,
+                    _frame,
+                    checksum,
+                    min_latency,
+                    latency,
+                    interval,
+                    avg_latency,
+                    avg_interval,
+                    run_cycles,
+                    run_frames,
+                ) = self.observe_instrumentation(debug_print=False)
+                stalled = stalled or run_frames <= prev_run_frames
+                prev_run_frames = run_frames
             self.stop_accelerator()
             fclk = self.fclk_mhz_actual * 1e6
             report = {
-                "error": overflow_err or underflow_err or interval == 0,
+                "error": overflow_err or underflow_err or interval == 0 or stalled,
+                "stalled": stalled,
                 "checksum": checksum,
                 "min_latency_cycles": min_latency,
                 "latency_cycles": latency,
@@ -410,6 +417,13 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             self.start_accelerator(avg_window_size=avg_window_size, mux_interval=mux_interval)
             samples = []
             any_error = False
+            # A stalled pipeline stops completing frames. The overhead of a switch is not
+            # known in advance (it is what the sweep measures), but any running pipeline
+            # completes frames between two reads that lie further apart than one
+            # reconfiguration, so run_frames (cumulative since the start) must grow
+            # between consecutive reads.
+            stalled = False
+            prev_run_frames = 0
             for _ in range(num_measurements):
                 time.sleep(instr_runtime)
                 (
@@ -426,6 +440,8 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                     run_frames,
                 ) = self.observe_instrumentation(debug_print=False)
                 any_error = any_error or overflow_err or underflow_err or interval == 0
+                stalled = stalled or run_frames <= prev_run_frames
+                prev_run_frames = run_frames
                 samples.append(
                     (
                         min_latency,
@@ -452,9 +468,20 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             # run_cycles/run_frames are cumulative since start; use last sample
             last_run_cycles = samples[-1][6]
             last_run_frames = samples[-1][7]
+            run_avg_fps = last_run_frames / (last_run_cycles / fclk) if last_run_cycles > 0 else 0.0
+            if stalled:
+                print(
+                    f"mux_interval {mux_interval}: the pipeline stalled after "
+                    f"{last_run_frames} frames"
+                )
             test_results[mux_interval] = {
                 "mux_interval": mux_interval,
-                "error": any_error,
+                "error": any_error or stalled,
+                "stalled": stalled,
+                # switches of the selected RM per second (F_mux)
+                "mux_frequency_hz": round(run_avg_fps / mux_interval, 3)
+                if mux_interval > 0
+                else 0.0,
                 "checksum": last_checksum,
                 "num_measurements": num_measurements,
                 "min_latency_cycles": avg_min_latency,
@@ -472,9 +499,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 "avg_throughput_fps": round(fclk / avg_avg_interval)
                 if avg_avg_interval != 0
                 else 0,
-                "run_avg_throughput_fps": round(last_run_frames / (last_run_cycles / fclk))
-                if last_run_cycles > 0
-                else 0,
+                "run_avg_throughput_fps": round(run_avg_fps),
                 "min_pipeline_depth": round(avg_min_latency / avg_interval_mean, 2)
                 if avg_interval_mean != 0
                 else 0,
