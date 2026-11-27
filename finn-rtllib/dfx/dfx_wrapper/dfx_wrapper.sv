@@ -15,20 +15,31 @@
 //     to the same value on every beat of a frame. The wrapper peeks at it on the
 //     first beat of each frame (before accepting the beat, i.e. tready=0) to
 //     decide whether reconfiguration is needed before processing the frame.
-//   m_axis_tuser: the full tUSER vector of the current frame, forwarded unchanged
-//     so downstream wrappers receive their own RM-selection bits.
+//   m_axis_tuser: the full tUSER vector of the frame that is leaving the BDC,
+//     forwarded unchanged so downstream wrappers receive their own RM-selection
+//     bits. A tuser_track remembers it for every frame inside the BDC, since the
+//     frame leaving is not necessarily the last one that entered.
 //
 // State machine:
-//   CHECK_TUSER  : peek at first beat of the next frame (tready=0). When tvalid
-//                  goes high, latch tUSER and pending_rm_id. If pending_rm_id ==
-//                  current_rm_id -> INFERENCE; else -> WAIT_FLUSH.
+//   CHECK_TUSER  : look at the first beat of the next frame. When tvalid goes high,
+//                  latch tUSER and pending_rm_id. If pending_rm_id == current_rm_id,
+//                  the beat passes in the same cycle (no bubble per frame) ->
+//                  INFERENCE; else it is held back (tready=0) -> WAIT_FLUSH.
 //   INFERENCE    : pass-through. On consumed tLast -> CHECK_TUSER.
 //   WAIT_FLUSH   : block new input. Forward rp_s_axis->m_axis until the BDC
 //                  pipeline is empty (frames_in_flight==0 OR last frame exits).
 //   TRIGGER      : assert controller_trigger[pending_rm_id] for one cycle -> WAIT_DECOUPLE.
 //   WAIT_DECOUPLE: wait for controller_decouple to go high -> RECONFIGURING.
 //   RECONFIGURING: wait for controller_decouple to fall -> RESET. Update current_rm_id.
-//   RESET        : hold accel_reset_n low for RESET_CYCLES cycles -> CHECK_TUSER.
+//   RESET        : hold accel_reset_n low for RESET_CYCLES+1 cycles, then keep the input
+//                  blocked for RESET_LATENCY more cycles -> CHECK_TUSER.
+//
+// Reset latency: the stitched BDC registers its reset in front of every node
+// (reset_pipe, DataflowBuildConfig.reset_pipeline_stages), so its nodes enter and
+// leave reset RESET_LATENCY cycles after accel_reset_n does, while their input may
+// already report tready. Beats sent earlier would be wiped by the delayed reset, so
+// the input stays blocked until the nodes are out of reset, after every
+// reconfiguration and after the system reset (aresetn) alike.
 
 `timescale 1ns/1ps
 module dfx_wrapper #(
@@ -37,6 +48,9 @@ module dfx_wrapper #(
     parameter int TUSER_WIDTH     = 2,   // tUSER width (bits); RM_ID is TUSER_WIDTH bits
     parameter int NUM_RM          = 2,   // number of Reconfigurable Modules
     parameter int RESET_CYCLES    = 16,  // clock cycles to assert accel_reset_n after reconfig
+    parameter int RESET_LATENCY   = 3,   // cycles until the BDC's nodes follow accel_reset_n
+                                         // (reset_pipeline_stages + 1, 0 without reset pipeline)
+    parameter int TUSER_TRACK_DEPTH = 256, // frames the BDC may hold (see tuser_track)
     parameter int NUM_OUTPUT_BEATS = 1   // AXI-Stream beats per output frame; used to
                                          // regenerate m_axis_tlast without relying on the
                                          // BDC generating rp_s_axis_tlast internally
@@ -82,7 +96,7 @@ module dfx_wrapper #(
     // Derived parameters
     // --------------------------------------------------------------------------
     localparam int RM_ID_W      = (NUM_RM > 1) ? $clog2(NUM_RM) : 1;
-    localparam int RESET_CNT_W  = $clog2(RESET_CYCLES + 1);
+    localparam int RESET_CNT_W  = $clog2(RESET_CYCLES + RESET_LATENCY + 1);
     localparam int OUT_CNT_W    = (NUM_OUTPUT_BEATS > 1) ? $clog2(NUM_OUTPUT_BEATS) : 1;
     // Width of the frames-in-flight counter. 8 bits supports up to 255 concurrent
     // frames inside the BDC pipeline, which is far more than any realistic FINN pipeline.
@@ -110,16 +124,23 @@ module dfx_wrapper #(
     logic [RM_ID_W-1:0]     pending_rm_id;
     logic [RESET_CNT_W-1:0] reset_cnt;
     logic [INFLIGHT_W-1:0]  frames_in_flight;
-    logic [TUSER_WIDTH-1:0] tuser_reg;     // holds full tUSER of the current/most-recent frame
+    logic                   in_first;      // the next beat entering the BDC starts a frame
     logic                   decouple_prev; // for edge detection
     logic [OUT_CNT_W-1:0]   out_beat_cnt;  // counts accepted output beats for tLast regeneration
 
     // --------------------------------------------------------------------------
     // Input pass-through to BDC
-    //   Only allowed in S_INFERENCE. Gate with tready from BDC.
+    //   In S_INFERENCE, and in S_CHECK_TUSER for the first beat of a frame that
+    //   the loaded RM processes (decided combinationally from its tUSER, so frames
+    //   follow each other without a bubble). Gated with tready from the BDC.
+    //   A frame's first beat also needs room in the tUSER tracker.
     // --------------------------------------------------------------------------
+    logic tq_in_ready;
     logic input_active;
-    assign input_active = (state == S_INFERENCE);
+    assign input_active = ((state == S_INFERENCE) ||
+                           ((state == S_CHECK_TUSER) && s_axis_tvalid &&
+                            (s_axis_tuser[RM_ID_W-1:0] == current_rm_id))) &&
+                          (!in_first || tq_in_ready);
     assign rp_m_axis_tdata  = s_axis_tdata;
     assign rp_m_axis_tvalid = s_axis_tvalid & input_active;
     assign rp_m_axis_tlast  = s_axis_tlast;
@@ -127,18 +148,17 @@ module dfx_wrapper #(
 
     // --------------------------------------------------------------------------
     // Output pass-through from BDC
-    //   Forward rp_s_axis -> m_axis in INFERENCE and WAIT_FLUSH.
-    //   In S_CHECK_TUSER: back-pressure the BDC output (tready=0) so that no
-    //     output beats are consumed while peeking at s_axis_tuser. Consuming
-    //     beats here without counting them (output_forward=0) would misalign
-    //     out_beat_cnt, causing frame_out to fire at the wrong beat and leading
-    //     to instrumentation timestamp overflow and spurious latency readings.
-    //   In all other non-forwarding states (TRIGGER..RESET): absorb rp_s_axis
-    //     (tready=1) since the AMD dfx_decoupler already drives tvalid=0 during
-    //     this window anyway; the 1'b1 is a safe drain for any residual glitches.
+    //   Forward rp_s_axis -> m_axis in INFERENCE, WAIT_FLUSH and CHECK_TUSER, so the
+    //     BDC drains its last frames even when no further input arrives (the
+    //     output does not depend on the decision about the next frame). Every
+    //     forwarded beat is counted by out_beat_cnt, which keeps frame_out aligned.
+    //   In all other states (TRIGGER..RESET): absorb rp_s_axis (tready=1); the BDC
+    //     is empty by then and the AMD dfx_decoupler drives tvalid=0 during
+    //     reconfiguration, so this only drains residual glitches.
     // --------------------------------------------------------------------------
     logic output_forward;
-    assign output_forward = (state == S_INFERENCE) | (state == S_WAIT_FLUSH);
+    assign output_forward = (state == S_INFERENCE) | (state == S_WAIT_FLUSH) |
+                            (state == S_CHECK_TUSER);
 
     // Output beat counter: counts accepted output beats and asserts out_beat_last
     // every NUM_OUTPUT_BEATS beats.  This regenerates m_axis_tlast independently
@@ -150,35 +170,60 @@ module dfx_wrapper #(
     assign m_axis_tdata     = rp_s_axis_tdata;
     assign m_axis_tvalid    = rp_s_axis_tvalid & output_forward;
     assign m_axis_tlast     = out_beat_last;
-    // Forward the full upstream tUSER vector so downstream wrappers (dfx or passthrough)
-    // receive the RM-selection bits intended for their own stage. tuser_reg is latched
-    // in S_CHECK_TUSER from the first beat of each frame; since the FSM blocks new
-    // input during reconfiguration all in-flight frames share the same tUSER value,
-    // so a single hold register is sufficient.
-    assign m_axis_tuser     = tuser_reg;
-    assign rp_s_axis_tready = output_forward    ? m_axis_tready :
-                               (state == S_CHECK_TUSER) ? 1'b0 : 1'b1;
+    // Forward the full upstream tUSER vector of the leaving frame so downstream
+    // wrappers (dfx, sw or passthrough) receive the selection bits of their stage.
+    logic [TUSER_WIDTH-1:0] tq_out_tuser;
+    assign m_axis_tuser     = tq_out_tuser;
+    assign rp_s_axis_tready = output_forward ? m_axis_tready : 1'b1;
 
     // --------------------------------------------------------------------------
-    // Accelerator reset: active-low, de-asserted except in S_RESET
+    // Accelerator reset: active-low, asserted during the first RESET_CYCLES+1 cycles
+    //   of S_RESET; the last RESET_LATENCY cycles of S_RESET only block the input
+    //   until the BDC's nodes have left their (pipelined) reset.
     // --------------------------------------------------------------------------
-    assign accel_reset_n = (state != S_RESET) & aresetn;
+    assign accel_reset_n = !((state == S_RESET) &&
+                             (reset_cnt >= RESET_CNT_W'(RESET_LATENCY))) & aresetn;
 
     // --------------------------------------------------------------------------
     // Frames-in-flight tracking
     //   frame_in : a complete frame boundary (tLast) entered the BDC this cycle.
-    //              Gated by input_active so only counted in S_INFERENCE.
+    //              Gated by input_active (S_INFERENCE and the first beat of a frame
+    //              passed in S_CHECK_TUSER).
     //              Uses rp_m_axis_tlast which is forwarded from s_axis_tlast (DMA).
     //   frame_out: a complete frame boundary exited the BDC this cycle.
     //              Uses out_beat_last (the beat counter) rather than rp_s_axis_tlast
     //              because PR bodies no longer generate tLast internally.
-    //              Gated by output_forward (S_INFERENCE | S_WAIT_FLUSH) to avoid
+    //              Gated by output_forward (INFERENCE | WAIT_FLUSH | CHECK_TUSER) to avoid
     //              spurious counts while the AMD dfx_decoupler drives tvalid=0.
     // --------------------------------------------------------------------------
     logic frame_in;
     logic frame_out;
     assign frame_in  = rp_m_axis_tvalid & rp_m_axis_tready & rp_m_axis_tlast;
     assign frame_out = output_forward & rp_s_axis_tvalid & rp_s_axis_tready & out_beat_last;
+
+    // --------------------------------------------------------------------------
+    // Per-frame tUSER of the frames inside the BDC
+    //   A frame enters with its first beat (in_first) and leaves with frame_out.
+    // --------------------------------------------------------------------------
+    always_ff @(posedge aclk or negedge aresetn) begin
+        if (!aresetn)
+            in_first <= 1'b1;
+        else if (rp_m_axis_tvalid & rp_m_axis_tready)
+            in_first <= rp_m_axis_tlast;
+    end
+
+    tuser_track #(
+        .TUSER_WIDTH(TUSER_WIDTH),
+        .DEPTH      (TUSER_TRACK_DEPTH)
+    ) tuser_track_i (
+        .aclk     (aclk),
+        .aresetn  (aresetn),
+        .in_frame (rp_m_axis_tvalid & rp_m_axis_tready & in_first),
+        .in_tuser (s_axis_tuser),
+        .in_ready (tq_in_ready),
+        .out_frame(frame_out),
+        .out_tuser(tq_out_tuser)
+    );
 
     always_ff @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
@@ -209,11 +254,11 @@ module dfx_wrapper #(
     // --------------------------------------------------------------------------
     always_ff @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
-            state          <= S_CHECK_TUSER;
+            // after the system reset, wait for the BDC's nodes to leave their reset too
+            state          <= (RESET_LATENCY > 0) ? S_RESET : S_CHECK_TUSER;
             current_rm_id  <= '0;
             pending_rm_id  <= '0;
-            reset_cnt      <= '0;
-            tuser_reg      <= '0;
+            reset_cnt      <= RESET_CNT_W'((RESET_LATENCY > 0) ? RESET_LATENCY - 1 : 0);
             decouple_prev  <= 1'b0;
             controller_trigger <= '0;
         end else begin
@@ -222,17 +267,19 @@ module dfx_wrapper #(
 
             case (state)
                 // ------------------------------------------------------------------
-                // Peek at the first beat of the next frame without consuming it
-                // (tready=0 because input_active=0 here). When the upstream master
-                // presents tvalid, sample tUSER to decide whether reconfiguration
-                // is needed before this frame enters the BDC.
+                // Look at the first beat of the next frame. When the upstream master
+                // presents tvalid, sample tUSER to decide whether reconfiguration is
+                // needed before this frame enters the BDC; if not, the beat passes in
+                // this cycle already (input_active), otherwise it is held back.
                 // ------------------------------------------------------------------
                 S_CHECK_TUSER: begin
                     if (s_axis_tvalid) begin
                         pending_rm_id <= s_axis_tuser[RM_ID_W-1:0];
-                        tuser_reg     <= s_axis_tuser;
                         if (s_axis_tuser[RM_ID_W-1:0] == current_rm_id)
-                            state <= S_INFERENCE;
+                            // the first beat passes in this cycle (input_active); a
+                            // single-beat frame ends with it already
+                            state <= (s_axis_tready & s_axis_tlast) ? S_CHECK_TUSER
+                                                                    : S_INFERENCE;
                         else
                             state <= S_WAIT_FLUSH;
                     end
@@ -281,13 +328,14 @@ module dfx_wrapper #(
                 S_RECONFIGURING: begin
                     if (!controller_decouple & decouple_prev) begin
                         current_rm_id <= pending_rm_id;
-                        reset_cnt     <= RESET_CYCLES[RESET_CNT_W-1:0];
+                        reset_cnt     <= RESET_CNT_W'(RESET_CYCLES + RESET_LATENCY);
                         state         <= S_RESET;
                     end
                 end
 
                 // ------------------------------------------------------------------
-                // Hold BDC in reset for RESET_CYCLES cycles.
+                // Hold BDC in reset for RESET_CYCLES+1 cycles, then wait RESET_LATENCY
+                // cycles for its nodes to leave their pipelined reset.
                 // ------------------------------------------------------------------
                 S_RESET: begin
                     if (reset_cnt == '0) begin

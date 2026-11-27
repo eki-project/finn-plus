@@ -8,6 +8,7 @@ module dfx_wrapper_wrapper #(
     parameter TUSER_WIDTH     = 2,
     parameter NUM_RM          = 2,
     parameter RESET_CYCLES    = 16,
+    parameter RESET_LATENCY   = 3,
     parameter NUM_OUTPUT_BEATS = 1
 ) (
     input  wire                       aclk,
@@ -47,6 +48,7 @@ module dfx_wrapper_wrapper #(
         .TUSER_WIDTH     (TUSER_WIDTH),
         .NUM_RM          (NUM_RM),
         .RESET_CYCLES    (RESET_CYCLES),
+        .RESET_LATENCY   (RESET_LATENCY),
         .NUM_OUTPUT_BEATS(NUM_OUTPUT_BEATS)
     ) inst (
         .aclk                (aclk),

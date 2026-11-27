@@ -20,9 +20,9 @@
           {
             "function_name": "experiment_ma",
             "kwargs" : {
-                "instr_runtime": 10,
+                "instr_runtime": 1,
                 "avg_window_size": 64,
-                "num_measurements": 1
+                "num_measurements": 10
             }
           }
         ]

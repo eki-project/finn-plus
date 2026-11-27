@@ -84,6 +84,12 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
 
             for socket in self.socket_dict_paths.keys():
                 self.restart_with_status(vsm=socket, is_full=True, rm_id=0)
+            # status state of a socket with its RM loaded and active (RM 0 from the full
+            # bitstream), the state load_rm waits for after a reconfiguration
+            self.active_state = {
+                socket: self.get_status(vsm=socket)["state"]
+                for socket in self.socket_dict_paths.keys()
+            }
 
         def _map_socket(self, socket_name: str | int) -> int:
             """Map a socket name or integer index to its numeric index."""
@@ -195,6 +201,42 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             reg_sel = (bs_row << 2) | 2
             addr = self._reg_addr(vsm, bank=3, reg_select=reg_sel)
             self.dfx_controller_inst.write(addr, size)
+
+        def trigger(self, trigger_id: int, vsm: str | int) -> None:
+            """Issue a software trigger (bank 0, register 1, see PG374)."""
+            vsm = self._map_socket(vsm)
+            addr = self._reg_addr(vsm, bank=0, reg_select=1)
+            self.dfx_controller_inst.write(addr, trigger_id)
+
+        def load_rm(self, rm_id: int, vsm: str | int, timeout_s: float = 2.0) -> bool:
+            """Load an RM into a socket unless it is loaded already.
+
+            The build maps trigger i to RM i. Waits until the controller reports the RM
+            active. The body is not reset; reset the accelerator afterwards.
+
+            Args:
+                rm_id: RM to load.
+                vsm: Socket name or index.
+                timeout_s: Time to wait for the reconfiguration.
+
+            Returns:
+                Whether a reconfiguration was necessary.
+            """
+            socket = vsm if isinstance(vsm, str) else list(self.socket_map)[vsm]
+            active = self.active_state[socket]
+            status = self.get_status(vsm=socket)
+            if status["rm_id"] == rm_id and status["state"] == active and not status["error"]:
+                return False
+            self.trigger(rm_id, vsm=socket)
+            deadline = time.time() + timeout_s
+            while time.time() < deadline:
+                status = self.get_status(vsm=socket)
+                if status["error"]:
+                    break
+                if status["rm_id"] == rm_id and status["state"] == active:
+                    return True
+                time.sleep(0.001)
+            raise RuntimeError(f"Loading RM {rm_id} into {socket} failed, status {status}")
 
         def print_status(self, vsm: str | int) -> None:
             """Print the current status of the given virtual socket manager."""
@@ -310,30 +352,35 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
 
         self.set_current_mode("instr")
 
-        if self.multidnn_mode != "PartialReconfiguration":
-            if self.multidnn_mode == "SelectableWeights":
-                # TODO: also excercise different weight sets in this mode..
-                pass
-
+        sweep_modes = ("PartialReconfiguration", "SelectableWeights")
+        if self.multidnn_mode not in sweep_modes:
+            # co-location (or a single DNN): nothing to switch, one measurement
             self.start_accelerator(avg_window_size=avg_window_size)
-            time.sleep(instr_runtime)
-            (
-                overflow_err,
-                underflow_err,
-                _frame,
-                checksum,
-                min_latency,
-                latency,
-                interval,
-                avg_latency,
-                avg_interval,
-                run_cycles,
-                run_frames,
-            ) = self.observe_instrumentation(debug_print=False)
+            # read num_measurements times, the pipeline must complete frames in between
+            stalled = False
+            prev_run_frames = 0
+            for _ in range(num_measurements):
+                time.sleep(instr_runtime)
+                (
+                    overflow_err,
+                    underflow_err,
+                    _frame,
+                    checksum,
+                    min_latency,
+                    latency,
+                    interval,
+                    avg_latency,
+                    avg_interval,
+                    run_cycles,
+                    run_frames,
+                ) = self.observe_instrumentation(debug_print=False)
+                stalled = stalled or run_frames <= prev_run_frames
+                prev_run_frames = run_frames
             self.stop_accelerator()
             fclk = self.fclk_mhz_actual * 1e6
             report = {
-                "error": overflow_err or underflow_err or interval == 0,
+                "error": overflow_err or underflow_err or interval == 0 or stalled,
+                "stalled": stalled,
                 "checksum": checksum,
                 "min_latency_cycles": min_latency,
                 "latency_cycles": latency,
@@ -360,24 +407,28 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 json.dump(report, f, indent=2)
             return 0
 
-        pattern = rf".*_{re.escape(socket_prefix)}_(\d+)_"
+        partial_reconfiguration = self.multidnn_mode == "PartialReconfiguration"
         socket_names = []
-        for entry in Path(pr_bitstream_folder).iterdir():
-            match = re.search(pattern, entry.name)
-            if match:
-                name = f"{socket_prefix}_{match.group(1)}"
-                if name not in socket_names:
-                    socket_names.append(name)
-        socket_names = sorted(socket_names, key=lambda x: int(x.split("_")[-1]))
-        self.enable_icap()
-        dfx = self.DFXController(
-            self.dfx_controller_0, sockets=socket_names, bitstream_folder=pr_bitstream_folder
-        )
+        dfx = None
+        if partial_reconfiguration:
+            pattern = rf".*_{re.escape(socket_prefix)}_(\d+)_"
+            for entry in Path(pr_bitstream_folder).iterdir():
+                match = re.search(pattern, entry.name)
+                if match:
+                    name = f"{socket_prefix}_{match.group(1)}"
+                    if name not in socket_names:
+                        socket_names.append(name)
+            socket_names = sorted(socket_names, key=lambda x: int(x.split("_")[-1]))
+            self.enable_icap()
+            dfx = self.DFXController(
+                self.dfx_controller_0, sockets=socket_names, bitstream_folder=pr_bitstream_folder
+            )
 
         # Sweep mux_interval: how many frames each tUSER value is held before the
         # instrumentation wrapper advances to the next one in round-robin order.
-        # The dfx_wrapper detects the tUSER change and triggers partial reconfiguration.
-        # mux_interval=0 means tUSER stays at 0 (no reconfiguration, baseline measurement).
+        # The dfx_wrapper detects the tUSER change and triggers partial reconfiguration,
+        # the sw_wrapper selects the other weight set for the next frame.
+        # mux_interval=0 means tUSER stays at 0 (no switching, baseline measurement).
         mux_intervals = kwargs.get(
             "mux_intervals",
             [
@@ -404,12 +455,25 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
 
         test_results = {}
         for mux_interval in mux_intervals:
+            # The previous point may have ended with another RM loaded, while the reset
+            # below returns every dfx_wrapper to RM 0: load RM 0 again first, so that the
+            # first frames of this point do not run on the wrong RM.
+            for socket in socket_names:  # partial reconfiguration only
+                if dfx.load_rm(0, vsm=socket):
+                    print(f"mux_interval {mux_interval}: reloaded RM 0 into {socket}")
             # reset instrumentation and accelerator (not DFX controller) for clean measurement:
             self.reset_accelerator()
             self.set_current_mode("instr")  # need to set FINN_switch mode again after reset
             self.start_accelerator(avg_window_size=avg_window_size, mux_interval=mux_interval)
             samples = []
             any_error = False
+            # A stalled pipeline stops completing frames. The overhead of a switch is not
+            # known in advance (it is what the sweep measures), but any running pipeline
+            # completes frames between two reads that lie further apart than one
+            # reconfiguration, so run_frames (cumulative since the start) must grow
+            # between consecutive reads.
+            stalled = False
+            prev_run_frames = 0
             for _ in range(num_measurements):
                 time.sleep(instr_runtime)
                 (
@@ -426,6 +490,8 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                     run_frames,
                 ) = self.observe_instrumentation(debug_print=False)
                 any_error = any_error or overflow_err or underflow_err or interval == 0
+                stalled = stalled or run_frames <= prev_run_frames
+                prev_run_frames = run_frames
                 samples.append(
                     (
                         min_latency,
@@ -452,9 +518,20 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             # run_cycles/run_frames are cumulative since start; use last sample
             last_run_cycles = samples[-1][6]
             last_run_frames = samples[-1][7]
+            run_avg_fps = last_run_frames / (last_run_cycles / fclk) if last_run_cycles > 0 else 0.0
+            if stalled:
+                print(
+                    f"mux_interval {mux_interval}: the pipeline stalled after "
+                    f"{last_run_frames} frames"
+                )
             test_results[mux_interval] = {
                 "mux_interval": mux_interval,
-                "error": any_error,
+                "error": any_error or stalled,
+                "stalled": stalled,
+                # switches of the selected RM per second (F_mux)
+                "mux_frequency_hz": round(run_avg_fps / mux_interval, 3)
+                if mux_interval > 0
+                else 0.0,
                 "checksum": last_checksum,
                 "num_measurements": num_measurements,
                 "min_latency_cycles": avg_min_latency,
@@ -472,9 +549,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 "avg_throughput_fps": round(fclk / avg_avg_interval)
                 if avg_avg_interval != 0
                 else 0,
-                "run_avg_throughput_fps": round(last_run_frames / (last_run_cycles / fclk))
-                if last_run_cycles > 0
-                else 0,
+                "run_avg_throughput_fps": round(run_avg_fps),
                 "min_pipeline_depth": round(avg_min_latency / avg_interval_mean, 2)
                 if avg_interval_mean != 0
                 else 0,
@@ -485,7 +560,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         report["test"] = test_results
         del dfx
 
-        if measure_reconfiguration_time:
+        if measure_reconfiguration_time and partial_reconfiguration:
             # PCAP test - dry run to buffer bitstreams in RAM
             self.enable_pcap()
 
@@ -566,7 +641,10 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             report["partial_configuration"] = partial_configuration_report
 
         report["fclk_mhz"] = self.fclk_mhz
-        reportfile = Path(report_dir) / "report_pr.json"
+        report_name = (
+            "report_pr.json" if partial_reconfiguration else "report_selectableweights.json"
+        )
+        reportfile = Path(report_dir) / report_name
         with reportfile.open("w") as f:
             json.dump(report, f, indent=2)
         return 0
