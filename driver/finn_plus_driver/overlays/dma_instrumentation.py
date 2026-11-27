@@ -352,11 +352,9 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
 
         self.set_current_mode("instr")
 
-        if self.multidnn_mode != "PartialReconfiguration":
-            if self.multidnn_mode == "SelectableWeights":
-                # TODO: also excercise different weight sets in this mode..
-                pass
-
+        sweep_modes = ("PartialReconfiguration", "SelectableWeights")
+        if self.multidnn_mode not in sweep_modes:
+            # co-location (or a single DNN): nothing to switch, one measurement
             self.start_accelerator(avg_window_size=avg_window_size)
             # read num_measurements times, the pipeline must complete frames in between
             stalled = False
@@ -409,24 +407,28 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 json.dump(report, f, indent=2)
             return 0
 
-        pattern = rf".*_{re.escape(socket_prefix)}_(\d+)_"
+        partial_reconfiguration = self.multidnn_mode == "PartialReconfiguration"
         socket_names = []
-        for entry in Path(pr_bitstream_folder).iterdir():
-            match = re.search(pattern, entry.name)
-            if match:
-                name = f"{socket_prefix}_{match.group(1)}"
-                if name not in socket_names:
-                    socket_names.append(name)
-        socket_names = sorted(socket_names, key=lambda x: int(x.split("_")[-1]))
-        self.enable_icap()
-        dfx = self.DFXController(
-            self.dfx_controller_0, sockets=socket_names, bitstream_folder=pr_bitstream_folder
-        )
+        dfx = None
+        if partial_reconfiguration:
+            pattern = rf".*_{re.escape(socket_prefix)}_(\d+)_"
+            for entry in Path(pr_bitstream_folder).iterdir():
+                match = re.search(pattern, entry.name)
+                if match:
+                    name = f"{socket_prefix}_{match.group(1)}"
+                    if name not in socket_names:
+                        socket_names.append(name)
+            socket_names = sorted(socket_names, key=lambda x: int(x.split("_")[-1]))
+            self.enable_icap()
+            dfx = self.DFXController(
+                self.dfx_controller_0, sockets=socket_names, bitstream_folder=pr_bitstream_folder
+            )
 
         # Sweep mux_interval: how many frames each tUSER value is held before the
         # instrumentation wrapper advances to the next one in round-robin order.
-        # The dfx_wrapper detects the tUSER change and triggers partial reconfiguration.
-        # mux_interval=0 means tUSER stays at 0 (no reconfiguration, baseline measurement).
+        # The dfx_wrapper detects the tUSER change and triggers partial reconfiguration,
+        # the sw_wrapper selects the other weight set for the next frame.
+        # mux_interval=0 means tUSER stays at 0 (no switching, baseline measurement).
         mux_intervals = kwargs.get(
             "mux_intervals",
             [
@@ -456,7 +458,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             # The previous point may have ended with another RM loaded, while the reset
             # below returns every dfx_wrapper to RM 0: load RM 0 again first, so that the
             # first frames of this point do not run on the wrong RM.
-            for socket in socket_names:
+            for socket in socket_names:  # partial reconfiguration only
                 if dfx.load_rm(0, vsm=socket):
                     print(f"mux_interval {mux_interval}: reloaded RM 0 into {socket}")
             # reset instrumentation and accelerator (not DFX controller) for clean measurement:
@@ -558,7 +560,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         report["test"] = test_results
         del dfx
 
-        if measure_reconfiguration_time:
+        if measure_reconfiguration_time and partial_reconfiguration:
             # PCAP test - dry run to buffer bitstreams in RAM
             self.enable_pcap()
 
@@ -639,7 +641,10 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             report["partial_configuration"] = partial_configuration_report
 
         report["fclk_mhz"] = self.fclk_mhz
-        reportfile = Path(report_dir) / "report_pr.json"
+        report_name = (
+            "report_pr.json" if partial_reconfiguration else "report_selectableweights.json"
+        )
+        reportfile = Path(report_dir) / report_name
         with reportfile.open("w") as f:
             json.dump(report, f, indent=2)
         return 0
