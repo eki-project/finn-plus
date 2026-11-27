@@ -1,6 +1,6 @@
 // RX connection of the LSP receiver, one per peer: parses its frames, fills the stream rings and reports CTRL status.
-#ifndef LSP_RECEIVER_CONNECTION_HPP
-#define LSP_RECEIVER_CONNECTION_HPP
+#ifndef LSP_RECEIVER_PARSE_BEAT_HPP
+#define LSP_RECEIVER_PARSE_BEAT_HPP
 
 #include "common.hpp"
 #include "constants.hpp"
@@ -20,6 +20,7 @@ namespace lsp {
         // Parser state, kept across beats
         enum class connection_state : unsigned char {
             EXPECT_FRAME_START,
+            EXPECT_FRAME_START_AFTER_INVALID_FRAME,
             EXPECT_BEAT,
             DISCARDING_INVALID_FRAME,
         };
@@ -60,7 +61,13 @@ namespace lsp {
                     return data.last ? connection_state::EXPECT_FRAME_START : connection_state::EXPECT_BEAT;
                 }
 
+                // If payloadChunks is wrong we need to end parsing here, otherwise we drop into an endless loop,
+                // since the offset of the header is now forever off.
+                if (data.last) {
+                    return connection_state::EXPECT_FRAME_START;
+                }
             }
+            return data.last ? connection_state::EXPECT_FRAME_START : connection_state::EXPECT_BEAT;
         }
 
         /** Parse the segments of one beat into the rings and return the next parser state. */
@@ -116,6 +123,12 @@ namespace lsp {
                         return connection_state::EXPECT_BEAT;
                     }
                 }
+
+                // If payloadChunks is wrong we need to end parsing here, otherwise we drop into an endless loop,
+                // since the offset of the header is now forever off.
+                if (data.last) {
+                    return connection_state::EXPECT_FRAME_START;
+                }
             }
             // Not reached: every segment takes at least one chunk, so the loop returns by the end of the beat
             return data.last ? connection_state::EXPECT_FRAME_START : connection_state::EXPECT_BEAT;
@@ -145,7 +158,7 @@ namespace lsp {
             // Neither DATA nor PROBE: discard.
             if (header.frameType != constants::FRAME_DATA && header.frameType != FRAME_PROBE) {
                 // TODO: Error counter
-                return !data.last ? connection_state::DISCARDING_INVALID_FRAME : connection_state::EXPECT_FRAME_START;
+                return !data.last ? connection_state::DISCARDING_INVALID_FRAME : connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME;
             }
 
             // FSN after the expected one: gap, NACK. Before it: duplicate, ACK
@@ -156,7 +169,7 @@ namespace lsp {
                 // On a PROBE, a too small FSN is okay - we send the response regardless
                 if (header.frameType != FRAME_PROBE) {
                     ctrlStatus.add(ctrl_status_t<sizeof...(Ws)>::makeACKImmediately(expectedFSN));
-                    return !data.last ? connection_state::DISCARDING_INVALID_FRAME : connection_state::EXPECT_FRAME_START;
+                    return !data.last ? connection_state::DISCARDING_INVALID_FRAME : connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME;
                 }
             }
 
@@ -225,7 +238,7 @@ namespace lsp {
 
                 // Beat 0: find and check the LSP header
                 ap_uint<clog2(1 + constants::BEAT_WIDTH)> offset = 0;
-                if (state == connection_state::EXPECT_FRAME_START) {
+                if (state == connection_state::EXPECT_FRAME_START || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME) {
                     state = _readHeaders(offset, header, data, frameChunksLeft, ctrlStatus, expectedFSN);
                 }
 
@@ -259,10 +272,10 @@ namespace lsp {
 
             // No frame in progress: send everything collected so far as one status. The only write to
             // controlStream, since a stream takes one write per cycle
-            if (state == connection_state::EXPECT_FRAME_START) {
+            if (state == connection_state::EXPECT_FRAME_START || state == connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME) {
                 ctrlStatus.trySend(controlStream);
             }
         }
     } // namespace receiver
 } // namespace lsp
-#endif // LSP_RECEIVER_CONNECTION_HPP
+#endif // LSP_RECEIVER_PARSE_BEAT_HPP
