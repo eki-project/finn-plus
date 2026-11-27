@@ -6,11 +6,11 @@
 // carries the RM-selection request set by host software) would otherwise be
 // silently discarded.  This wrapper solves both problems:
 //
-//   1. tUSER forwarding: holds the tUSER value of the last accepted input frame
-//      in a register and re-attaches it to every output beat.  Since the
-//      dfx_wrapper FSM blocks new input during reconfiguration, all in-flight
-//      frames always carry the same tUSER value, so a single hold register
-//      is sufficient.
+//   1. tUSER forwarding: remembers the tUSER of every frame inside the segment
+//      (tuser_track) and re-attaches the tUSER of the frame that is leaving to
+//      its output beats.  A segment may hold several frames, and the frames
+//      entering it may already select another RM or weight set than the ones
+//      leaving it, so the tUSER of the last input frame would mislabel them.
 //
 //   2. tLast regeneration: counts accepted output beats and asserts m_axis_tlast
 //      every NUM_OUTPUT_BEATS transfers (parameterised at instantiation).  This
@@ -27,6 +27,7 @@ module dfx_tuser_passthrough #(
     parameter int IN_DATA_WIDTH    = 64,  // tdata width on input path: s_axis → rp_m_axis (bits)
     parameter int OUT_DATA_WIDTH   = 64,  // tdata width on output path: rp_s_axis → m_axis (bits)
     parameter int TUSER_WIDTH      = 2,   // tUSER width (bits)
+    parameter int TUSER_TRACK_DEPTH = 256, // frames the segment may hold (see tuser_track)
     parameter int NUM_OUTPUT_BEATS = 1    // AXI-Stream beats per output frame
 ) (
     input  logic                       aclk,
@@ -60,27 +61,16 @@ module dfx_tuser_passthrough #(
 );
 
     // --------------------------------------------------------------------------
-    // tUSER hold register
-    //   Latches the full tUSER vector on the FIRST accepted beat of each input
-    //   frame (consistent with dfx_wrapper and sw_wrapper which both sample
-    //   tUSER in S_CHECK_TUSER before admitting the first beat).
-    //   A frame_start flag tracks whether the next accepted beat is the first
-    //   of a new frame: it is set after reset and after every accepted tLast.
-    //   All in-flight frames share the same tUSER (dfx_wrapper blocks new input
-    //   during reconfiguration), so a single hold register is sufficient.
+    // frame_start: 1 when the next accepted input beat is the first of a frame
+    //   (set after reset and after every accepted tLast).
     // --------------------------------------------------------------------------
-    logic [TUSER_WIDTH-1:0] tuser_reg;
-    logic                   frame_start; // 1 when the next accepted beat is the first of a frame
+    logic frame_start;
 
     always_ff @(posedge aclk or negedge aresetn) begin
-        if (!aresetn) begin
-            tuser_reg   <= '0;
+        if (!aresetn)
             frame_start <= 1'b1;
-        end else if (s_axis_tvalid & s_axis_tready) begin
-            if (frame_start)
-                tuser_reg <= s_axis_tuser;
+        else if (s_axis_tvalid & s_axis_tready)
             frame_start <= s_axis_tlast; // next beat is first of a frame iff this was the last
-        end
     end
 
     // --------------------------------------------------------------------------
@@ -102,12 +92,35 @@ module dfx_tuser_passthrough #(
     end
 
     // --------------------------------------------------------------------------
+    // Per-frame tUSER of the frames inside the segment
+    //   A frame enters with its first accepted beat and leaves with its last
+    //   output beat. A frame's first beat also needs room in the tracker.
+    // --------------------------------------------------------------------------
+    logic                   tq_in_ready;
+    logic [TUSER_WIDTH-1:0] tq_out_tuser;
+    logic                   input_open;
+    assign input_open = !frame_start || tq_in_ready;
+
+    tuser_track #(
+        .TUSER_WIDTH(TUSER_WIDTH),
+        .DEPTH      (TUSER_TRACK_DEPTH)
+    ) tuser_track_i (
+        .aclk     (aclk),
+        .aresetn  (aresetn),
+        .in_frame (s_axis_tvalid & s_axis_tready & frame_start),
+        .in_tuser (s_axis_tuser),
+        .in_ready (tq_in_ready),
+        .out_frame(rp_s_axis_tvalid & rp_s_axis_tready & output_last),
+        .out_tuser(tq_out_tuser)
+    );
+
+    // --------------------------------------------------------------------------
     // Input pass-through (strip tUSER; forward tLast for protocol compliance)
     // --------------------------------------------------------------------------
     assign rp_m_axis_tdata  = s_axis_tdata;
-    assign rp_m_axis_tvalid = s_axis_tvalid;
+    assign rp_m_axis_tvalid = s_axis_tvalid & input_open;
     assign rp_m_axis_tlast  = s_axis_tlast;
-    assign s_axis_tready    = rp_m_axis_tready;
+    assign s_axis_tready    = rp_m_axis_tready & input_open;
 
     // --------------------------------------------------------------------------
     // Output pass-through (restore tUSER; inject generated tLast)
@@ -115,7 +128,7 @@ module dfx_tuser_passthrough #(
     assign m_axis_tdata     = rp_s_axis_tdata;
     assign m_axis_tvalid    = rp_s_axis_tvalid;
     assign m_axis_tlast     = output_last;
-    assign m_axis_tuser     = tuser_reg;
+    assign m_axis_tuser     = tq_out_tuser;
     assign rp_s_axis_tready = m_axis_tready;
 
 endmodule
