@@ -137,18 +137,17 @@ module dfx_wrapper #(
 
     // --------------------------------------------------------------------------
     // Output pass-through from BDC
-    //   Forward rp_s_axis -> m_axis in INFERENCE and WAIT_FLUSH.
-    //   In S_CHECK_TUSER: back-pressure the BDC output (tready=0) so that no
-    //     output beats are consumed while peeking at s_axis_tuser. Consuming
-    //     beats here without counting them (output_forward=0) would misalign
-    //     out_beat_cnt, causing frame_out to fire at the wrong beat and leading
-    //     to instrumentation timestamp overflow and spurious latency readings.
-    //   In all other non-forwarding states (TRIGGER..RESET): absorb rp_s_axis
-    //     (tready=1) since the AMD dfx_decoupler already drives tvalid=0 during
-    //     this window anyway; the 1'b1 is a safe drain for any residual glitches.
+    //   Forward rp_s_axis -> m_axis in INFERENCE, WAIT_FLUSH and CHECK_TUSER, so the
+    //     BDC drains its last frames even when no further input arrives (the
+    //     output does not depend on the decision about the next frame). Every
+    //     forwarded beat is counted by out_beat_cnt, which keeps frame_out aligned.
+    //   In all other states (TRIGGER..RESET): absorb rp_s_axis (tready=1); the BDC
+    //     is empty by then and the AMD dfx_decoupler drives tvalid=0 during
+    //     reconfiguration, so this only drains residual glitches.
     // --------------------------------------------------------------------------
     logic output_forward;
-    assign output_forward = (state == S_INFERENCE) | (state == S_WAIT_FLUSH);
+    assign output_forward = (state == S_INFERENCE) | (state == S_WAIT_FLUSH) |
+                            (state == S_CHECK_TUSER);
 
     // Output beat counter: counts accepted output beats and asserts out_beat_last
     // every NUM_OUTPUT_BEATS beats.  This regenerates m_axis_tlast independently
@@ -166,8 +165,7 @@ module dfx_wrapper #(
     // input during reconfiguration all in-flight frames share the same tUSER value,
     // so a single hold register is sufficient.
     assign m_axis_tuser     = tuser_reg;
-    assign rp_s_axis_tready = output_forward    ? m_axis_tready :
-                               (state == S_CHECK_TUSER) ? 1'b0 : 1'b1;
+    assign rp_s_axis_tready = output_forward ? m_axis_tready : 1'b1;
 
     // --------------------------------------------------------------------------
     // Accelerator reset: active-low, asserted during the first RESET_CYCLES+1 cycles
@@ -185,7 +183,7 @@ module dfx_wrapper #(
     //   frame_out: a complete frame boundary exited the BDC this cycle.
     //              Uses out_beat_last (the beat counter) rather than rp_s_axis_tlast
     //              because PR bodies no longer generate tLast internally.
-    //              Gated by output_forward (S_INFERENCE | S_WAIT_FLUSH) to avoid
+    //              Gated by output_forward (INFERENCE | WAIT_FLUSH | CHECK_TUSER) to avoid
     //              spurious counts while the AMD dfx_decoupler drives tvalid=0.
     // --------------------------------------------------------------------------
     logic frame_in;

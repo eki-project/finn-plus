@@ -104,20 +104,13 @@ module sw_wrapper #(
     assign s_axis_tready    = rp_m_axis_tready & input_active;
 
     // --------------------------------------------------------------------------
-    // Output path: forwarded only in S_PASS; gated in S_CHECK_TUSER and
-    // S_SEND_SETSEL to prevent output beats from the previous frame's pipeline
-    // tail being absorbed and counted before a new frame context is established.
-    //
-    // rp_s_axis_tready policy (mirrors dfx_wrapper):
-    //   S_PASS          : m_axis_tready     — normal cut-through forwarding
-    //   S_CHECK_TUSER   : 1'b0              — back-pressure NC output while
-    //                                          peeking at input tUSER; prevents
-    //                                          tail beats from being miscounted
-    //   S_SEND_SETSEL   : 1'b0              — back-pressure NC output while
-    //                                          sending the set-selection token
+    // Output path: always forwarded. The NC output does not depend on the set
+    //   selection of the next frame, so it drains its last frames even when no
+    //   further input arrives. Every forwarded beat is counted by out_beat_cnt,
+    //   which keeps the regenerated tLast aligned to the frame boundaries.
     // --------------------------------------------------------------------------
     logic output_forward;
-    assign output_forward = (state == S_PASS);
+    assign output_forward = 1'b1;
 
     logic out_beat_last;
     assign out_beat_last = (out_beat_cnt == OUT_CNT_W'(NUM_OUTPUT_BEATS - 1));
@@ -136,9 +129,7 @@ module sw_wrapper #(
     assign m_axis_setsel_tvalid = (state == S_SEND_SETSEL);
 
     // --------------------------------------------------------------------------
-    // Output beat counter (gated by output_forward so it only counts beats that
-    // are actually forwarded downstream; beats absorbed during S_CHECK_TUSER or
-    // S_SEND_SETSEL are held by back-pressure and never counted here).
+    // Output beat counter: counts every beat forwarded downstream.
     // --------------------------------------------------------------------------
     always_ff @(posedge aclk or negedge aresetn) begin
         if (!aresetn)
