@@ -108,6 +108,17 @@ namespace lsp {
         // Capacities without an offset
         constexpr int CREDITS_PER_BEAT = creditsPerBeat(0, false);
         constexpr int CREDITS_PER_HEADER_BEAT = creditsPerBeat(0, true);
+
+        // ---------------------------------------------------------------------------------------
+        // Receiver stream rings
+        // ---------------------------------------------------------------------------------------
+
+        // Calls by which the read side of a stream ring lags behind its write side, so that a read
+        // never hits a BRAM slot whose write is still in the pipeline
+#ifndef LSP_RING_WRITE_PIPELINE_DELAY
+#define LSP_RING_WRITE_PIPELINE_DELAY 3
+#endif
+        constexpr int RING_WRITE_PIPELINE_DELAY = LSP_RING_WRITE_PIPELINE_DELAY;
     }
 }
 

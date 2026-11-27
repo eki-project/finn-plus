@@ -1,7 +1,9 @@
 #include <ap_axi_sdata.h>
 #include <ap_int.h>
 #include <hls_stream.h>
+#include <stdexcept>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <algorithm>
 
@@ -27,39 +29,53 @@ namespace lsp {
             - Banking: Allows several writes to the same ring buffer in one cycle (<Banks> BRAMS with W/R slots instead of one common one)
             - Registering: Only entire words get written, so we don't need a bit-granular inWordPointer (only chunk-wise and for the accumulator)
             */
-            template<int StreamWidth, size_t Depth, size_t Banks=4>
+            template<int StreamWidth, size_t WordDepth, int WritePipelineDelay>
             struct stream_ring_buffer_t {
-                // Banks must be a power of 2 so that wordPointer bits can be masked easily
-                static_assert((Banks & (Banks - 1)) == 0, "Banks must be a power of 2");
-                static_assert(
-                    Depth % Banks == 0,
-                    "Depth must be dividable by banks. The total capacity of the buffer is Depth, split into Banks banks."
-                );
+                static constexpr int ChunkWidth = constants::CHUNK_SIZE_BITS;
 
+                // Min: Need as many banks as chunks of one stream can be in a beat. A segment header always
+                // takes at least one chunk, so CHUNKS_PER_BEAT - 1 would suffice, but CHUNKS_PER_BEAT keeps
+                // Banks a power of two, so the bank pointer arithmetic needs no modulo logic
                 // Rounded up amount of chunks needed to express one StreamWidth in chunks
-                static constexpr int WordChunks = (StreamWidth + constants::CHUNK_SIZE_BITS - 1) / constants::CHUNK_SIZE_BITS;
+                static constexpr int WordChunks = (StreamWidth + ChunkWidth - 1) / ChunkWidth;
+                static constexpr int Banks = constants::CHUNKS_PER_BEAT;
+
+                // Depth in chunks
+                static constexpr int Depth = WordDepth * WordChunks;
+
+                // Slot count, rounded up: the buffer may be physically larger than Depth. The free space
+                // is still computed from Depth, and both pointers wrap at Slots * Banks, so the extra
+                // chunks are simply never all occupied at the same time
+                static constexpr int Slots = (Depth + Banks - 1) / Banks;
 
                 // Datawidths
                 static constexpr int BankBits = clog2(1 + Banks);
-                static constexpr int SlotBits = clog2(1 + Depth/Banks);
-                static constexpr int WordPointerWidth = BankBits + SlotBits;
+                static constexpr int SlotBits = clog2(1 + Slots);
+
+                static_assert(
+                    WritePipelineDelay > 2,
+                    "Pipeline delay must be larger than BRAM access latency and pipeline delay (at least >2)"
+                );
 
                 // Dimension 1: Bank, Dimension 2: Buffer Slot
                 // One BRAM per bank, partitioned in writeStaged (HLS pragmas are not allowed at class scope)
-                ap_uint<StreamWidth> buffer[Banks][Depth/Banks];
+                ap_uint<ChunkWidth> buffer[Banks][Slots];
 
-                // Lanes are registers that store the partialWords before putting
-                // them into a buffer. Completely partitioned in writeStaged
-                ap_uint<StreamWidth> lanes[Banks];
-
-                ap_uint<clog2(1 + Banks)> laneCounter = 0;
+                // Staging area of one beat: lane i holds the chunk that goes to bank i. stage() spreads
+                // the chunks of each segment onto the lanes, so writeStaged() writes every bank at most once
+                ap_uint<ChunkWidth> lanes[Banks];
                 ap_uint<Banks> validLanes = 0;
 
+                // Chunks staged in the current beat
+                ap_uint<clog2(1 + Banks)> laneCounter = 0;
+
                 // Pointer across all banks and slots
-                ap_uint<WordPointerWidth> writePointer = 0;
+                ap_uint<BankBits> bankWritePointer = 0;
+                ap_uint<SlotBits> slotWritePointer = 0;
 
                 // Read pointer is also global, just as writePointer
-                ap_uint<WordPointerWidth> readPointer = 0;
+                ap_uint<BankBits> bankReadPointer = 0;
+                ap_uint<SlotBits> slotReadPointer = 0;
 
                 // Wrapping word counters. The write side (stage, writeStaged) only updates
                 // written, the read side (tryReadIntoStream) only updates readCount,
@@ -72,104 +88,53 @@ namespace lsp {
                 // Shift register that reports the written words delayed by the number of banks
                 // This makes sure that there is never a RAW clash in one cycle. Needs to be encoded via
                 // a dependence pragma as well.
-                ap_uint<CountBits> writtenDelayed[Banks] = {};
+                ap_uint<CountBits> writtenDelayed[WritePipelineDelay] = {};
 
-                // Registers to write from. Since segments can only deliver chunks (apart from the last chunk),
-                // the offset is also just in entire chunks, causing smaller shifters necessary.
-                ap_uint<StreamWidth> partialWord = 0;
-                ap_uint<clog2(1 + StreamWidth/constants::CHUNK_SIZE_BITS) + 1> partialWordChunkOffset = 0;
-                helpers::skid_buffer_t<StreamWidth, ap_uint<StreamWidth>, 6> skid;
+
+                // If a word is wider than the bank count (e.g. 5 chunks but 4 banks)
+                // then we first read 4 chunks and in the next call read 1 chunk and send the word
+                static constexpr int ReadsPerCall = WordChunks > Banks ? Banks : WordChunks;
+                static constexpr int StorageChunks = WordChunks <= Banks ? WordChunks : WordChunks + Banks;
+
+                // We can, at best, send one word per cycle - the receiver cant receive more.
+                // If WordChunks <= BankChunks, we are always done after the loop, so the storage must be WordChunks wide
+                // If WordChunks > BankChunks, over multiple calls we store 1 word width + at most an entire slot of BankChunks
+                ap_uint<StorageChunks * ChunkWidth> storage = 0;
+                ap_uint<clog2(1 + StorageChunks)> chunksStored = 0;
 
                 // Credit bookkeeping
                 ap_uint<constants::CREDIT_LIMIT_WIDTH> creditLimit = Depth;
                 ap_uint<constants::CREDIT_LIMIT_WIDTH> lastCreditLimitSent = Depth;
 
-
-                ap_uint<BankBits> getBank(const ap_uint<WordPointerWidth> &ptr) {
-#pragma HLS inline
-                    return ptr % Banks;
-                }
-
-                ap_uint<SlotBits> getSlot(const ap_uint<WordPointerWidth> &ptr) {
-#pragma HLS inline
-                    return ptr / Banks;
-                }
-
-                ap_uint<BankBits> getCurrentWriteBank() {
-#pragma HLS inline
-                    return getBank(writePointer);
-                }
-
-                ap_uint<SlotBits> getCurrentWriteSlot() {
-#pragma HLS inline
-                    return getSlot(writePointer);
-                }
-
-                ap_uint<BankBits> getCurrentReadBank() {
-#pragma HLS inline
-                    return getBank(readPointer);
-                }
-
-                ap_uint<SlotBits> getCurrentReadSlot() {
-#pragma HLS inline
-                    return getSlot(readPointer);
-                }
-
-            private:
-                /** Update the currently pointed to register, filling it with data from the segment. Does NOT write the buffer yet.
-
-                Returns: Whether a word is complete in the accumulator register (partialWord).
-                */
-                template<int PayloadWidth>
-                bool updateRegisters(const data_segment_t<PayloadWidth> &segment) {
-                    if (partialWordChunkOffset == 0) {
-                        partialWord = ap_uint<StreamWidth>(segment.payload);
-                    } else {
-                        partialWord |= ap_uint<StreamWidth>(segment.payload) << (partialWordChunkOffset * constants::CHUNK_SIZE_BITS);
-                    }
-
-                    // Increase offset. We need StreamWidth/CHUNK_SIZE_BITS chunks to fill one word.
-                    // Since StreamWidth might not be divisible by CHUNK_SIZE_BITS, we may end up with a 1-element
-                    // underestimate (30 bit width / 64 bit chunk = 0), so we need to round up (30+63 = 93. 93/64 = 1).
-                    if (partialWordChunkOffset + segment.chunks == WordChunks) {
-                        partialWordChunkOffset = 0;
-                        return true;
-                    } else {
-                        partialWordChunkOffset += segment.chunks;
-                        return false;
-                    }
-                }
-
             public:
-
-
-                /** Stage a write to the buffer. Stores it temporarily until the write
-                is finished with writeStaged.
-                If more stage() calls happen than the buffer has banks, the bank index wraps
-                and overwrites from the start. Make sure to call writeStaged atleast every <Banks>
-                stage calls. */
                 template<int PayloadWidth>
                 staging_result stage(const data_segment_t<PayloadWidth> &segment) {
-                    // If too many chunks are delivered this _can_ indicate, that the sender
-                    // tried to end a word and start a new one in the same beat, which is not allowed.
-                    if (partialWordChunkOffset + segment.chunks > WordChunks) {
-                        return staging_result::WORD_OVERFLOW;
-                    }
                     // The free space does not depend on laneCounter and the counters do not change between
                     // stage calls, so it is shared across them and each call only compares laneCounter
                     const ap_uint<CountBits> freeSlots = Depth - ap_uint<CountBits>(written - readCount);
-                    if (laneCounter < freeSlots) {
-                        if (updateRegisters(segment)) {
-                            ap_uint<BankBits> targetBank = (getCurrentWriteBank() + laneCounter) % Banks;
-                            lanes[targetBank] = partialWord;
-                            validLanes[targetBank] = 1;
-                            laneCounter++;
-                        } else {
-                            return staging_result::WORD_STAGED_PARTIAL;
-                        }
-                    } else {
+
+                    // More chunks in one beat than there are lanes: only a malformed frame does this. Reject
+                    // it, so that laneCounter cannot overflow and corrupt the write pointer
+                    if (laneCounter + segment.chunks > Banks) {
+                        return staging_result::WORD_OVERFLOW;
+                    }
+                    if (laneCounter + segment.chunks > freeSlots) {
                         return staging_result::BUFFER_FULL;
                     }
+
+                    // Chunk j of the segment goes to the bank behind the chunks staged before it
+                    // No need to consider validBytesLastChunk here, since if a chunk is completely full it doesnt matter,
+                    // and if its not, this chunk is the last to be picked up on the read side, so multiple segments for one
+                    // word can never create a gap.
+                    for (int j = 0; j < PayloadWidth / ChunkWidth; j++) {
+#pragma HLS unroll
+                        if (j < segment.chunks) {
+                            const ap_uint<BankBits> targetBank = (bankWritePointer + laneCounter + j) % Banks;
+                            lanes[targetBank] = segment.payload.range((j + 1) * ChunkWidth - 1, j * ChunkWidth);
+                            validLanes[targetBank] = 1;
+                        }
+                    }
+                    laneCounter += segment.chunks;
                     return staging_result::WORD_STAGED;
                 }
 
@@ -184,20 +149,25 @@ namespace lsp {
 #pragma HLS array_partition dim=1 variable=buffer complete
 #pragma HLS bind_storage variable=buffer type=ram_s2p impl=bram
 #pragma HLS array_partition variable=lanes complete
-                    ap_uint<SlotBits> currentSlot = getCurrentWriteSlot();
-                    ap_uint<SlotBits> nextSlot = (currentSlot + 1 == Depth/Banks) ? ap_uint<SlotBits>(0) : ap_uint<SlotBits>(currentSlot + 1);
-                    ap_uint<BankBits> currentBank = getCurrentWriteBank();
+                    ap_uint<SlotBits> nextSlot = (slotWritePointer + 1 == Slots)
+                        ? ap_uint<SlotBits>(0)
+                        : ap_uint<SlotBits>(slotWritePointer + 1);
+
+                    // Loop all bank indices in parallel (compile time index).
                     for (int bank = 0; bank < Banks; bank++) {
 #pragma HLS unroll
                         if (validLanes[bank]) {
-                            buffer[bank][(bank >= currentBank) ? currentSlot : nextSlot] = lanes[bank];
+                            buffer[bank][(bank >= bankWritePointer) ? slotWritePointer : nextSlot] = lanes[bank];
                         }
-
                     }
-                    writePointer += laneCounter;
+                    slotWritePointer = slotWritePointer + ((bankWritePointer + laneCounter) / Banks);
+                    bankWritePointer += laneCounter;
                     written += laneCounter;
-                    if (writePointer >= Depth) {
-                        writePointer -= Depth;
+                    if (bankWritePointer >= Banks) {
+                        bankWritePointer -= Banks;
+                    }
+                    if (slotWritePointer >= Slots) {
+                        slotWritePointer -= Slots;
                     }
                     laneCounter = 0;
                     validLanes = 0;
@@ -215,14 +185,12 @@ namespace lsp {
                     return creditLimit;
                 }
 
-                /** Try to write one word into the user stream. The write is non-blocking, so that a full user
-                stream never stalls the free-running kernel: if the stream is full, the word stays in the
-                buffer and is written in a later call. */
+                /** Try reading an entire word into the stream. Does nothing if not enough words are available. (non-blocking) */
                 template<int D>
                 void tryReadIntoStream(hls::stream<ap_uint<StreamWidth>, D>& stream) {
 #pragma HLS dependence variable=buffer type=inter direction=RAW dependent=false
-                    // Shift committed words every call
-                    for (int i = Banks - 1; i > 0; i--) {
+                    // Shift words every call
+                    for (int i = WritePipelineDelay - 1; i > 0; i--) {
 #pragma HLS unroll
                         writtenDelayed[i] = writtenDelayed[i - 1];
                     }
@@ -230,29 +198,69 @@ namespace lsp {
                     // Insert the current written word count at the beginning of the shifter
                     writtenDelayed[0] = written;
 
-                    skid.tryPop(stream);
-
-                    // Only read if we have space and words to read
-                    if (writtenDelayed[Banks - 1] != readCount && skid.canPush()) {
-                        skid.push(buffer[getCurrentReadBank()][getCurrentReadSlot()]);
-
-                        // Increment and wrap, avoid modulo
-                        if (++readPointer == Depth) {
-                            readPointer = 0;
+                    // Only read if we have enough chunks to read for an entire word. Comptime loop limit.
+                    // We also need enough space. If the previous iteration collected enough chunks for a word, but
+                    // the receiver was busy, we didnt advance. This could cause us to write over the boundary of the storage
+                    const ap_uint<CountBits> chunksInBuffer
+                        = ap_uint<CountBits>(writtenDelayed[WritePipelineDelay - 1] - readCount)
+                        - chunksStored;
+                    const ap_uint<CountBits> chunksMissing = WordChunks - chunksStored;
+                    const bool hasChunksForOneWord = chunksInBuffer >= ReadsPerCall || chunksInBuffer >= chunksMissing;
+                    const bool hasSpace = (WordChunks <= Banks) || (StorageChunks - chunksStored >= ReadsPerCall);
+                    const bool hasFullWordInRegister = chunksStored >= WordChunks;
+                    const ap_uint<CountBits> chunksToReadThisIteration
+                        = chunksInBuffer >= ReadsPerCall
+                        ? ap_uint<CountBits>(ReadsPerCall)
+                        : chunksMissing;
+                    if (hasFullWordInRegister || (hasChunksForOneWord && hasSpace)) {
+                        if (!hasFullWordInRegister && hasSpace) {
+                            for (int i = 0; i < ReadsPerCall; i++) {
+    #pragma HLS unroll
+                                if (i < chunksToReadThisIteration) {
+                                    storage.range(
+                                        (chunksStored + i+1) * ChunkWidth - 1,
+                                        (chunksStored + i) * ChunkWidth
+                                    ) = buffer[
+                                        (bankReadPointer+i) % Banks
+                                    ][
+                                        (slotReadPointer + ((bankReadPointer + i) / Banks)) % Slots
+                                    ];
+                                }
+                            }
+                            chunksStored += chunksToReadThisIteration;
+                            slotReadPointer = slotReadPointer + ((bankReadPointer + chunksToReadThisIteration) / Banks);
+                            bankReadPointer = (bankReadPointer + chunksToReadThisIteration) % Banks;
+                            if (slotReadPointer >= Slots) {
+                                slotReadPointer -= Slots;
+                            }
                         }
-                        readCount++;
-                        creditLimit++;
+
+                        // Do we have enough chunks to send a word?
+                        if (chunksStored >= WordChunks) {
+                            // Write the sliced word. Only if the write is successful do we advance the state
+                            if(stream.write_nb(storage.range(StreamWidth - 1, 0))) {
+                                // Read pointer updates: Automatically wraps
+                                readCount += WordChunks;
+                                creditLimit += WordChunks;
+
+                                // Shift out the used data
+                                storage >>= WordChunks * ChunkWidth;
+                                chunksStored -= WordChunks;
+                            }
+                        }
+
                     }
                 }
             };
 
 
-            template<typename Depths, typename Widths>
+            /** The stream rings of one connection. WritePipelineDelay is the same for all rings. */
+            template<typename Depths, typename Widths, int WritePipelineDelay>
             struct ring_buffers_t;
 
-            template<size_t... Ds, int... Ws>
-            struct ring_buffers_t<utils::ring_depths_t<Ds...>, utils::stream_widths_t<Ws...>> {
-                std::tuple<stream_ring_buffer_t<Ws, Ds>...> rings;
+            template<size_t... Ds, int... Ws, int WritePipelineDelay>
+            struct ring_buffers_t<utils::ring_depths_t<Ds...>, utils::stream_widths_t<Ws...>, WritePipelineDelay> {
+                std::tuple<stream_ring_buffer_t<Ws, Ds, WritePipelineDelay>...> rings;
 
                 /** Append a segment to the ring buffer of its stream: ring I (of an lsp_stream_ring_buffers_t)
                 takes the segments whose stream ID is I, see #75 for the numbering. A stream ID without a ring

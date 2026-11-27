@@ -32,7 +32,7 @@ namespace lsp {
             ap_uint<clog2(1 + constants::BEAT_WIDTH)> initialOffset,
             beat_t& data,
             ctrl_status_t<sizeof...(Ws)>& creditUpdate,
-            ring_buffers_t<ring_depths_t<Ds...>, stream_widths_t<Ws...>> &buffers,
+            ring_buffers_t<ring_depths_t<Ds...>, stream_widths_t<Ws...>, RING_WRITE_PIPELINE_DELAY> &buffers,
             ap_uint<header_t::PAYLOAD_WIDTH>& frameChunksLeft,
             pending_ctrl_status_t<sizeof...(Ws)>& ctrlStatus
         ) {
@@ -78,7 +78,7 @@ namespace lsp {
             ap_uint<clog2(1 + constants::BEAT_WIDTH)> initialOffset,
             beat_t& data,
             ctrl_status_t<sizeof...(Ws)>& creditUpdate,
-            ring_buffers_t<ring_depths_t<Ds...>, stream_widths_t<Ws...>> &buffers,
+            ring_buffers_t<ring_depths_t<Ds...>, stream_widths_t<Ws...>, RING_WRITE_PIPELINE_DELAY> &buffers,
             ap_uint<header_t::PAYLOAD_WIDTH>& frameChunksLeft,
             pending_ctrl_status_t<sizeof...(Ws)>& ctrlStatus
         ) {
@@ -139,13 +139,13 @@ namespace lsp {
         FSN missing: NACK request
         FSN duplicate: PROBE? -> Ignore. Not PROBE? (=> DATA) -> Send ACK.
         */
-        template<int... Ws>
+        template<int Streams>
         connection_state _readHeaders(
             ap_uint<clog2(1 + constants::BEAT_WIDTH)> &offset,
             header_t &header,
             beat_t &data,
             ap_uint<header_t::PAYLOAD_WIDTH>& frameChunksLeft,
-            pending_ctrl_status_t<sizeof...(Ws)>& ctrlStatus,
+            pending_ctrl_status_t<Streams>& ctrlStatus,
             ap_uint<constants::FSN_WIDTH> &expectedFSN
         ) {
             offset = getOffsetFromEthertype(data.data);
@@ -163,12 +163,12 @@ namespace lsp {
 
             // FSN after the expected one: gap, NACK. Before it: duplicate, ACK
             if (helpers::serialBefore(expectedFSN, header.frameSequenceNumber)) {
-                ctrlStatus.add(ctrl_status_t<sizeof...(Ws)>::makeNACKImmediately(expectedFSN));
+                ctrlStatus.add(ctrl_status_t<Streams>::makeNACKImmediately(expectedFSN));
                 return data.last ? connection_state::EXPECT_FRAME_START : connection_state::DISCARDING_INVALID_FRAME;
             } else if (helpers::serialBefore(header.frameSequenceNumber, expectedFSN)) {
                 // On a PROBE, a too small FSN is okay - we send the response regardless
                 if (header.frameType != FRAME_PROBE) {
-                    ctrlStatus.add(ctrl_status_t<sizeof...(Ws)>::makeACKImmediately(expectedFSN));
+                    ctrlStatus.add(ctrl_status_t<Streams>::makeACKImmediately(expectedFSN));
                     return !data.last ? connection_state::DISCARDING_INVALID_FRAME : connection_state::EXPECT_FRAME_START_AFTER_INVALID_FRAME;
                 }
             }
@@ -195,7 +195,7 @@ namespace lsp {
             // State kept across calls
             static connection_state state = connection_state::EXPECT_FRAME_START;
             static ap_uint<constants::FSN_WIDTH> expectedFSN = 0;
-            static ring_buffers_t<ring_depths_t<Ds...>, stream_widths_t<Ws...>> buffers;
+            static ring_buffers_t<ring_depths_t<Ds...>, stream_widths_t<Ws...>, RING_WRITE_PIPELINE_DELAY> buffers;
             static ap_uint<header_t::PAYLOAD_WIDTH> frameChunksLeft;
             static header_t header;
 
