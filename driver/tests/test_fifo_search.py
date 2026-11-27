@@ -216,7 +216,6 @@ def test_stall_byte_decoding():
     """Bit 1 of the sticky nibble is the producer-blocked flag."""
     assert producer_blocked_from_stall(0b0010_0000)
     assert not producer_blocked_from_stall(0b0000_0010)
-    assert producer_blocked_from_stall(0b0000_0010, sticky=False)
     assert not producer_blocked_from_stall(0b1101_1101)
 
 
@@ -352,7 +351,7 @@ def test_top_down_bnb_without_peaks_or_seed():
         assert res.seed_depths == tuple(max_depths)
 
 
-def test_bottom_up_refuses_unreliable_flags():
+def test_bottom_up_aborts_without_flags():
     """Without producer-blocked flags the bottom-up search returns its seed and says why."""
     # the coupled constraint makes the lower-bound corner (1, 1, 2) infeasible
     oracle = MockOracle(3, [({0, 1}, 6), ({2}, 2)], report_flags=False)
@@ -362,11 +361,6 @@ def test_bottom_up_refuses_unreliable_flags():
     assert not res.optimal_proven
     assert res.abort_reason is not None
     assert res.depths == tuple(max_depths) and oracle.feasible(res.depths)
-    # expanding every FIFO instead is still exact, only slower
-    optimum = brute_force_optimum(oracle, TotalBitsCost(widths), max_depths)
-    ctx = make_context(oracle, widths, tuple(max_depths))
-    res = run_search("bottom_up_exact", ctx, upper_bound_factor=1.0, allow_unreliable_flags=True)
-    assert res.optimal_proven and res.cost == pytest.approx(optimum)
 
 
 def test_budget_exhaustion_returns_a_feasible_configuration():

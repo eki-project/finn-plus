@@ -73,11 +73,6 @@ class FINNInstrumentationOverlay(Overlay):
         "run_cycles_lo",
     ) + STEADY_STATE_REGISTERS
 
-    def has_steady_state_registers(self):
-        """Return whether the bitfile's instrumentation wrapper has the steady-state registers."""
-        registers = self.ip_dict["instrumentation_wrap_0"]["registers"]
-        return all(name in registers for name in self.STEADY_STATE_REGISTERS)
-
     def read_registers(self, names):
         """Read several instrumentation registers with one access to the mapped register block.
 

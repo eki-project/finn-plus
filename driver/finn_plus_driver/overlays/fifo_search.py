@@ -41,10 +41,12 @@ STALL_ORDY = 1 << 3  #: ovld && !ordy: consumer blocked
 STALL_STICKY_SHIFT = 4
 
 
-def producer_blocked_from_stall(flags: int, sticky: bool = True) -> bool:
-    """Return whether a ``READ_STALL`` byte reports a producer blocked by a full FIFO."""
-    nibble = (flags >> STALL_STICKY_SHIFT) if sticky else flags
-    return bool(nibble & STALL_IRDY)
+def producer_blocked_from_stall(flags: int) -> bool:
+    """Return whether a ``READ_STALL`` byte reports a producer blocked by a full FIFO.
+
+    Decided on the run-sticky nibble: the per-frame flags are stale in a deadlocked run.
+    """
+    return bool((flags >> STALL_STICKY_SHIFT) & STALL_IRDY)
 
 
 @dataclass(frozen=True)
@@ -53,8 +55,6 @@ class EvalResult:
 
     ``depths`` are capacity register values (the real depth adds the driver's offset).
     ``producer_blocked`` and ``peak`` are ``None`` when the oracle cannot provide them.
-    ``flags_reliable`` is ``False`` when ``producer_blocked`` was derived from flags that are
-    only latched at frame boundaries (stale in a deadlock) instead of run-sticky ones.
     ``decided_by`` names the rule that ended the observation (see ``live_fifo.LiveFIFOOracle``),
     ``frames`` is the number of completed frames it was based on and ``eval_time_s`` the
     wall-clock time of the observation; all three are optional bookkeeping of the oracle.
@@ -70,7 +70,6 @@ class EvalResult:
     producer_blocked: Optional[Tuple[bool, ...]] = None
     stall_flags: Optional[Tuple[int, ...]] = None
     peak: Optional[Tuple[int, ...]] = None
-    flags_reliable: bool = True
     decided_by: Optional[str] = None
     frames: Optional[int] = None
     eval_time_s: Optional[float] = None
@@ -879,7 +878,6 @@ def search_bottom_up_exact(
     seed_strategy: Optional[str] = None,
     pareto: bool = False,
     pareto_cost_limit: Optional[float] = None,
-    allow_unreliable_flags: bool = False,
     lower_bounds: Optional[Sequence[int]] = None,
     **_ignored,
 ) -> SearchResult:
@@ -892,9 +890,9 @@ def search_bottom_up_exact(
     FIFO: the expansion is complete and the first feasible configuration popped from the
     cost-ordered heap is a global optimum.
 
-    ``producer_blocked`` must come from the run-sticky stall flags: the per-frame flags are
-    stale in a deadlock, where most of the visited configurations end up. Without reliable
-    flags the search refuses to run unless ``allow_unreliable_flags`` is set.
+    ``producer_blocked`` comes from the run-sticky stall flags of the gauges (the per-frame
+    flags are stale in a deadlock, where most of the visited configurations end up); an
+    oracle that provides none makes the search abort with its seed.
 
     With ``pareto`` the search does not stop at the first feasible point but keeps popping until
     the cost exceeds ``pareto_cost_limit`` (default: the cost of the seed) and records interval
@@ -965,15 +963,11 @@ def search_bottom_up_exact(
             continue
 
         blocked = r.producer_blocked
-        if blocked is None or (r.deadlock and not r.flags_reliable):
-            if not allow_unreliable_flags:
-                abort_reason = (
-                    "the oracle reports no reliable producer-blocked flags for "
-                    f"{list(depths)}; refusing to expand (set allow_unreliable_flags "
-                    "to expand every FIFO instead)"
-                )
-                break
-            blocked = tuple([True] * ctx.num_fifos)
+        if blocked is None:
+            abort_reason = (
+                f"the oracle reports no producer-blocked flags for {list(depths)}; " "cannot expand"
+            )
+            break
         dependency_set = [e for e, b in enumerate(blocked) if b]
         if not dependency_set:
             # An infeasible configuration without any blocked producer executes identically

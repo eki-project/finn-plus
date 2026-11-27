@@ -57,7 +57,7 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
     of the search); the feasibility of a bounded configuration and the flags/peaks it reports
     come from the ``MockOracle`` predicate.
 
-    The steady-state registers (``steady_state_hw``) are emulated per run with a virtual
+    The steady-state registers are emulated per run with a virtual
     clock that advances by one poll per ``observe_steady_state`` call: a feasible configuration
     completes ``frames_per_poll`` frames per poll with a constant window (minimum = maximum);
     a degraded one (mock: ``DEGRADED_*``) runs steadily slow, its whole window growing by
@@ -74,8 +74,6 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         mock,
         widths,
         paced_peaks,
-        extended_hw=True,
-        steady_state_hw=True,
         frames_per_poll=3,
         degrade_step=10,
         fifo_cost_tables=None,
@@ -91,11 +89,6 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         # the mock predicate is defined on the requested depths: no capacity rounding unless a
         # test installs a CapacityModel
         self.capacity_model = None
-        self.hw_capabilities = {
-            "peak_occupancy": False,
-            "sticky_stall_flags": False,
-            "steady_state_registers": False,
-        }
         # emulated controller: the mapped register array that receives the strided store of
         # the capacities (FIFO IDs 1 KiB apart)
         ctrl_array = np.zeros(256 * self.num_fifos + 256, dtype=np.uint32)
@@ -104,8 +97,6 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         self.seed = 1
         self.mock = mock
         self.paced_peaks = list(paced_peaks)
-        self.extended_hw = extended_hw
-        self.steady_state_hw = steady_state_hw
         self.frames_per_poll = frames_per_poll
         self.degrade_step = degrade_step
         self.frozen_mode = False
@@ -155,12 +146,10 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         if opcode == OP_READ_FILL:
             if self.mode == "paced":
                 return self.paced_peaks[fifo_id]
-            if not self.extended_hw or not self.mock.feasible(self.depth_regs):
-                return self.depth_regs[fifo_id]  # old gauge: the capacity register
+            if not self.mock.feasible(self.depth_regs):
+                return self.depth_regs[fifo_id]  # the capacity register of a stalled FIFO
             return self.mock.peak(self.depth_regs)[fifo_id]
         if opcode == OP_READ_STALL:
-            if not self.extended_hw:
-                return 0  # old controller: wrong packet alignment returns 0
             if self.mode == "paced":
                 return STALL_IVLD << STALL_STICKY_SHIFT
             blocked = self.mock.evaluate(self.depth_regs, need_flags=True).producer_blocked
@@ -180,17 +169,13 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         cls = self._bounded_class()
         if cls == "feasible":
             interval, latency = FEASIBLE_INTERVAL, FEASIBLE_LATENCY
-        elif cls == "deadlock" and self.steady_state_hw:
+        elif cls == "deadlock":
             interval, latency = 0, 0
         else:
             interval, latency = DEGRADED_INTERVAL, DEGRADED_LATENCY
         return (False, False, 1, 0, latency, latency, interval, latency, interval, 0, 0)
 
     # --- emulated steady-state registers ------------------------------------------------
-    def has_steady_state_registers(self):
-        """Whether the emulated bitfile has the steady-state registers."""
-        return self.steady_state_hw
-
     def instrumentation_read(self, name):
         """Only min_latency is read directly by the oracle."""
         assert name == "min_latency"
@@ -198,7 +183,7 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
 
     def observe_steady_state(self):
         """One poll of the emulated steady-state registers of the current run."""
-        assert self.steady_state_hw and self.running
+        assert self.running
         self.polls += 1
         self.num_polls += 1
         polls = self.polls
@@ -245,16 +230,14 @@ class EmulatedLiveFIFOOverlay(FINNLiveFIFOOverlay):
         return regs
 
 
-def make_overlay(extended_hw=True, cost_tables=False, **kwargs):
+def make_overlay(cost_tables=False, **kwargs):
     """Instance with a 4-FIFO predicate whose optimum differs from the binary search result."""
     # FIFO 0 and 1 are coupled; shrinking the wide FIFO 1 pays off more than FIFO 0
     mock = MockOracle(4, [({0, 1}, 8), ({1}, 2), ({2}, 3), ({3}, 1)])
     widths = [8, 64, 16, 32]
     paced_peaks = [6, 6, 5, 4]
     tables = synthetic_tables(widths, max_depth=16) if cost_tables else None
-    overlay = EmulatedLiveFIFOOverlay(
-        mock, widths, paced_peaks, extended_hw=extended_hw, fifo_cost_tables=tables, **kwargs
-    )
+    overlay = EmulatedLiveFIFOOverlay(mock, widths, paced_peaks, fifo_cost_tables=tables, **kwargs)
     return overlay, mock
 
 
@@ -354,11 +337,6 @@ def test_experiment_fifosizing_writes_reports(tmp_path, kwargs):
 
     search = sizing["search"]
     assert search["search_strategy"] == strategy
-    assert search["hw_capabilities"] == {
-        "peak_occupancy": True,
-        "sticky_stall_flags": True,
-        "steady_state_registers": True,
-    }
     assert search["all_iterations"]["0"]["fifo_depths"] == [6, 6, 5, 4]
     assert search["num_evaluations"] == len(search["all_iterations"]) == overlay.num_runs - 1
     for it in search["all_iterations"].values():
@@ -370,7 +348,7 @@ def test_experiment_fifosizing_writes_reports(tmp_path, kwargs):
     # the target measurement waited for a clean window, every verdict was decided by a rule
     assert search["all_iterations"]["0"]["decided_by"] == "window_clean"
     assert search["all_iterations"]["0"]["frames"] >= WINDOW + 1
-    assert search["steady_state_detection"] and search["window_frames"] == WINDOW
+    assert search["window_frames"] == WINDOW
     assert (
         search["evaluation_cap_frames"]
         == evaluation_cap(FEASIBLE_LATENCY, FEASIBLE_INTERVAL, WINDOW, 100.0, 4.0, 0.002)[0]
@@ -379,7 +357,6 @@ def test_experiment_fifosizing_writes_reports(tmp_path, kwargs):
     assert sum(search["decisions"].values()) == search["num_evaluations"]
     assert search["decisions"]["window_clean"] >= 1
     assert "cap_expired" not in search["decisions"]
-    assert "fixed_runtime" not in search["decisions"]
 
     optimum = brute_force_optimum(mock, TotalBitsCost([8, 64, 16, 32]), [6, 6, 5, 4])
     if strategy.startswith("binary_"):
@@ -420,41 +397,6 @@ def test_exact_search_beats_binary_search_on_coupled_fifos(tmp_path):
     assert exact < binary
 
 
-def test_old_hardware_is_detected_and_bottom_up_refuses(tmp_path, clock):
-    """Without the gauge extensions the probe reports no capabilities and the seed is returned."""
-    overlay, mock = make_overlay(extended_hw=False, steady_state_hw=False)
-    overlay.experiment_fifosizing(
-        report_dir=str(tmp_path), search_strategy="bottom_up_exact", stop_condition="interval"
-    )
-    with open(tmp_path / "bottom_up_exact" / "interval" / "fifo_sizing_report.json") as f:
-        sizing = json.load(f)
-    search = sizing["search"]
-    assert search["hw_capabilities"] == {
-        "peak_occupancy": False,
-        "sticky_stall_flags": False,
-        "steady_state_registers": False,
-    }
-    # old bitfile: every evaluation slept for the fixed runtime and read once
-    assert not search["steady_state_detection"] and search["window_frames"] is None
-    assert search["decisions"] == {"fixed_runtime": search["num_evaluations"]}
-    assert overlay.num_polls == 0
-    assert clock.num_sleeps >= search["num_evaluations"] + 1  # evaluations + the paced run
-    assert not search["optimal_proven"] and search["abort_reason"]
-    assert search["fifo_depths"] == [6, 6, 5, 4]  # the seed (start configuration)
-    assert mock.feasible(search["fifo_depths"])
-    # the lower-bound probes use the unbounded register value
-    assert any(UNBOUNDED_DEPTH in it["fifo_depths"] for it in search["all_iterations"].values())
-    # the B&B still works without peaks (no tightening) and the binary search is unaffected
-    overlay.experiment_fifosizing(
-        report_dir=str(tmp_path), search_strategy="top_down_bnb", stop_condition="interval"
-    )
-    with open(tmp_path / "top_down_bnb" / "interval" / "fifo_sizing_report.json") as f:
-        sizing = json.load(f)
-    assert sizing["search"]["optimal_proven"]
-    optimum = brute_force_optimum(mock, TotalBitsCost([8, 64, 16, 32]), [6, 6, 5, 4])
-    assert sizing["fifo_size_total_kB"] == pytest.approx(optimum)
-
-
 def test_relaxation_sweep_only_for_binary(tmp_path):
     """The sweep re-runs the binary search; the exact strategies skip it with a warning."""
     overlay, mock = make_overlay()
@@ -488,26 +430,6 @@ def test_batched_capacity_writes(tmp_path):
     assert written == overlay.capacity_registers(final["fifo_depths"])
 
 
-def test_size_iteratively_binary_search_compat(tmp_path):
-    """The old entry point still returns the old dict layout."""
-    overlay, mock = make_overlay()
-    overlay.hw_capabilities = {"peak_occupancy": True, "sticky_stall_flags": True}
-    log = overlay.size_iteratively_binary_search(
-        start_depth=[6, 6, 5, 4], iteration_runtime=0.0, fifo_order_strategy="deepest_first"
-    )
-    assert set(log) >= {
-        "duration",
-        "fifo_depths",
-        "log_total_fifo_size",
-        "log_interval",
-        "log_min_latency",
-        "log_latency",
-        "all_iterations",
-    }
-    assert mock.feasible(log["fifo_depths"])
-    assert log["all_iterations"]["1"]["tested_fifo"] in (0, 1)  # deepest first: depth 6
-
-
 def test_evaluation_cap_from_paced_measurements():
     """The cap covers cap_factor pipeline depths plus windows at the clock, plus the floor."""
     # mobilenetv1: latency 711946 / interval 394272 -> 2 + 1 frames of depth, window 4 -> 28
@@ -520,9 +442,8 @@ def test_evaluation_cap_from_paced_measurements():
     assert evaluation_cap(1000, 0, 4, 100.0, 4.0, 0.0)[0] >= 4 * 1005  # degenerate interval
 
 
-def test_default_window_and_fixed_runtime_disabled(tmp_path):
-    """Without kwargs the default window and the cap from the paced run apply; the detection
-    can be disabled."""
+def test_default_window_and_cap(tmp_path):
+    """Without kwargs the default window and the cap from the paced run apply."""
     overlay, mock = make_overlay()
     overlay.experiment_fifosizing(report_dir=str(tmp_path), search_strategy="binary_forward")
     with open(tmp_path / "binary_forward" / "both" / "fifo_sizing_report.json") as f:
@@ -534,41 +455,20 @@ def test_default_window_and_fixed_runtime_disabled(tmp_path):
     assert search["all_iterations"]["0"]["frames"] == 6  # 2 polls of 3 frames fill the window
     assert "cap_expired" not in search["decisions"]
 
-    overlay, mock = make_overlay()
-    overlay.experiment_fifosizing(
-        report_dir=str(tmp_path),
-        search_strategy="binary_forward",
-        report_name="fixed",
-        steady_state_detection=False,
-    )
-    with open(tmp_path / "fixed" / "both" / "fifo_sizing_report.json") as f:
-        search = json.load(f)["search"]
-    assert not search["hw_capabilities"]["steady_state_registers"]
-    assert search["decisions"] == {"fixed_runtime": search["num_evaluations"]}
-    assert overlay.num_polls == 0
-
 
 def make_oracle(overlay, stop_condition, frames=WINDOW, cap_s=0.004, feasibility=True):
     """Polling oracle on the emulated overlay with the thresholds of the mock targets."""
-    overlay.hw_capabilities = {
-        "peak_occupancy": True,
-        "sticky_stall_flags": True,
-        "steady_state_registers": True,
-    }
     oracle = LiveFIFOOracle(
         overlay,
-        iteration_runtime=0.001,
         throttle_interval=FEASIBLE_INTERVAL,
-        hw_capabilities=overlay.hw_capabilities,
         window_frames=frames,
-        poll_interval_s=0.0003,
         cap_s=cap_s,
+        poll_interval_s=0.0003,
     )
     if feasibility:
         oracle.feasibility = FeasibilityCheck(
             stop_condition, 0.0, FEASIBLE_INTERVAL, FEASIBLE_LATENCY
         )
-    assert oracle.polling
     return oracle
 
 
